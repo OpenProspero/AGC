@@ -1,0 +1,48 @@
+name: Build pinned build-time shader compiler
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  psbc-host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Check out OpenAGC without persisting credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Install host-only compiler prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake git python3 python3-mako python3-yaml \
+            python3-packaging glslang-tools spirv-tools xz-utils
+
+      - name: Check build verifier fail-closed cases
+        run: /usr/bin/python3 -m unittest discover -s tests -p 'test_psbc_builder.py'
+
+      - name: Verify OpenAGC host ABI before external sources
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/openagc-host" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/openagc-host" --parallel 2
+          ctest --test-dir "$RUNNER_TEMP/openagc-host" --output-on-failure
+
+      - name: Build and verify external PSBC host compiler
+        env:
+          PSBC_JOBS: "2"
+        run: bash tools/build-pinned-psbc.sh "$RUNNER_TEMP/openagc-psbc-work" "$RUNNER_TEMP/openagc-psbc-artifact"
+
+      - name: Upload verified compiler, manifest, sources and licenses
+        if: success()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: openagc-buildtime-psbc-${{ github.run_id }}
+          path: ${{ runner.temp }}/openagc-psbc-artifact/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 6
