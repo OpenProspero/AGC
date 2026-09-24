@@ -66,6 +66,17 @@ class PinnedBuildChecks(unittest.TestCase):
             self.assertEqual(len(value), 64)
             self.assertTrue(all(character in "0123456789abcdef" for character in value))
 
+    def test_published_revisions_are_complete(self):
+        for value in (
+            verifier.RELEASE_COMMIT, verifier.PSBC_COMMIT,
+            verifier.OPENGNM_COMMIT, verifier.SPIRV_COMMIT,
+            verifier.VULKAN_COMMIT, verifier.PATCHED_TREE,
+        ):
+            self.assertEqual(len(value), 40)
+            self.assertTrue(all(character in "0123456789abcdef" for character in value))
+        self.assertEqual(verifier.VULKAN_COMMIT,
+                         "b51f6b865c18fc5b33990d12f75e8dfd672cede6")
+
     def test_workflow_is_manual_only_and_read_only(self):
         root = Path(__file__).resolve().parents[1]
         workflow_path = root / ".github/workflows/build-psbc-host.yml"
