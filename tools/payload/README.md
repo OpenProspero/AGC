@@ -157,6 +157,7 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
 | `set_context_linkage_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,040 bytes; one nc push: `submit=ok completed=1 pairs=3 words=33 marker=1` |
 | `set_context_sh_linkage_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,088 bytes; one nc push: `submit=ok completed=1 ctx=3 sh=4 link=3 words=54 marker=1` |
 | `set_context_sh_frag_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,088 bytes; one nc push: `submit=ok completed=1 ctx=9 sh=4 words=63 marker=1` |
+| `set_context_sh_vert_frag_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,144 bytes; one nc push: `submit=ok completed=1 v_ctx=3 v_sh=4 link=3 f_ctx=9 f_sh=4 words=93 marker=1` |
 
 Firmware identity on the console: `fw=0x9400008` (9.40) from
 `/data/libkernel-dump.log`.
