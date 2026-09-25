@@ -2282,6 +2282,72 @@ static int test_psbc_register_snapshot_equivalence(void)
         CHECK(vk_words[58] == 8u);
         CHECK(vk_words[59] == (uint32_t)(vk_p >> 8));
         CHECK(gl_words[59] == (uint32_t)(gl_p >> 8));
+        CHECK(vk_info.psbc_code_bound == 1u && gl_info.psbc_code_bound == 1u);
+    }
+
+    /*
+     * End-to-end Step U host vehicle: bind_psbc_code then VK submit /
+     * GL bind_program records 69 register dwords + EOP (93) with
+     * gpu_submitted=0. Draw stays NOT_READY.
+     */
+    {
+        openagc_vk_render_pass *vk_pass = NULL;
+        openagc_gl_framebuffer *gl_fb = NULL;
+        openagc_gpu_submission_view vk_view = OPENAGC_GPU_SUBMISSION_VIEW_INIT;
+        openagc_gpu_submission_view gl_view = OPENAGC_GPU_SUBMISSION_VIEW_INIT;
+        const uint32_t step_u_words =
+            OPENAGC_PM4_GRAPHICS_VERT_FRAG_EOP_WORDS(3u, 4u, 9u, 4u);
+
+        EXPECT(openagc_vk_create_render_pass(device, target, &vk_pass), OPENAGC_OK);
+        EXPECT(openagc_vk_command_buffer_begin(commands), OPENAGC_OK);
+        EXPECT(openagc_vk_cmd_begin_render_pass(commands, vk_pass), OPENAGC_OK);
+        EXPECT(openagc_vk_cmd_bind_pipeline(commands, vk_graphics), OPENAGC_OK);
+        EXPECT(openagc_vk_cmd_set_viewport(commands, 0u, 0u, 4u, 4u), OPENAGC_OK);
+        EXPECT(openagc_vk_cmd_draw(commands, 3u, 1u, 0u, 0u), OPENAGC_ERROR_NOT_READY);
+        EXPECT(openagc_vk_cmd_end_render_pass(commands), OPENAGC_OK);
+        EXPECT(openagc_vk_command_buffer_end(commands), OPENAGC_OK);
+        EXPECT(openagc_vk_queue_submit_commands(device, commands, NULL), OPENAGC_OK);
+        EXPECT(openagc_vk_device_get_last_write(device, &vk_view), OPENAGC_OK);
+        CHECK(vk_view.gpu_submitted == 0u);
+        CHECK(vk_view.word_count == step_u_words);
+        CHECK(vk_view.words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(vk_view.words[69] == OPENAGC_PM4_EOP_HEADER);
+        EXPECT(openagc_vk_pipeline_get_host_register_program(vk_graphics, vk_words, 128u,
+                                                             &vk_count),
+               OPENAGC_OK);
+        CHECK(vk_count == 69u);
+        CHECK(memcmp(vk_view.words, vk_words, sizeof(uint32_t) * 69u) == 0);
+        EXPECT(openagc_vk_destroy_render_pass(vk_pass), OPENAGC_OK);
+
+        EXPECT(openagc_gl_create_framebuffer(gl, &gl_fb), OPENAGC_OK);
+        EXPECT(openagc_gl_framebuffer_renderbuffer(gl_fb, renderbuffer), OPENAGC_OK);
+        EXPECT(openagc_gl_bind_framebuffer(gl, gl_fb), OPENAGC_OK);
+        EXPECT(openagc_gl_viewport(gl_fb, 0u, 0u, 4u, 4u), OPENAGC_OK);
+        EXPECT(openagc_gl_bind_program(gl_fb, gl_graphics), OPENAGC_OK);
+        EXPECT(openagc_gl_draw_arrays(gl, 0u, 3u), OPENAGC_ERROR_NOT_READY);
+        EXPECT(openagc_gl_context_get_last_write(gl, &gl_view), OPENAGC_OK);
+        CHECK(gl_view.gpu_submitted == 0u);
+        CHECK(gl_view.word_count == step_u_words);
+        CHECK(gl_view.words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(gl_view.words[69] == OPENAGC_PM4_EOP_HEADER);
+        EXPECT(openagc_gl_program_get_host_register_program(gl_graphics, gl_words, 128u,
+                                                            &gl_count),
+               OPENAGC_OK);
+        CHECK(gl_count == 69u);
+        CHECK(memcmp(gl_view.words, gl_words, sizeof(uint32_t) * 69u) == 0);
+        /* Same Step-U shape on both frontends (headers + EOP); heap VAs may differ. */
+        CHECK(vk_view.words[0] == gl_view.words[0]);
+        CHECK(vk_view.words[9] == gl_view.words[9]);
+        CHECK(vk_view.words[21] == gl_view.words[21]);
+        CHECK(vk_view.words[57] == gl_view.words[57]);
+        CHECK(vk_view.words[69] == gl_view.words[69]);
+        EXPECT(openagc_gl_bind_framebuffer(gl, NULL), OPENAGC_OK);
+        EXPECT(openagc_gl_destroy_framebuffer(gl_fb), OPENAGC_OK);
+
+        EXPECT(openagc_vk_pipeline_get_info(vk_graphics, &vk_info), OPENAGC_OK);
+        EXPECT(openagc_gl_program_get_info(gl_graphics, &gl_info), OPENAGC_OK);
+        CHECK(vk_info.compiler_verified == 0u && vk_info.gpu_executable == 0u);
+        CHECK(gl_info.compiler_verified == 0u && gl_info.gpu_executable == 0u);
     }
 
     EXPECT(openagc_vk_destroy_pipeline(vk_graphics), OPENAGC_OK);
