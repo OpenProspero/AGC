@@ -344,6 +344,28 @@ static int test_psbc_pgm_patch_and_eop(void)
         CHECK(combo_words[combo_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] ==
               OPENAGC_PM4_EOP_HEADER);
     }
+    /* Linkage SET_CONTEXT ×3 + EOP (Step R vehicle: verified metadata only). */
+    {
+        uint32_t link_words[OPENAGC_PM4_GRAPHICS_LINKAGE_EOP_WORDS];
+        uint32_t link_count;
+
+        CHECK(reflection.has_linkage == 1u);
+        link_count = openagc_pm4_encode_graphics_linkage_eop(
+            reflection.linkage_ge_cntl_offset, reflection.linkage_ge_cntl_value,
+            reflection.linkage_stages_en_offset, reflection.linkage_stages_en_value,
+            reflection.linkage_user_vgpr_en_offset, reflection.linkage_user_vgpr_en_value,
+            1u, UINT64_C(0x3000), link_words);
+        CHECK(link_count == OPENAGC_PM4_GRAPHICS_LINKAGE_EOP_WORDS);
+        CHECK(link_count == 33u);
+        CHECK(link_words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(link_words[1] == 603u && link_words[2] == 131200u);
+        CHECK(link_words[3] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(link_words[4] == 725u && link_words[5] == 65536u);
+        CHECK(link_words[6] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(link_words[7] == 610u && link_words[8] == 0u);
+        CHECK(link_words[link_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] ==
+              OPENAGC_PM4_EOP_HEADER);
+    }
     free(json);
     return 0;
 }
