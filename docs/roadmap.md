@@ -257,7 +257,9 @@ Blocked by two independent gates:
    bytes use the single-column vehicle; `openagc_gpu_host_dma_write_data`
    records copy-then-fill; `host_store_span` / `host_store_span_n` cover
    compute fills sized from the bound buffer up to SPAN_MAX.
-   Draw/render packets remain unavailable.
+   Step O proved graphics-bank SET_SH + EOP; Step P proved minimal
+   SET_CONTEXT_REG ×3 + EOP (smoke.vert context_registers only, no
+   linkage). Draw/render packets remain unavailable.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
