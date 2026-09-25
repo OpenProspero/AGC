@@ -188,14 +188,42 @@ refuses missing, duplicate, or undeclared slots. Nothing here flips
 `compiler_available`, `compiler_verified`, or `gpu_executable`; draws
 stay `NOT_READY` and the PS5 policy stays deny-all.
 
+### Resource descriptor cites (next step, not yet implemented)
+
+A V#/T#/S# encoder has no consumer until draws open, and two pieces still
+lack a verified cite, so no descriptor is encoded yet. What **is**
+verified, for whoever picks this up:
+
+* Descriptor sizes in bytes, from the pinned patch's user-data sizing
+  (`COMBINED_IMAGE_SAMPLER ? 48 : STORAGE_IMAGE ? 32 : 16`): buffer 16,
+  image 32, combined image+sampler 48, storage image 32.
+* Word layouts from `src/amd/registers/gfx10-rsrc.json` at the pinned
+  revision: `SQ_BUF_RSRC_WORD1` `BASE_ADDRESS_HI[0,15]` `STRIDE[16,29]`
+  `CACHE_SWIZZLE[30]` `SWIZZLE_ENABLE[31]`; `SQ_BUF_RSRC_WORD3`
+  `DST_SEL_X[0,2]` `Y[3,5]` `Z[6,8]` `W[9,11]` `FORMAT[12,18]`
+  `INDEX_STRIDE[21,22]` `ADD_TID_ENABLE[23]` `RESOURCE_LEVEL[24]`
+  `OOB_SELECT[28,29]` `TYPE[30,31]`; `SQ_IMG_SAMP_WORD0..3` as listed
+  there (clamp/LOD/filter/border fields).
+* Raw-buffer convention from `src/amd/common/ac_descriptors.c`
+  (`ac_build_raw_buffer_descriptor`): WORD0 = va, WORD1 = `(va >> 32) &
+  0xffff` with STRIDE 0 and SWIZZLE_ENABLE 0, WORD2 = size in bytes,
+  WORD3 = DST_SEL X/Y/Z/W, `OOB_SELECT=RAW` (= 3, from
+  `SQ_BUF_RSRC_WORD3__OOB_SELECT`), FORMAT `GFX10_FORMAT_32_FLOAT` (= 22,
+  same DB), RESOURCE_LEVEL 0.
+* **Open, do not guess:** the numeric `SQ_SEL` values behind
+  `DST_SEL_*` and where a driver is expected to place descriptors inside
+  the shader's user SGPRs. Neither is in the pinned tree; the private
+  Actions artifact's generated register headers carry the `SQ_SEL` enum.
+
 ## Remaining executable-shader gates
 
 1. Pin + reflection + typed-binding envelope intake exist on the host.
    They do **not** flip `compiler_available` or `gpu_executable`, and
    `require_compiler` stays `NOT_READY`.
-2. Binding *values* (V#/T#/S# contents, user SGPR placement) are still
-   not encoded: metadata `offset`/`stride` are retained but unused
-   until a resource-descriptor encoder is reviewed.
+2. Binding *values* (V#/T#/S# contents, user SGPR placement) are not
+   encoded; the verified cites and the two open questions are listed in
+   the subsection above. Metadata `offset`/`stride` are retained but
+   unused.
 3. Enabling `gpu_executable` / draws still requires independently owned
    FW9.40 CB/DB or DRAW evidence and does **not** remove the deny-all
    PS5 policy. Native-app Stage 0 and any Stage 1 remain unapproved.
