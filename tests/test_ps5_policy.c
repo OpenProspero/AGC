@@ -252,6 +252,15 @@ static int test_shader_policy(void)
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_shader_artifact_get_texture(artifact, 0u, &texture) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    {
+        const uint8_t *metadata = (const uint8_t *)0;
+        uint32_t metadata_size = 0u;
+
+        CHECK(openagc_shader_artifact_get_compiler_metadata(artifact, &metadata,
+                                                            &metadata_size) ==
+              OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+        CHECK(metadata == 0 && metadata_size == 0u);
+    }
     CHECK(openagc_shader_artifact_require_compiler(artifact) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_shader_artifact_destroy(artifact) ==
@@ -469,12 +478,30 @@ int main(void)
             OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gl_clear_buffer_sub_data(0, 0u, 4u, 0u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gl_copy_buffer_sub_data(0, 0u, 0, 0u, 4u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gl_copy_buffer_then_clear_sub_data(0, 0u, 0, 0u, 64u, 0u, 16u) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_frontend_buffer_copy_then_fill(0, 0u, 0, 0u, 64u, 0u, 16u) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gl_buffer_sub_data(0, 0u, 0, 4u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gpu_host_store_const(0, 0, 0u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_store_span(0, 0, 0u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_store_span2(0, 0, 0u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_store_span_n(0, 0, 0u, 4u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gpu_host_write_data(0, 0, 0u, 0u, 1u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gpu_host_write_data_memory(0, 0, 0u, 0u, 1u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gpu_host_write_data_rows(0, 0, 0u, 16u, 0u, 1u, 1u) !=
             OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_write_data_grid(0, 0, 0u, 128u, 0u, 16u, 2u, 8u) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_write_data_buffer_rows(0, 0, 0u, 16u, 0u, 1u, 1u) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_dma_write_data(0, 0, 0u, 0, 0u, 64u, 0u, 1u) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_graphics_register_eop(0, 0, 1u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_device_reserve_synthetic_va(0, 256u, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_frontend_pipeline_patch_psbc_pgm_vas(0, 0u, 0u) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_frontend_pipeline_record_psbc_register_eop(0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gl_copy_tex_sub_image(0, 0, 0u, 0u, 0u, 0u, 1u, 1u) !=
             OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_frontend_graphics_pipeline_create(0, 0, 0, 0, 0) !=

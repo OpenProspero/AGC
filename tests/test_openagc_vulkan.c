@@ -194,9 +194,162 @@ static int test_enumeration_transfer_and_refusals(void)
     return 0;
 }
 
+static int test_fill_update_and_image_copy(void)
+{
+    openagc_vk_instance_desc instance_desc = OPENAGC_VK_INSTANCE_DESC_INIT;
+    openagc_vk_device_desc device_desc = OPENAGC_VK_DEVICE_DESC_INIT;
+    openagc_vk_command_pool_desc pool_desc = OPENAGC_VK_COMMAND_POOL_DESC_INIT;
+    openagc_vk_buffer_desc fillable_desc = OPENAGC_VK_BUFFER_DESC_INIT(
+        OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+            OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        8192u);
+    openagc_vk_buffer_desc source_only_desc = OPENAGC_VK_BUFFER_DESC_INIT(
+        OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 64u);
+    openagc_vk_buffer_desc input_desc = OPENAGC_VK_BUFFER_DESC_INIT(
+        OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+            OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        64u);
+    openagc_vk_image_desc source_image_desc = OPENAGC_VK_IMAGE_DESC_INIT(
+        OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+        OPENAGC_FRONTEND_VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        OPENAGC_FRONTEND_VK_IMAGE_LAYOUT_UNDEFINED, 4u, 4u);
+    openagc_vk_image_desc other_format_desc = OPENAGC_VK_IMAGE_DESC_INIT(
+        OPENAGC_FRONTEND_VK_FORMAT_B8G8R8A8_UNORM,
+        OPENAGC_FRONTEND_VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        OPENAGC_FRONTEND_VK_IMAGE_LAYOUT_UNDEFINED, 4u, 4u);
+    openagc_vk_instance *instance = NULL;
+    openagc_vk_device *device = NULL;
+    openagc_vk_command_pool *pool = NULL;
+    openagc_vk_command_buffer *transfer = NULL;
+    openagc_vk_command_buffer *self_copy = NULL;
+    openagc_vk_command_buffer *out_of_range = NULL;
+    openagc_vk_command_buffer *format_mismatch = NULL;
+    openagc_vk_buffer *fillable = NULL;
+    openagc_vk_buffer *source_only = NULL;
+    openagc_vk_buffer *input = NULL;
+    openagc_vk_image *source = NULL;
+    openagc_vk_image *destination = NULL;
+    openagc_vk_image *other_format = NULL;
+    uint8_t payload[OPENAGC_VK_MAX_UPDATE_BYTES];
+    uint8_t pixels[64];
+    uint8_t readback[8192];
+    uint32_t fill_value = 0xdeadbeefu;
+    uint32_t index;
+    uint32_t observed;
+
+    for (index = 0u; index < sizeof(payload); ++index) {
+        payload[index] = (uint8_t)(index + 1u);
+    }
+    for (index = 0u; index < sizeof(pixels); ++index) {
+        pixels[index] = (uint8_t)(index + 1u);
+    }
+    EXPECT(openagc_vk_instance_create(&instance_desc, &instance), OPENAGC_OK);
+    EXPECT(openagc_vk_device_create(instance, &device_desc, &device), OPENAGC_OK);
+    EXPECT(openagc_vk_create_command_pool(device, &pool_desc, &pool), OPENAGC_OK);
+    EXPECT(openagc_vk_create_buffer(device, &fillable_desc, &fillable), OPENAGC_OK);
+    EXPECT(openagc_vk_create_buffer(device, &source_only_desc, &source_only), OPENAGC_OK);
+    EXPECT(openagc_vk_create_image(device, &source_image_desc, &source), OPENAGC_OK);
+    EXPECT(openagc_vk_create_image(device, &source_image_desc, &destination), OPENAGC_OK);
+    EXPECT(openagc_vk_create_image(device, &other_format_desc, &other_format), OPENAGC_OK);
+    EXPECT(openagc_vk_create_buffer(device, &input_desc, &input), OPENAGC_OK);
+    EXPECT(openagc_vk_buffer_upload(input, 0u, pixels, sizeof(pixels)), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_fill_buffer(NULL, fillable, 0u, 4u, fill_value),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+
+    EXPECT(openagc_vk_allocate_command_buffer(pool, &transfer), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_fill_buffer(transfer, fillable, 0u, 4u, fill_value),
+           OPENAGC_ERROR_BAD_STATE);
+    EXPECT(openagc_vk_cmd_update_buffer(transfer, fillable, 0u, payload, 4u),
+           OPENAGC_ERROR_BAD_STATE);
+    EXPECT(openagc_vk_command_buffer_begin(transfer), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_fill_buffer(transfer, source_only, 0u, 4u, fill_value),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    EXPECT(openagc_vk_cmd_fill_buffer(transfer, fillable, 2u, 4u, fill_value),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_vk_cmd_fill_buffer(transfer, fillable, 0u, 0u, fill_value),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_vk_cmd_fill_buffer(transfer, fillable, 8188u, 8u, fill_value),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_vk_cmd_update_buffer(transfer, source_only, 0u, payload, 4u),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    EXPECT(openagc_vk_cmd_update_buffer(transfer, fillable, 2u, payload, 4u),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_vk_cmd_update_buffer(transfer, fillable, 0u, NULL, 4u),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    EXPECT(openagc_vk_cmd_update_buffer(transfer, fillable, 0u, payload,
+                                        OPENAGC_VK_MAX_UPDATE_BYTES + 4u),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_vk_cmd_update_buffer(transfer, fillable, 0u, payload, 16u), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_fill_buffer(transfer, fillable, 16u, 16u, fill_value), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_update_buffer(transfer, fillable, 4096u, payload,
+                                        OPENAGC_VK_MAX_UPDATE_BYTES),
+           OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_copy_buffer_to_image(transfer, input, 0u, source, 0u, sizeof(pixels)),
+           OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_copy_image(transfer, source, 0u, 0u, destination, 1u, 1u, 2u, 2u),
+           OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_end(transfer), OPENAGC_OK);
+    EXPECT(openagc_vk_queue_submit_commands(device, transfer, NULL), OPENAGC_OK);
+
+    memset(readback, 0, sizeof(readback));
+    EXPECT(openagc_vk_buffer_readback(fillable, 0u, readback, sizeof(readback)), OPENAGC_OK);
+    CHECK(memcmp(readback, payload, 16u) == 0);
+    for (index = 0u; index < 4u; ++index) {
+        memcpy(&observed, readback + 16u + index * 4u, 4u);
+        CHECK(observed == fill_value);
+    }
+    CHECK(readback[32] == 0u);
+    CHECK(memcmp(readback + 4096u, payload, OPENAGC_VK_MAX_UPDATE_BYTES) == 0);
+    memset(pixels, 0, sizeof(pixels));
+    EXPECT(openagc_vk_image_readback(destination, 0u, pixels, sizeof(pixels)), OPENAGC_OK);
+    CHECK(pixels[20] == 1u && pixels[27] == 8u);
+    CHECK(pixels[36] == 17u && pixels[43] == 24u);
+    CHECK(pixels[19] == 0u && pixels[28] == 0u);
+
+    /* A recording that cannot run is refused whole and leaves the buffer untouched. */
+    EXPECT(openagc_vk_allocate_command_buffer(pool, &self_copy), OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_begin(self_copy), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_copy_image(self_copy, source, 0u, 0u, source, 0u, 0u, 2u, 2u),
+           OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_end(self_copy), OPENAGC_OK);
+    EXPECT(openagc_vk_queue_submit_commands(device, self_copy, NULL),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    EXPECT(openagc_vk_allocate_command_buffer(pool, &out_of_range), OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_begin(out_of_range), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_copy_image(out_of_range, source, 3u, 0u, destination, 0u, 0u, 2u, 2u),
+           OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_end(out_of_range), OPENAGC_OK);
+    EXPECT(openagc_vk_queue_submit_commands(device, out_of_range, NULL),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_vk_allocate_command_buffer(pool, &format_mismatch), OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_begin(format_mismatch), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_copy_image(format_mismatch, source, 0u, 0u, other_format, 0u, 0u, 2u,
+                                     2u),
+           OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_end(format_mismatch), OPENAGC_OK);
+    EXPECT(openagc_vk_queue_submit_commands(device, format_mismatch, NULL),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+
+    EXPECT(openagc_vk_destroy_command_buffer(format_mismatch), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_command_buffer(out_of_range), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_command_buffer(self_copy), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_command_buffer(transfer), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_command_pool(pool), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_image(other_format), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_image(destination), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_image(source), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_buffer(source_only), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_buffer(input), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_buffer(fillable), OPENAGC_OK);
+    EXPECT(openagc_vk_device_destroy(device), OPENAGC_OK);
+    EXPECT(openagc_vk_instance_destroy(instance), OPENAGC_OK);
+    return 0;
+}
+
 int main(void)
 {
-    if (test_enumeration_transfer_and_refusals() != 0) {
+    if (test_enumeration_transfer_and_refusals() != 0 ||
+        test_fill_update_and_image_copy() != 0) {
         return 1;
     }
     puts("OpenAGC Vulkan subset tests passed");

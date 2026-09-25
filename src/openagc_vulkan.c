@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/vulkan.h"
+#include "openagc/pm4_write_fw940.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -1514,6 +1515,27 @@ openagc_result openagc_vk_queue_submit_commands(openagc_vk_device *device,
     }
     for (index = 0u; index < command_buffer->command_count; ++index) {
         const openagc_vk_command *command = &command_buffer->commands[index];
+        if (command->kind == OPENAGC_VK_COMMAND_COPY &&
+            index + 1u < command_buffer->command_count) {
+            const openagc_vk_command *next = &command_buffer->commands[index + 1u];
+
+            if (next->kind == OPENAGC_VK_COMMAND_FILL_BUFFER &&
+                next->destination == command->destination &&
+                next->destination_offset == command->destination_offset &&
+                next->size_bytes <= command->size_bytes &&
+                (next->size_bytes & 3u) == 0u && next->size_bytes != 0u &&
+                next->size_bytes <= OPENAGC_PM4_WRITE_DATA_CLEAR_BYTES) {
+                result = openagc_frontend_buffer_copy_then_fill(
+                    command->source->buffer, command->source_offset,
+                    command->destination->buffer, command->destination_offset,
+                    command->size_bytes, next->fill_value, next->size_bytes);
+                if (result != OPENAGC_OK) {
+                    return result;
+                }
+                ++index;
+                continue;
+            }
+        }
         if (command->kind == OPENAGC_VK_COMMAND_COPY) {
             result = openagc_frontend_buffer_copy(command->source->buffer,
                                                   command->source_offset,
@@ -2036,6 +2058,60 @@ openagc_result openagc_vk_pipeline_get_info(const openagc_vk_pipeline *pipeline,
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
     return openagc_frontend_pipeline_get_info(pipeline->pipeline, info);
+}
+
+openagc_result openagc_vk_pipeline_set_psbc_register_snapshot(
+    openagc_vk_pipeline *pipeline, const uint8_t *vertex_metadata,
+    uint32_t vertex_metadata_size, const uint8_t *pixel_metadata,
+    uint32_t pixel_metadata_size)
+{
+    if (pipeline == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_set_psbc_register_snapshot(
+        pipeline->pipeline, vertex_metadata, vertex_metadata_size, pixel_metadata,
+        pixel_metadata_size);
+}
+
+openagc_result openagc_vk_pipeline_get_host_register_program(
+    const openagc_vk_pipeline *pipeline, uint32_t *words, uint32_t max_words,
+    uint32_t *out_count)
+{
+    if (pipeline == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_get_host_register_program(pipeline->pipeline, words,
+                                                               max_words, out_count);
+}
+
+openagc_result openagc_vk_pipeline_patch_psbc_pgm_vas(openagc_vk_pipeline *pipeline,
+                                                      uint64_t vertex_code_va,
+                                                      uint64_t pixel_code_va)
+{
+    if (pipeline == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_patch_psbc_pgm_vas(pipeline->pipeline, vertex_code_va,
+                                                        pixel_code_va);
+}
+
+openagc_result openagc_vk_pipeline_record_psbc_register_eop(openagc_vk_pipeline *pipeline)
+{
+    if (pipeline == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_record_psbc_register_eop(pipeline->pipeline);
+}
+
+openagc_result openagc_vk_pipeline_get_psbc_code_vas(const openagc_vk_pipeline *pipeline,
+                                                     uint64_t *vertex_code_va,
+                                                     uint64_t *pixel_code_va)
+{
+    if (pipeline == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_get_psbc_code_vas(pipeline->pipeline, vertex_code_va,
+                                                       pixel_code_va);
 }
 
 openagc_result openagc_vk_destroy_pipeline(openagc_vk_pipeline *pipeline)

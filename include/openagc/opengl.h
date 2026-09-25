@@ -197,6 +197,10 @@ openagc_result openagc_gl_clear_buffer_sub_data(openagc_gl_buffer *buffer, uint6
 openagc_result openagc_gl_copy_buffer_sub_data(openagc_gl_buffer *source, uint64_t source_offset,
                                                openagc_gl_buffer *destination,
                                                uint64_t destination_offset, uint64_t size_bytes);
+/* Step H composite: DMA copy then WRITE_DATA fill of the destination head. */
+openagc_result openagc_gl_copy_buffer_then_clear_sub_data(
+    openagc_gl_buffer *source, uint64_t source_offset, openagc_gl_buffer *destination,
+    uint64_t destination_offset, uint64_t size_bytes, uint32_t value, uint64_t fill_bytes);
 openagc_result openagc_gl_buffer_get_info(const openagc_gl_buffer *buffer,
                                           openagc_frontend_buffer_info *info);
 openagc_result openagc_gl_destroy_buffer(openagc_gl_buffer *buffer);
@@ -279,6 +283,21 @@ openagc_result openagc_gl_program_accepts_layout(
     const openagc_gl_program *program, const openagc_frontend_pipeline_layout *layout);
 openagc_result openagc_gl_program_get_info(const openagc_gl_program *program,
                                            openagc_frontend_pipeline_info *info);
+/* Host-only PSBC register-program snapshot; shared frontend path. */
+openagc_result openagc_gl_program_set_psbc_register_snapshot(
+    openagc_gl_program *program, const uint8_t *vertex_metadata,
+    uint32_t vertex_metadata_size, const uint8_t *pixel_metadata,
+    uint32_t pixel_metadata_size);
+openagc_result openagc_gl_program_get_host_register_program(
+    const openagc_gl_program *program, uint32_t *words, uint32_t max_words,
+    uint32_t *out_count);
+openagc_result openagc_gl_program_patch_psbc_pgm_vas(openagc_gl_program *program,
+                                                     uint64_t vertex_code_va,
+                                                     uint64_t pixel_code_va);
+openagc_result openagc_gl_program_record_psbc_register_eop(openagc_gl_program *program);
+openagc_result openagc_gl_program_get_psbc_code_vas(const openagc_gl_program *program,
+                                                    uint64_t *vertex_code_va,
+                                                    uint64_t *pixel_code_va);
 openagc_result openagc_gl_use_program(openagc_gl_context *context,
                                       openagc_gl_program *program);
 openagc_result openagc_gl_destroy_program(openagc_gl_program *program);

@@ -1094,6 +1094,21 @@ openagc_result openagc_gl_copy_buffer_sub_data(openagc_gl_buffer *source, uint64
                                         destination_offset, size_bytes);
 }
 
+openagc_result openagc_gl_copy_buffer_then_clear_sub_data(
+    openagc_gl_buffer *source, uint64_t source_offset, openagc_gl_buffer *destination,
+    uint64_t destination_offset, uint64_t size_bytes, uint32_t value, uint64_t fill_bytes)
+{
+    if (source == NULL || destination == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (source->context != destination->context) {
+        return OPENAGC_ERROR_OWNERSHIP;
+    }
+    return openagc_frontend_buffer_copy_then_fill(source->buffer, source_offset,
+                                                  destination->buffer, destination_offset,
+                                                  size_bytes, value, fill_bytes);
+}
+
 openagc_result openagc_gl_buffer_get_info(const openagc_gl_buffer *buffer,
                                           openagc_frontend_buffer_info *info)
 {
@@ -1592,6 +1607,60 @@ openagc_result openagc_gl_program_get_info(const openagc_gl_program *program,
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
     return openagc_frontend_pipeline_get_info(program->pipeline, info);
+}
+
+openagc_result openagc_gl_program_set_psbc_register_snapshot(
+    openagc_gl_program *program, const uint8_t *vertex_metadata,
+    uint32_t vertex_metadata_size, const uint8_t *pixel_metadata,
+    uint32_t pixel_metadata_size)
+{
+    if (program == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_set_psbc_register_snapshot(
+        program->pipeline, vertex_metadata, vertex_metadata_size, pixel_metadata,
+        pixel_metadata_size);
+}
+
+openagc_result openagc_gl_program_get_host_register_program(
+    const openagc_gl_program *program, uint32_t *words, uint32_t max_words,
+    uint32_t *out_count)
+{
+    if (program == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_get_host_register_program(program->pipeline, words,
+                                                               max_words, out_count);
+}
+
+openagc_result openagc_gl_program_patch_psbc_pgm_vas(openagc_gl_program *program,
+                                                     uint64_t vertex_code_va,
+                                                     uint64_t pixel_code_va)
+{
+    if (program == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_patch_psbc_pgm_vas(program->pipeline, vertex_code_va,
+                                                        pixel_code_va);
+}
+
+openagc_result openagc_gl_program_record_psbc_register_eop(openagc_gl_program *program)
+{
+    if (program == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_record_psbc_register_eop(program->pipeline);
+}
+
+openagc_result openagc_gl_program_get_psbc_code_vas(const openagc_gl_program *program,
+                                                    uint64_t *vertex_code_va,
+                                                    uint64_t *pixel_code_va)
+{
+    if (program == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_get_psbc_code_vas(program->pipeline, vertex_code_va,
+                                                       pixel_code_va);
 }
 
 openagc_result openagc_gl_use_program(openagc_gl_context *context, openagc_gl_program *program)

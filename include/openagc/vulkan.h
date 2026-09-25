@@ -387,6 +387,21 @@ openagc_result openagc_vk_pipeline_get_layout(
     const openagc_vk_pipeline *pipeline, openagc_frontend_pipeline_layout **out_layout);
 openagc_result openagc_vk_pipeline_get_info(const openagc_vk_pipeline *pipeline,
                                             openagc_frontend_pipeline_info *info);
+/* Host-only PSBC register-program snapshot; shared frontend path. */
+openagc_result openagc_vk_pipeline_set_psbc_register_snapshot(
+    openagc_vk_pipeline *pipeline, const uint8_t *vertex_metadata,
+    uint32_t vertex_metadata_size, const uint8_t *pixel_metadata,
+    uint32_t pixel_metadata_size);
+openagc_result openagc_vk_pipeline_get_host_register_program(
+    const openagc_vk_pipeline *pipeline, uint32_t *words, uint32_t max_words,
+    uint32_t *out_count);
+openagc_result openagc_vk_pipeline_patch_psbc_pgm_vas(openagc_vk_pipeline *pipeline,
+                                                      uint64_t vertex_code_va,
+                                                      uint64_t pixel_code_va);
+openagc_result openagc_vk_pipeline_record_psbc_register_eop(openagc_vk_pipeline *pipeline);
+openagc_result openagc_vk_pipeline_get_psbc_code_vas(const openagc_vk_pipeline *pipeline,
+                                                     uint64_t *vertex_code_va,
+                                                     uint64_t *pixel_code_va);
 openagc_result openagc_vk_destroy_pipeline(openagc_vk_pipeline *pipeline);
 
 /* Color only. The image must already be a color target. Begin does not draw. */
