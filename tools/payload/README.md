@@ -113,6 +113,10 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     only after Steps O–P and host
     `openagc_pm4_encode_graphics_context_sh_eop` is locked. One push, no
     retries. Same proven pairs; no linkage, no DRAW, no CB/DB.
+18. `set_context_linkage_eop.c` (Step R, linkage SET_CONTEXT ×3 + EOP)
+    only after Step Q and host `openagc_pm4_encode_graphics_linkage_eop`
+    is locked. One push, no retries. smoke.vert linkage pairs only —
+    no context_registers, no SET_SH, no DRAW, no CB/DB.
 
 ## Toolchain result (2026-09-25)
 
@@ -135,6 +139,7 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
 | `set_sh_gfx_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,080 bytes; one nc push: `submit=ok completed=1 pairs=4 words=36 marker=1` |
 | `set_context_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,216 bytes; one nc push: `submit=ok completed=1 pairs=3 words=33 marker=1` |
 | `set_context_sh_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 109,936 bytes; one nc push: `submit=ok completed=1 ctx=3 sh=4 words=45 marker=1` |
+| `set_context_linkage_eop.c` | sdk (`prospero-clang`) | Builds: pending console push (Step R) |
 
 Firmware identity on the console: `fw=0x9400008` (9.40) from
 `/data/libkernel-dump.log`.
