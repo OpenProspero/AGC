@@ -238,8 +238,11 @@ Blocked by two independent gates:
    both stages as envelopes auto-attaches the host SET_CONTEXT/SET_SH
    register snapshot including vertex linkage context pairs (still
    non-executable). Attribute-less plans (`vertex_input_mask == 0`)
-   record draws without a VBO and still stop at `NOT_READY`. Non-empty
-   PSBC descriptor bindings remain unsupported. See
+   record draws without a VBO and still stop at `NOT_READY`. Typed PSBC
+   `descriptor_bindings` parse from the pinned emitter schema and must
+   match the declared OpenAGC uniform buffers and combined image
+   samplers exactly; storage bindings, arrays, and non-zero sets stay
+   `UNSUPPORTED_OPERATION`. See
    [shader-toolchain.md](shader-toolchain.md).
 2. **Draw/render PM4**: real render-target and draw packets have no
    independently verified FW9.40 evidence in this repository. Copy+EOP

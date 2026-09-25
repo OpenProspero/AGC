@@ -96,8 +96,10 @@ policy-only builds, use `-DOPENAGC_PS5_POLICY_ONLY=ON` and link only
 - Fixtures: `OPENAGC_SHADER_COMPILER_UNVERIFIED_FIXTURE` (structural only).
 - Pin-checked envelopes: `OPENAGC_SHADER_COMPILER_OPENGNM_PSBC` with
   matching `OPENAGC_SHADER_PINNED_PSBC_*` digest, revision, and metadata
-  v14. Empty `descriptor_bindings` in metadata require zero OpenAGC
-  bindings/textures. Non-empty bindings stay `UNSUPPORTED_OPERATION`.
+  v14. Empty `descriptor_bindings` require zero OpenAGC
+  bindings/textures; typed bindings must match the declared uniform
+  buffers and combined image samplers exactly, and storage bindings or
+  arrays stay `UNSUPPORTED_OPERATION`.
 - Accepted PSBC artifacts report `psbc_envelope=1`, still
   `compiler_verified=0` and `gpu_executable=0`.
 - Intake retains envelope metadata; graphics create auto-attaches the

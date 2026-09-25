@@ -54,10 +54,11 @@ metadata version 14, and an executable digest equal to
 version is `INVALID_ARGUMENT`. The envelope must also carry the
 compiler metadata object: `version`, `target` 2, `source_stage`
 (vertex 1, pixel 5), `machine_code_size` equal to the payload,
-register arrays, empty semantics/bindings (for the current smoke
-shape), and stage linkage rules. A mismatch is `INTEGRITY`. Compute
-metadata and non-empty `descriptor_bindings` are refused
-(`UNSUPPORTED_OPERATION` for the latter). When pin, reflection, and
+register arrays, empty semantics, typed `descriptor_bindings`, and
+stage linkage rules. A mismatch is `INTEGRITY`. Compute metadata is
+refused (`UNSUPPORTED_OPERATION`). Bindings follow the pinned emitter
+schema below; storage bindings and arrays are `UNSUPPORTED_OPERATION`.
+When pin, reflection, and
 OpenAGC descriptor cross-checks pass, intake **accepts** the artifact
 as a host structural envelope (`psbc_envelope=1`) with
 `compiler_verified=0` and `gpu_executable=0`.
@@ -133,14 +134,13 @@ independently owned FW9.40 IB capture.
 ## Typed reflection and pin-checked intake (still non-executable)
 
 `include/openagc/psbc_metadata.h` parses a typed `openagc_psbc_reflection`
-from PSBC metadata (stage/size, register pairs, empty semantics/bindings,
-optional user-data dwords, vertex linkage) and cross-checks the caller
-OpenAGC descriptor (empty bindings when metadata bindings are empty).
+from PSBC metadata (stage/size, register pairs, empty semantics, typed
+descriptor bindings, optional user-data dwords, vertex linkage) and
+cross-checks the caller OpenAGC descriptor.
 Intake accepts a pin-checked `OPENGNM_PSBC` envelope as structural
-(`psbc_envelope=1`) without enabling `gpu_executable`. Non-empty
-`descriptor_bindings` remain `UNSUPPORTED_OPERATION` until a separate
-binding adapter is reviewed. Host register-program words can be encoded
-from a parsed reflection without claiming console draw readiness.
+(`psbc_envelope=1`) without enabling `gpu_executable`. Host register
+program words can be encoded from a parsed reflection without claiming
+console draw readiness.
 
 Graphics plans auto-attach that host snapshot when both vertex and
 pixel stages are `psbc_envelope` with retained metadata. Explicit
@@ -160,13 +160,42 @@ draw → `NOT_READY` on both frontends, a 93-dword write view
 (`69 + EOP`) after bind+submit/bind_program, and zero
 `compiler_verified` / `gpu_executable`.
 
+## Typed descriptor bindings (adapter, no execution)
+
+The pinned opengnm-psbc patch
+(`a7c73aef…`, revision `a92a1228…` — verified by full SHA-256 before
+any fetch in `tools/build-pinned-psbc.sh`) emits one object per binding:
+
+```json
+{"set":N,"binding":N,"type":N,"array_size":N,"offset":N,"stride":N}
+```
+
+with `PsbcDescriptorType` NONE/UNIFORM_BUFFER/COMBINED_IMAGE_SAMPLER/
+STORAGE_BUFFER/STORAGE_IMAGE = 0..4 and
+`PSBC_MAX_DESCRIPTOR_BINDINGS` = 128.
+`openagc_psbc_metadata_parse_reflection` parses all six fields as
+required (the emitter always writes them), refuses duplicates,
+`set != 0`, `binding >= 128`, unknown types, and `array_size == 0`.
+
+`openagc_psbc_reflection_check_artifact_desc` then requires each
+metadata binding to be backed by exactly one OpenAGC declaration of the
+matching kind at the same `(set,binding)` — uniform buffer or combined
+image sampler — with no missing and no extra declaration. Storage
+bindings, `array_size != 1`, and any set other than 0 are
+`UNSUPPORTED_OPERATION`. `openagc_psbc_reflection_map_resources`
+performs the typed binding→OpenAGC resource map in metadata order and
+refuses missing, duplicate, or undeclared slots. Nothing here flips
+`compiler_available`, `compiler_verified`, or `gpu_executable`; draws
+stay `NOT_READY` and the PS5 policy stays deny-all.
+
 ## Remaining executable-shader gates
 
-1. Pin + reflection + empty-binding envelope intake exist on the host.
+1. Pin + reflection + typed-binding envelope intake exist on the host.
    They do **not** flip `compiler_available` or `gpu_executable`, and
    `require_compiler` stays `NOT_READY`.
-2. Non-empty descriptor bindings and a full typed binding→OpenAGC
-   resource map still need a separate adapter review.
+2. Binding *values* (V#/T#/S# contents, user SGPR placement) are still
+   not encoded: metadata `offset`/`stride` are retained but unused
+   until a resource-descriptor encoder is reviewed.
 3. Enabling `gpu_executable` / draws still requires independently owned
    FW9.40 CB/DB or DRAW evidence and does **not** remove the deny-all
    PS5 policy. Native-app Stage 0 and any Stage 1 remain unapproved.

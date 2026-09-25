@@ -345,6 +345,49 @@ static int test_intake_and_integrity(void)
             pixel.bindings = NULL;
             pixel.binding_count = 0u;
         }
+        {
+            /* Typed bindings: a declared uniform buffer backed by metadata
+               binding 0 is accepted; still psbc_envelope only. */
+            static const char pixel_bindings[] =
+                "{\"version\":14,\"target\":2,\"source_stage\":5,\"machine_code_size\":4,"
+                "\"hardware_stage\":1,\"unresolved_fields\":0,\"address32_hi\":0,"
+                "\"user_sgpr_count\":2,"
+                "\"context_registers\":[{\"offset\":452,\"value\":0}],"
+                "\"shader_registers\":[{\"offset\":8,\"value\":0}],"
+                "\"input_semantics\":[],\"output_semantics\":[],"
+                "\"descriptor_bindings\":[{\"set\":0,\"binding\":0,\"type\":1,"
+                "\"array_size\":1,\"offset\":0,\"stride\":16}],"
+                "\"base_vertex_user_data_dword\":null,\"is_indexed_draw_user_data_dword\":null,"
+                "\"linkage\":null}";
+            static const openagc_shader_binding_decl ubo = {
+                0u, 0u, OPENAGC_SHADER_BINDING_UNIFORM_BUFFER, 16u
+            };
+            static const openagc_shader_binding_decl wrong_slot = {
+                0u, 1u, OPENAGC_SHADER_BINDING_UNIFORM_BUFFER, 16u
+            };
+            openagc_shader_artifact_info info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+
+            pixel.compiler_metadata = (const uint8_t *)pixel_bindings;
+            pixel.compiler_metadata_size = (uint32_t)(sizeof(pixel_bindings) - 1u);
+            pixel.bindings = &ubo;
+            pixel.binding_count = 1u;
+            EXPECT(openagc_shader_artifact_intake_host(device, &pixel, &candidate), OPENAGC_OK);
+            CHECK(candidate != NULL);
+            EXPECT(openagc_shader_artifact_get_info(candidate, &info), OPENAGC_OK);
+            CHECK(info.psbc_envelope == 1u);
+            CHECK(info.compiler_verified == 0u && info.gpu_executable == 0u);
+            EXPECT(openagc_shader_artifact_require_compiler(candidate),
+                   OPENAGC_ERROR_NOT_READY);
+            EXPECT(openagc_shader_artifact_destroy(candidate), OPENAGC_OK);
+            candidate = NULL;
+            /* A declaration at a slot the metadata does not declare is INTEGRITY. */
+            pixel.bindings = &wrong_slot;
+            EXPECT(openagc_shader_artifact_intake_host(device, &pixel, &candidate),
+                   OPENAGC_ERROR_INTEGRITY);
+            CHECK(candidate == NULL);
+            pixel.bindings = NULL;
+            pixel.binding_count = 0u;
+        }
     }
 
     EXPECT(openagc_shader_artifact_destroy(artifact), OPENAGC_OK);

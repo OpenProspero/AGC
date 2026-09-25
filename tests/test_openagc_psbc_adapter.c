@@ -191,9 +191,26 @@ static int test_psbc_fixture_json_extract(void)
     return 0;
 }
 
-static int test_psbc_reflection_refuses_bindings(void)
+static int build_bound_metadata(char *out, size_t out_size, const char *bindings)
 {
-    static const char with_bindings[] =
+    int written = snprintf(out, out_size,
+                           "{\"version\":14,\"target\":2,\"source_stage\":5,\"machine_code_size\":48,"
+                           "\"hardware_stage\":5,\"unresolved_fields\":1,\"address32_hi\":0,"
+                           "\"user_sgpr_count\":4,"
+                           "\"context_registers\":[{\"offset\":452,\"value\":9}],"
+                           "\"shader_registers\":[{\"offset\":8,\"value\":0}],"
+                           "\"input_semantics\":[],\"output_semantics\":[],"
+                           "\"descriptor_bindings\":[%s],"
+                           "\"base_vertex_user_data_dword\":2,"
+                           "\"is_indexed_draw_user_data_dword\":3}",
+                           bindings);
+    return written > 0 && (size_t)written < out_size;
+}
+
+static int test_psbc_reflection_descriptor_bindings(void)
+{
+    /* Malformed: the pinned emitter always writes all six fields. */
+    static const char malformed[] =
         "{\"version\":14,\"target\":2,\"source_stage\":1,\"machine_code_size\":44,"
         "\"hardware_stage\":1,\"unresolved_fields\":1,\"address32_hi\":0,"
         "\"user_sgpr_count\":4,"
@@ -205,12 +222,174 @@ static int test_psbc_reflection_refuses_bindings(void)
         "\"linkage\":{\"ge_cntl\":{\"offset\":603,\"value\":1},"
         "\"stages_en\":{\"offset\":725,\"value\":1},"
         "\"user_vgpr_en\":{\"offset\":610,\"value\":0}}}";
+    static const openagc_shader_binding_decl decls[2] = {
+        { 0u, 0u, OPENAGC_SHADER_BINDING_UNIFORM_BUFFER, 16u },
+        { 0u, 2u, OPENAGC_SHADER_BINDING_UNIFORM_BUFFER, 16u }
+    };
+    static const openagc_shader_texture_decl tex_decls[1] = {
+        { 0u, 1u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM }
+    };
     openagc_psbc_reflection reflection;
+    openagc_shader_artifact_desc desc;
+    openagc_shader_resource_binding resources[3];
+    openagc_shader_texture_binding textures[2];
+    openagc_shader_resource_binding mapped_resources[3];
+    openagc_shader_texture_binding mapped_textures[2];
+    char json[1024];
+    uint32_t mapped_resources_count = 0u;
+    uint32_t mapped_textures_count = 0u;
+    uint32_t json_size;
 
-    EXPECT(openagc_psbc_metadata_parse_reflection((const uint8_t *)with_bindings,
-                                                  (uint32_t)(sizeof(with_bindings) - 1u),
+    EXPECT(openagc_psbc_metadata_parse_reflection((const uint8_t *)malformed,
+                                                  (uint32_t)(sizeof(malformed) - 1u),
                                                   &reflection),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+
+    /* Typed bindings: one UBO at 0, a sampled image at 1, a UBO at 2. */
+    CHECK(build_bound_metadata(json,
+                               sizeof(json),
+                               "{\"set\":0,\"binding\":0,\"type\":1,\"array_size\":1,"
+                               "\"offset\":0,\"stride\":16},"
+                               "{\"set\":0,\"binding\":1,\"type\":2,\"array_size\":1,"
+                               "\"offset\":4,\"stride\":16},"
+                               "{\"set\":0,\"binding\":2,\"type\":1,\"array_size\":1,"
+                               "\"offset\":8,\"stride\":16}"));
+    json_size = (uint32_t)strlen(json);
+    EXPECT(openagc_psbc_metadata_parse_reflection((const uint8_t *)json, json_size,
+                                                  &reflection),
+           OPENAGC_OK);
+    CHECK(reflection.descriptor_binding_count == 3u);
+    CHECK(reflection.empty_descriptor_bindings == 0u);
+    CHECK(reflection.descriptor_bindings[0].binding == 0u);
+    CHECK(reflection.descriptor_bindings[0].type ==
+          OPENAGC_PSBC_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+    CHECK(reflection.descriptor_bindings[1].type ==
+          OPENAGC_PSBC_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+    CHECK(reflection.descriptor_bindings[2].binding == 2u);
+    CHECK(reflection.descriptor_bindings[2].stride == 16u);
+
+    memset(&desc, 0, sizeof(desc));
+    desc.code_size = reflection.machine_code_size;
+    desc.bindings = decls;
+    desc.binding_count = 2u;
+    desc.textures = tex_decls;
+    desc.texture_count = 1u;
+    EXPECT(openagc_psbc_reflection_check_artifact_desc(&reflection, &desc), OPENAGC_OK);
+    /* A missing declaration and an extra declaration are both INTEGRITY. */
+    desc.binding_count = 1u;
+    EXPECT(openagc_psbc_reflection_check_artifact_desc(&reflection, &desc),
+           OPENAGC_ERROR_INTEGRITY);
+    desc.binding_count = 2u;
+    desc.texture_count = 0u;
+    EXPECT(openagc_psbc_reflection_check_artifact_desc(&reflection, &desc),
+           OPENAGC_ERROR_INTEGRITY);
+
+    /* Typed map: metadata order wins, both slots resolve. */
+    memset(resources, 0, sizeof(resources));
+    memset(textures, 0, sizeof(textures));
+    resources[0].set = 0u;
+    resources[0].binding = 2u;
+    resources[1].set = 0u;
+    resources[1].binding = 0u;
+    textures[0].set = 0u;
+    textures[0].binding = 1u;
+    EXPECT(openagc_psbc_reflection_map_resources(&reflection, resources, 2u, textures, 1u,
+                                                 mapped_resources, mapped_textures,
+                                                 &mapped_resources_count,
+                                                 &mapped_textures_count),
+           OPENAGC_OK);
+    CHECK(mapped_resources_count == 2u && mapped_textures_count == 1u);
+    CHECK(mapped_resources[0].binding == 0u);
+    CHECK(mapped_resources[1].binding == 2u);
+    CHECK(mapped_textures[0].binding == 1u);
+    /* Missing slot, duplicate slot, and an undeclared slot are all refused. */
+    EXPECT(openagc_psbc_reflection_map_resources(&reflection, resources, 1u, textures, 1u,
+                                                 mapped_resources, mapped_textures,
+                                                 &mapped_resources_count,
+                                                 &mapped_textures_count),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    resources[2] = resources[1];
+    EXPECT(openagc_psbc_reflection_map_resources(&reflection, resources, 3u, textures, 1u,
+                                                 mapped_resources, mapped_textures,
+                                                 &mapped_resources_count,
+                                                 &mapped_textures_count),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    resources[2].binding = 7u;
+    EXPECT(openagc_psbc_reflection_map_resources(&reflection, resources, 3u, textures, 1u,
+                                                 mapped_resources, mapped_textures,
+                                                 &mapped_resources_count,
+                                                 &mapped_textures_count),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    /* A buffer supplied for a sampled-image slot does not resolve it. */
+    EXPECT(openagc_psbc_reflection_map_resources(&reflection, resources, 2u, NULL, 0u,
+                                                 mapped_resources, mapped_textures,
+                                                 &mapped_resources_count,
+                                                 &mapped_textures_count),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+
+    /* Storage bindings and arrays are refused by the cross-check and map. */
+    CHECK(build_bound_metadata(json, sizeof(json),
+                               "{\"set\":0,\"binding\":0,\"type\":3,\"array_size\":1,"
+                               "\"offset\":0,\"stride\":16}"));
+    EXPECT(openagc_psbc_metadata_parse_reflection((const uint8_t *)json,
+                                                  (uint32_t)strlen(json), &reflection),
+           OPENAGC_OK);
+    memset(&desc, 0, sizeof(desc));
+    desc.code_size = reflection.machine_code_size;
+    desc.bindings = decls;
+    desc.binding_count = 1u;
+    EXPECT(openagc_psbc_reflection_check_artifact_desc(&reflection, &desc),
            OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    EXPECT(openagc_psbc_reflection_map_resources(&reflection, resources, 0u, NULL, 0u,
+                                                 mapped_resources, mapped_textures,
+                                                 &mapped_resources_count,
+                                                 &mapped_textures_count),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    CHECK(build_bound_metadata(json, sizeof(json),
+                               "{\"set\":0,\"binding\":0,\"type\":2,\"array_size\":2,"
+                               "\"offset\":0,\"stride\":16}"));
+    EXPECT(openagc_psbc_metadata_parse_reflection((const uint8_t *)json,
+                                                  (uint32_t)strlen(json), &reflection),
+           OPENAGC_OK);
+    EXPECT(openagc_psbc_reflection_check_artifact_desc(&reflection, &desc),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+
+    /* Schema violations: duplicate slot, out-of-range binding, zero array. */
+    CHECK(build_bound_metadata(json, sizeof(json),
+                               "{\"set\":0,\"binding\":0,\"type\":1,\"array_size\":1,"
+                               "\"offset\":0,\"stride\":16},"
+                               "{\"set\":0,\"binding\":0,\"type\":1,\"array_size\":1,"
+                               "\"offset\":0,\"stride\":16}"));
+    EXPECT(openagc_psbc_metadata_parse_reflection((const uint8_t *)json,
+                                                  (uint32_t)strlen(json), &reflection),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(build_bound_metadata(json, sizeof(json),
+                               "{\"set\":0,\"binding\":128,\"type\":1,\"array_size\":1,"
+                               "\"offset\":0,\"stride\":16}"));
+    EXPECT(openagc_psbc_metadata_parse_reflection((const uint8_t *)json,
+                                                  (uint32_t)strlen(json), &reflection),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    CHECK(build_bound_metadata(json, sizeof(json),
+                               "{\"set\":0,\"binding\":0,\"type\":1,\"array_size\":0,"
+                               "\"offset\":0,\"stride\":16}"));
+    EXPECT(openagc_psbc_metadata_parse_reflection((const uint8_t *)json,
+                                                  (uint32_t)strlen(json), &reflection),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+
+    /* Empty bindings still require zero declarations. */
+    CHECK(build_bound_metadata(json, sizeof(json), ""));
+    EXPECT(openagc_psbc_metadata_parse_reflection((const uint8_t *)json,
+                                                  (uint32_t)strlen(json), &reflection),
+           OPENAGC_OK);
+    CHECK(reflection.empty_descriptor_bindings == 1u &&
+          reflection.descriptor_binding_count == 0u);
+    memset(&desc, 0, sizeof(desc));
+    desc.code_size = reflection.machine_code_size;
+    EXPECT(openagc_psbc_reflection_check_artifact_desc(&reflection, &desc), OPENAGC_OK);
+    desc.bindings = decls;
+    desc.binding_count = 1u;
+    EXPECT(openagc_psbc_reflection_check_artifact_desc(&reflection, &desc),
+           OPENAGC_ERROR_INTEGRITY);
     return 0;
 }
 
@@ -515,7 +694,8 @@ static int test_psbc_pgm_patch_and_eop(void)
 int main(void)
 {
     if (test_psbc_vert_register_program() != 0 || test_psbc_frag_register_program() != 0 ||
-        test_psbc_fixture_json_extract() != 0 || test_psbc_reflection_refuses_bindings() != 0 ||
+        test_psbc_fixture_json_extract() != 0 ||
+        test_psbc_reflection_descriptor_bindings() != 0 ||
         test_psbc_fixture_digests() != 0 || test_psbc_pgm_patch_and_eop() != 0) {
         return 1;
     }

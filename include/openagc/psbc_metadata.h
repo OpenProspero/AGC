@@ -53,27 +53,20 @@ static inline int openagc_psbc_decode_sha256_hex(const char *hex, uint8_t out[32
 }
 
 /*
- * Locate the JSON array for `array_key` and collect objects of the form
- * {"offset":N,"value":M} (field order may vary; whitespace allowed).
- * Returns OPENAGC_OK and writes *out_count, or an error code.
+ * Locate the JSON array value for `array_key`. Writes the index just past
+ * '[' and the index of the matching ']'. Missing key, a non-array value,
+ * or an unterminated array is INVALID_ARGUMENT.
  */
-static inline openagc_result openagc_psbc_metadata_extract_register_pairs(
-    const uint8_t *json, uint32_t size, const char *array_key, uint32_t *offsets,
-    uint32_t *values, uint32_t max_pairs, uint32_t *out_count)
+static inline openagc_result openagc_psbc_json_find_array(const uint8_t *json, uint32_t size,
+                                                          const char *array_key,
+                                                          uint32_t *out_begin,
+                                                          uint32_t *out_end)
 {
     uint32_t key_len = 0u;
     uint32_t index;
-    uint32_t array_begin = 0u;
-    uint32_t array_end = 0u;
-    uint32_t count = 0u;
-    int found_array = 0;
 
-    if (out_count == NULL) {
-        return OPENAGC_ERROR_INVALID_ARGUMENT;
-    }
-    *out_count = 0u;
-    if (json == NULL || size < 2u || array_key == NULL ||
-        (max_pairs != 0u && (offsets == NULL || values == NULL))) {
+    if (json == NULL || size < 2u || array_key == NULL || out_begin == NULL ||
+        out_end == NULL) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
     while (array_key[key_len] != '\0') {
@@ -104,14 +97,10 @@ static inline openagc_result openagc_psbc_metadata_extract_register_pairs(
         if (cursor >= size || json[cursor] != '[') {
             return OPENAGC_ERROR_INVALID_ARGUMENT;
         }
-        if (found_array != 0) {
-            return OPENAGC_ERROR_INVALID_ARGUMENT;
-        }
-        found_array = 1;
-        array_begin = cursor + 1u;
+        *out_begin = cursor + 1u;
         {
             uint32_t depth = 1u;
-            uint32_t pos = array_begin;
+            uint32_t pos = *out_begin;
 
             while (pos < size && depth != 0u) {
                 if (json[pos] == '[') {
@@ -124,12 +113,38 @@ static inline openagc_result openagc_psbc_metadata_extract_register_pairs(
             if (depth != 0u) {
                 return OPENAGC_ERROR_INVALID_ARGUMENT;
             }
-            array_end = pos - 1u;
+            *out_end = pos - 1u;
         }
-        break;
+        return OPENAGC_OK;
     }
-    if (found_array == 0) {
+    return OPENAGC_ERROR_INVALID_ARGUMENT;
+}
+
+/*
+ * Locate the JSON array for `array_key` and collect objects of the form
+ * {"offset":N,"value":M} (field order may vary; whitespace allowed).
+ * Returns OPENAGC_OK and writes *out_count, or an error code.
+ */
+static inline openagc_result openagc_psbc_metadata_extract_register_pairs(
+    const uint8_t *json, uint32_t size, const char *array_key, uint32_t *offsets,
+    uint32_t *values, uint32_t max_pairs, uint32_t *out_count)
+{
+    uint32_t index;
+    uint32_t array_begin = 0u;
+    uint32_t array_end = 0u;
+    uint32_t count = 0u;
+    openagc_result result;
+
+    if (out_count == NULL) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *out_count = 0u;
+    if (max_pairs != 0u && (offsets == NULL || values == NULL)) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    result = openagc_psbc_json_find_array(json, size, array_key, &array_begin, &array_end);
+    if (result != OPENAGC_OK) {
+        return result;
     }
 
     index = array_begin;
@@ -234,6 +249,188 @@ static inline openagc_result openagc_psbc_metadata_extract_register_pairs(
         }
         offsets[count] = offset;
         values[count] = value;
+        count++;
+        index = obj_end;
+    }
+
+    *out_count = count;
+    return OPENAGC_OK;
+}
+
+/*
+ * Typed PSBC descriptor bindings (schema cite: pinned opengnm-psbc patch
+ * a7c73aef…, revision a92a1228ea3a64e4be9f0e61c2a65a5aa7ffed92, which
+ * emits one object per binding:
+ *   {"set":N,"binding":N,"type":N,"array_size":N,"offset":N,"stride":N}
+ * with PsbcDescriptorType NONE/UNIFORM_BUFFER/COMBINED_IMAGE_SAMPLER/
+ * STORAGE_BUFFER/STORAGE_IMAGE = 0..4 and PSBC_MAX_DESCRIPTOR_BINDINGS
+ * = 128. The compiler itself refuses set != 0 and binding >= 128, so both
+ * are schema violations here. OpenAGC maps only set 0, array_size 1,
+ * uniform buffers and combined image samplers; storage bindings are
+ * refused by the cross-check, not silently dropped.
+ */
+#define OPENAGC_PSBC_MAX_DESCRIPTOR_BINDINGS 128u
+#define OPENAGC_PSBC_DESCRIPTOR_TYPE_NONE 0u
+#define OPENAGC_PSBC_DESCRIPTOR_TYPE_UNIFORM_BUFFER 1u
+#define OPENAGC_PSBC_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER 2u
+#define OPENAGC_PSBC_DESCRIPTOR_TYPE_STORAGE_BUFFER 3u
+#define OPENAGC_PSBC_DESCRIPTOR_TYPE_STORAGE_IMAGE 4u
+
+typedef struct openagc_psbc_descriptor_binding {
+    uint32_t set;
+    uint32_t binding;
+    uint32_t type;
+    uint32_t array_size;
+    uint32_t offset;
+    uint32_t stride;
+} openagc_psbc_descriptor_binding;
+
+/* One numeric field inside an already-bounded JSON object; exactly once. */
+static inline int openagc_psbc_json_object_uint(const uint8_t *json, uint32_t begin, uint32_t end,
+                                                const char *key, uint32_t *out)
+{
+    uint32_t key_len = 0u;
+    uint32_t pos;
+    int found = 0;
+    uint32_t value = 0u;
+
+    while (key[key_len] != '\0') {
+        key_len++;
+    }
+    for (pos = begin; pos + key_len + 2u < end; ++pos) {
+        uint32_t cursor;
+        uint32_t parsed = 0u;
+
+        if (json[pos] != '"' || memcmp(json + pos + 1u, key, key_len) != 0 ||
+            json[pos + 1u + key_len] != '"') {
+            continue;
+        }
+        cursor = pos + key_len + 2u;
+        while (cursor < end &&
+               (json[cursor] == ' ' || json[cursor] == '\t' || json[cursor] == '\n' ||
+                json[cursor] == '\r')) {
+            cursor++;
+        }
+        if (cursor >= end || json[cursor] != ':') {
+            return 0;
+        }
+        cursor++;
+        while (cursor < end &&
+               (json[cursor] == ' ' || json[cursor] == '\t' || json[cursor] == '\n' ||
+                json[cursor] == '\r')) {
+            cursor++;
+        }
+        if (cursor >= end || json[cursor] < '0' || json[cursor] > '9') {
+            return 0;
+        }
+        if (found != 0) {
+            return 0;
+        }
+        while (cursor < end && json[cursor] >= '0' && json[cursor] <= '9') {
+            uint32_t digit = (uint32_t)(json[cursor] - '0');
+
+            if (parsed > (0xffffffffu - digit) / 10u) {
+                return 0;
+            }
+            parsed = parsed * 10u + digit;
+            cursor++;
+        }
+        found = 1;
+        value = parsed;
+        pos = cursor;
+    }
+    if (found == 0) {
+        return 0;
+    }
+    *out = value;
+    return 1;
+}
+
+/*
+ * Parse the typed descriptor_bindings array. Every emitted field is
+ * required exactly once (the pinned emitter always writes all six).
+ * Duplicate (set,binding) pairs, out-of-range values, and array_size 0
+ * are refused. Storage types parse: the artifact cross-check refuses them.
+ */
+static inline openagc_result openagc_psbc_metadata_extract_descriptor_bindings(
+    const uint8_t *json, uint32_t size, openagc_psbc_descriptor_binding *bindings,
+    uint32_t max_bindings, uint32_t *out_count)
+{
+    uint32_t index;
+    uint32_t array_begin = 0u;
+    uint32_t array_end = 0u;
+    uint32_t count = 0u;
+    openagc_result result;
+
+    if (out_count == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *out_count = 0u;
+    if (max_bindings != 0u && bindings == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    result = openagc_psbc_json_find_array(json, size, "descriptor_bindings", &array_begin,
+                                          &array_end);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+
+    index = array_begin;
+    while (index < array_end) {
+        uint32_t obj_end;
+        openagc_psbc_descriptor_binding entry;
+        uint32_t seen;
+
+        while (index < array_end &&
+               (json[index] == ' ' || json[index] == '\t' || json[index] == '\n' ||
+                json[index] == '\r' || json[index] == ',')) {
+            index++;
+        }
+        if (index >= array_end) {
+            break;
+        }
+        if (json[index] != '{') {
+            return OPENAGC_ERROR_INVALID_ARGUMENT;
+        }
+        obj_end = index + 1u;
+        {
+            uint32_t depth = 1u;
+
+            while (obj_end < array_end && depth != 0u) {
+                if (json[obj_end] == '{') {
+                    depth++;
+                } else if (json[obj_end] == '}') {
+                    depth--;
+                }
+                obj_end++;
+            }
+            if (depth != 0u) {
+                return OPENAGC_ERROR_INVALID_ARGUMENT;
+            }
+        }
+        if (openagc_psbc_json_object_uint(json, index, obj_end, "set", &entry.set) == 0 ||
+            openagc_psbc_json_object_uint(json, index, obj_end, "binding", &entry.binding) == 0 ||
+            openagc_psbc_json_object_uint(json, index, obj_end, "type", &entry.type) == 0 ||
+            openagc_psbc_json_object_uint(json, index, obj_end, "array_size",
+                                          &entry.array_size) == 0 ||
+            openagc_psbc_json_object_uint(json, index, obj_end, "offset", &entry.offset) == 0 ||
+            openagc_psbc_json_object_uint(json, index, obj_end, "stride", &entry.stride) == 0) {
+            return OPENAGC_ERROR_INVALID_ARGUMENT;
+        }
+        if (entry.set != 0u || entry.binding >= OPENAGC_PSBC_MAX_DESCRIPTOR_BINDINGS ||
+            entry.type > OPENAGC_PSBC_DESCRIPTOR_TYPE_STORAGE_IMAGE ||
+            entry.array_size == 0u) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+        for (seen = 0u; seen < count; ++seen) {
+            if (bindings[seen].set == entry.set && bindings[seen].binding == entry.binding) {
+                return OPENAGC_ERROR_INVALID_ARGUMENT;
+            }
+        }
+        if (count >= max_bindings) {
+            return OPENAGC_ERROR_CAPACITY;
+        }
+        bindings[count] = entry;
         count++;
         index = obj_end;
     }
@@ -566,6 +763,9 @@ typedef struct openagc_psbc_reflection {
     uint32_t empty_input_semantics;
     uint32_t empty_output_semantics;
     uint32_t empty_descriptor_bindings;
+    uint32_t descriptor_binding_count;
+    openagc_psbc_descriptor_binding
+        descriptor_bindings[OPENAGC_PSBC_MAX_DESCRIPTOR_BINDINGS];
 } openagc_psbc_reflection;
 
 /*
@@ -611,13 +811,17 @@ static inline openagc_result openagc_psbc_metadata_parse_reflection(
         (uint32_t)openagc_psbc_json_array_is_empty(json, size, "input_semantics");
     out->empty_output_semantics =
         (uint32_t)openagc_psbc_json_array_is_empty(json, size, "output_semantics");
-    out->empty_descriptor_bindings =
-        (uint32_t)openagc_psbc_json_array_is_empty(json, size, "descriptor_bindings");
-    if (out->empty_input_semantics == 0u || out->empty_output_semantics == 0u ||
-        out->empty_descriptor_bindings == 0u) {
-        /* Smoke fixtures are binding-less; non-empty arrays need a separate adapter review. */
+    if (out->empty_input_semantics == 0u || out->empty_output_semantics == 0u) {
+        /* Smoke fixtures are semantics-less; non-empty arrays need their own review. */
         return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
     }
+    result = openagc_psbc_metadata_extract_descriptor_bindings(
+        json, size, out->descriptor_bindings, OPENAGC_PSBC_MAX_DESCRIPTOR_BINDINGS,
+        &out->descriptor_binding_count);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    out->empty_descriptor_bindings = (out->descriptor_binding_count == 0u) ? 1u : 0u;
     optional = openagc_psbc_json_optional_uint(json, size, "base_vertex_user_data_dword",
                                                &out->base_vertex_user_data_dword);
     if (optional < 0) {
@@ -662,24 +866,154 @@ static inline openagc_result openagc_psbc_reflection_validate(
 
 /*
  * Cross-check a caller-supplied OpenAGC artifact envelope against parsed
- * PSBC reflection. Empty descriptor_bindings require zero OpenAGC
- * bindings/textures. Non-empty PSBC bindings remain unsupported.
+ * PSBC reflection.
+ *
+ * Empty descriptor_bindings require zero OpenAGC bindings/textures. Each
+ * metadata binding must be backed by exactly one OpenAGC declaration of
+ * the matching kind at the same (set,binding): uniform buffer ->
+ * OPENAGC_SHADER_BINDING_UNIFORM_BUFFER, combined image sampler ->
+ * texture. Storage bindings, arrays (array_size != 1), and any set other
+ * than 0 are UNSUPPORTED_OPERATION; a missing or extra declaration is
+ * INTEGRITY. gpu_executable stays 0 either way.
  */
 static inline openagc_result openagc_psbc_reflection_check_artifact_desc(
     const openagc_psbc_reflection *reflection, const openagc_shader_artifact_desc *desc)
 {
+    uint32_t i;
+    uint32_t j;
+
     if (reflection == NULL || desc == NULL) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
     if (desc->code_size != reflection->machine_code_size) {
         return OPENAGC_ERROR_INTEGRITY;
     }
-    if (reflection->empty_descriptor_bindings == 0u) {
-        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
-    }
-    if (desc->binding_count != 0u || desc->texture_count != 0u) {
+    if (reflection->descriptor_binding_count != desc->binding_count + desc->texture_count) {
         return OPENAGC_ERROR_INTEGRITY;
     }
+    for (i = 0u; i < reflection->descriptor_binding_count; ++i) {
+        const openagc_psbc_descriptor_binding *entry = &reflection->descriptor_bindings[i];
+        uint32_t matched = 0u;
+
+        if (entry->set != 0u || entry->array_size != 1u) {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+        if (entry->type == OPENAGC_PSBC_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+            for (j = 0u; j < desc->binding_count; ++j) {
+                if (desc->bindings[j].set == entry->set &&
+                    desc->bindings[j].binding == entry->binding &&
+                    desc->bindings[j].kind == OPENAGC_SHADER_BINDING_UNIFORM_BUFFER) {
+                    matched = 1u;
+                    break;
+                }
+            }
+        } else if (entry->type == OPENAGC_PSBC_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+            for (j = 0u; j < desc->texture_count; ++j) {
+                if (desc->textures[j].set == entry->set &&
+                    desc->textures[j].binding == entry->binding) {
+                    matched = 1u;
+                    break;
+                }
+            }
+        } else {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+        if (matched == 0u) {
+            return OPENAGC_ERROR_INTEGRITY;
+        }
+    }
+    return OPENAGC_OK;
+}
+
+/*
+ * Fail-closed typed binding -> OpenAGC resource map. Walks the metadata
+ * binding order, resolves each uniform-buffer slot from `resources` and
+ * each combined-image-sampler slot from `textures`, and writes the
+ * plan-order arrays (`out_resources`, `out_textures`) plus their counts.
+ *
+ * Refuses: storage/unknown types, array_size != 1, set != 0, a missing or
+ * duplicate input slot, and any input slot the metadata does not declare
+ * (INVALID_ARGUMENT). Resource validity (buffer/image pointers, sizes) is
+ * the pipeline constructor's job, not this map's.
+ */
+static inline openagc_result openagc_psbc_reflection_map_resources(
+    const openagc_psbc_reflection *reflection, const openagc_shader_resource_binding *resources,
+    uint32_t resource_count, const openagc_shader_texture_binding *textures,
+    uint32_t texture_count, openagc_shader_resource_binding *out_resources,
+    openagc_shader_texture_binding *out_textures, uint32_t *out_resource_count,
+    uint32_t *out_texture_count)
+{
+    uint8_t used_resources[OPENAGC_PSBC_MAX_DESCRIPTOR_BINDINGS];
+    uint8_t used_textures[OPENAGC_PSBC_MAX_DESCRIPTOR_BINDINGS];
+    uint32_t resource_out = 0u;
+    uint32_t texture_out = 0u;
+    uint32_t i;
+    uint32_t j;
+
+    if (reflection == NULL || out_resource_count == NULL || out_texture_count == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *out_resource_count = 0u;
+    *out_texture_count = 0u;
+    if (resource_count > OPENAGC_PSBC_MAX_DESCRIPTOR_BINDINGS ||
+        texture_count > OPENAGC_PSBC_MAX_DESCRIPTOR_BINDINGS) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if ((resource_count != 0u && (resources == NULL || out_resources == NULL)) ||
+        (texture_count != 0u && (textures == NULL || out_textures == NULL))) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    memset(used_resources, 0, sizeof(used_resources));
+    memset(used_textures, 0, sizeof(used_textures));
+
+    for (i = 0u; i < reflection->descriptor_binding_count; ++i) {
+        const openagc_psbc_descriptor_binding *entry = &reflection->descriptor_bindings[i];
+        uint32_t matches = 0u;
+        uint32_t found = 0u;
+
+        if (entry->set != 0u || entry->array_size != 1u) {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+        if (entry->type == OPENAGC_PSBC_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+            for (j = 0u; j < resource_count; ++j) {
+                if (resources[j].set == entry->set && resources[j].binding == entry->binding) {
+                    matches++;
+                    found = j;
+                }
+            }
+            if (matches != 1u) {
+                return OPENAGC_ERROR_INVALID_ARGUMENT;
+            }
+            used_resources[found] = 1u;
+            out_resources[resource_out++] = resources[found];
+        } else if (entry->type == OPENAGC_PSBC_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+            for (j = 0u; j < texture_count; ++j) {
+                if (textures[j].set == entry->set && textures[j].binding == entry->binding) {
+                    matches++;
+                    found = j;
+                }
+            }
+            if (matches != 1u) {
+                return OPENAGC_ERROR_INVALID_ARGUMENT;
+            }
+            used_textures[found] = 1u;
+            out_textures[texture_out++] = textures[found];
+        } else {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+    }
+    for (j = 0u; j < resource_count; ++j) {
+        if (used_resources[j] == 0u) {
+            return OPENAGC_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    for (j = 0u; j < texture_count; ++j) {
+        if (used_textures[j] == 0u) {
+            return OPENAGC_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    *out_resource_count = resource_out;
+    *out_texture_count = texture_out;
     return OPENAGC_OK;
 }
 
