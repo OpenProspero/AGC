@@ -265,9 +265,9 @@ Blocked by two independent gates:
    smoke.vert metadata). Step S proved the full host-aligned register
    program (context + SH + linkage) + EOP in one IB. Step T proved the
    smoke.frag register program (SET_CONTEXT ×9 + graphics SET_SH ×4 +
-   EOP; no linkage) on console. Step U (vert+frag combined register
-   program + EOP) is the next graphics-adjacent gate; DRAW/CB remain
-   unavailable.
+   EOP; no linkage) on console. Step U proved the combined vert+frag
+   host register program (Step S body + Step T body) + EOP in one IB
+   (93 dwords). Draw/render packets remain unavailable.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
