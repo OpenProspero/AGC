@@ -109,6 +109,10 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     and host `openagc_pm4_encode_graphics_context_eop` is locked. One
     push, no retries. smoke.vert `context_registers` only — no linkage,
     no SET_SH, no DRAW, no CB/DB.
+17. `set_context_sh_eop.c` (Step Q, SET_CONTEXT ×3 + SET_SH ×4 + EOP)
+    only after Steps O–P and host
+    `openagc_pm4_encode_graphics_context_sh_eop` is locked. One push, no
+    retries. Same proven pairs; no linkage, no DRAW, no CB/DB.
 
 ## Toolchain result (2026-09-25)
 

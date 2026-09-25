@@ -697,5 +697,39 @@ smoke.vert `context_registers` pairs. It does **not** unlock linkage
 writes, SET_SH combination, CB/DB, DRAW, tiling, VideoOut, or host
 `gpu_execution`. `hardware_qualified` stays **false**. The
 `openagc_ps5_policy` target stays deny-all. The next graphics-adjacent
-gate remains an independently owned FW9.40 capture of CB/DB bind or
-DRAW packets — inventing those is still out of scope.
+gate is a bounded SET_CONTEXT + graphics SET_SH combination IB
+(Step Q); inventing CB/DB or DRAW remains out of scope.
+
+## Bounded experiment: SET_CONTEXT + graphics SET_SH + EOP (Step Q)
+
+**Question.** Does one FW9.40 IB that concatenates the Step P
+`SET_CONTEXT_REG` ×3 pairs with the Step O graphics-bank `SET_SH_REG`
+×4 pairs (PGM patched to uploaded smoke.vert code) — same offsets/
+values, **without** linkage, DRAW, or CB/DB — plus the shared EOP+NOP
+trailer, complete with a fired marker and no GPU fault?
+
+**Why it matters.** Host PSBC plans already emit SET_CONTEXT then
+SET_SH in one snapshot (`openagc_psbc_reflection_encode_register_program`).
+Steps O and P proved each half alone. Owning the combined vehicle on
+console is the smallest proof that the host's full (non-linkage)
+register program is a safe IB shape on this firmware, without inventing
+CB/DB or DRAW.
+
+**Why not linkage / DRAW / CB yet.** Unchanged from Step P: linkage
+enables geometry stages; DRAW and CB/DB still lack an independently
+owned FW9.40 capture.
+
+**Entry conditions.** Steps A–P proven on `fw=0x9400008`; host encoding
+locked in `pm4_graphics_fw940.h`
+(`openagc_pm4_encode_graphics_context_sh_eop`); payload ELF-validated;
+one push, no retries.
+
+**Payload (`tools/payload/set_context_sh_eop.c`).** One IB of
+`OPENAGC_PM4_GRAPHICS_CONTEXT_SH_EOP_WORDS(3,4)` (=45) dwords. Context
+pairs from Step P; SH pairs + code upload from Step O. No linkage,
+no DRAW, no CB/DB.
+
+**Status before push.** Host encoding locked in CTest
+(`test_openagc_psbc_adapter`).
+
+**Observed result.** *Pending one validated push.*
