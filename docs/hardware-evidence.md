@@ -849,7 +849,42 @@ graphics SET_SH + linkage SET_CONTEXT) + EOP on console in host snapshot
 order. It does **not** unlock CB/DB, DRAW, tiling, VideoOut, or host
 `gpu_execution`. `hardware_qualified` stays **false**. The
 `openagc_ps5_policy` target stays deny-all. The next graphics-adjacent
-gate remains an independently owned FW9.40 capture of CB/DB bind or DRAW
-packets — inventing those is still out of scope. Host plans may treat
-the full register snapshot as console-proven for encode/record only;
-draws stay `NOT_READY`.
+gate is a bounded smoke.frag register program IB (Step T: context + SH
++ EOP, no linkage); inventing CB/DB or DRAW remains out of scope. Host
+plans may treat the full **vertex** register snapshot as console-proven
+for encode/record only; draws stay `NOT_READY`.
+
+## Bounded experiment: smoke.frag SET_CONTEXT + graphics SET_SH + EOP (Step T)
+
+**Question.** Does one FW9.40 IB that concatenates the nine smoke.frag
+`context_registers` pairs with the four smoke.frag graphics-bank
+`shader_registers` pairs (PGM patched to uploaded smoke.frag code) —
+same offsets/values from the pin-checked PSBC fixture, **without**
+linkage, DRAW, or CB/DB — plus the shared EOP+NOP trailer, complete with
+a fired marker and no GPU fault?
+
+**Why it matters.** Host PSBC graphics plans already concatenate
+smoke.vert + smoke.frag register snapshots. Step S proved the full
+vertex side on console; the pixel half (9 context + 4 SH, `linkage:
+null`) has only been encoded on the host. Owning the frag ctx+SH vehicle
+on console — same Step Q encoder, different verified pairs — closes the
+pixel side of the Stage-5 register snapshot without inventing CB/DB or
+DRAW.
+
+**Why not linkage / DRAW / CB yet.** smoke.frag metadata has
+`linkage: null`. DRAW and CB/DB still lack an independently owned
+FW9.40 capture.
+
+**Entry conditions.** Steps A–S proven on `fw=0x9400008`; host encoding
+reuses `openagc_pm4_encode_graphics_context_sh_eop` (Step Q vehicle)
+with smoke.frag pairs; payload ELF-validated; one push, no retries.
+
+**Payload (`tools/payload/set_context_sh_frag_eop.c`).** One IB of
+`OPENAGC_PM4_GRAPHICS_CONTEXT_SH_EOP_WORDS(9,4)` (=63) dwords. Context
+and SH pairs from `smoke.frag.metadata.json`; code upload of
+`smoke.frag.gfx1013.bin` (48 bytes). No linkage, no DRAW, no CB/DB.
+
+**Status before push.** Host encoding locked in CTest
+(`test_openagc_psbc_adapter`); Step T encoder byte-identical to
+`openagc_psbc_reflection_encode_register_program_eop` for smoke.frag
+(unpatched PGM LO/HI match fixture zeros until runtime patch).
