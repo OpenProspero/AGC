@@ -444,6 +444,70 @@ static int test_psbc_pgm_patch_and_eop(void)
         CHECK(full_words[full_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] ==
               OPENAGC_PM4_EOP_HEADER);
     }
+    /* Vert + frag host snapshot + EOP (Step U: Step S body + Step T body). */
+    {
+        static const uint32_t vert_ctx_offsets[] = { 433u, 451u, 519u };
+        static const uint32_t vert_ctx_values[] = { 128u, 4u, 0u };
+        static const uint32_t vert_sh_offsets[] = { 72u, 73u, 74u, 75u };
+        static const uint32_t frag_ctx_offsets[] = { 452u, 453u, 435u, 436u, 438u,
+                                                     440u, 515u, 143u, 784u };
+        static const uint32_t frag_ctx_values[] = { 0u, 9u, 128u, 128u, 32768u,
+                                                    0u, 16u, 15u, 0u };
+        static const uint32_t frag_sh_offsets[] = { 8u, 9u, 10u, 11u };
+        static const uint32_t frag_sh_values[] = { 0u, 0u, 36438017u, 4u };
+        uint32_t vert_sh_values[4];
+        uint32_t combo_words[OPENAGC_PM4_GRAPHICS_VERT_FRAG_EOP_WORDS(3u, 4u, 9u, 4u)];
+        uint32_t combo_count;
+        uint32_t host_words[128];
+        uint32_t host_count;
+        openagc_psbc_reflection frag_reflection;
+        uint8_t *frag_json = NULL;
+        uint32_t frag_json_size = 0u;
+
+        vert_sh_values[0] = reflection.shader_values[0];
+        vert_sh_values[1] = reflection.shader_values[1];
+        vert_sh_values[2] = reflection.shader_values[2];
+        vert_sh_values[3] = reflection.shader_values[3];
+        CHECK(reflection.has_linkage == 1u);
+        combo_count = openagc_pm4_encode_graphics_vert_frag_eop(
+            vert_ctx_offsets, vert_ctx_values, 3u, vert_sh_offsets, vert_sh_values, 4u,
+            reflection.linkage_ge_cntl_offset, reflection.linkage_ge_cntl_value,
+            reflection.linkage_stages_en_offset, reflection.linkage_stages_en_value,
+            reflection.linkage_user_vgpr_en_offset, reflection.linkage_user_vgpr_en_value,
+            frag_ctx_offsets, frag_ctx_values, 9u, frag_sh_offsets, frag_sh_values, 4u, 1u,
+            UINT64_C(0x3000), combo_words);
+        CHECK(combo_count == OPENAGC_PM4_GRAPHICS_VERT_FRAG_EOP_WORDS(3u, 4u, 9u, 4u));
+        CHECK(combo_count == 93u);
+        CHECK(combo_words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(combo_words[1] == 433u && combo_words[2] == 128u);
+        CHECK(combo_words[9] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_SH_REG, 3u, 0u));
+        CHECK(combo_words[10] == 72u && combo_words[11] == vert_sh_values[0]);
+        CHECK(combo_words[21] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(combo_words[22] == 603u && combo_words[23] == 131200u);
+        CHECK(combo_words[30] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(combo_words[31] == 452u && combo_words[32] == 0u);
+        CHECK(combo_words[57] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_SH_REG, 3u, 0u));
+        CHECK(combo_words[58] == 8u && combo_words[59] == 0u);
+        CHECK(combo_words[combo_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] ==
+              OPENAGC_PM4_EOP_HEADER);
+
+        CHECK(load_file("tests/fixtures/psbc_smoke/smoke.frag.metadata.json", &frag_json,
+                        &frag_json_size) ||
+              load_file("../tests/fixtures/psbc_smoke/smoke.frag.metadata.json", &frag_json,
+                        &frag_json_size));
+        EXPECT(openagc_psbc_metadata_parse_reflection(frag_json, frag_json_size,
+                                                      &frag_reflection),
+               OPENAGC_OK);
+        free(frag_json);
+        CHECK(frag_reflection.has_linkage == 0u);
+        host_count = openagc_psbc_reflection_encode_register_program(&reflection, host_words);
+        host_count += openagc_psbc_reflection_encode_register_program(
+            &frag_reflection, host_words + host_count);
+        openagc_pm4_encode_eop_with_nops(UINT64_C(0x3000), 1u, host_words + host_count);
+        host_count += OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+        CHECK(combo_count == host_count);
+        CHECK(memcmp(combo_words, host_words, (size_t)combo_count * sizeof(uint32_t)) == 0);
+    }
     free(json);
     return 0;
 }
