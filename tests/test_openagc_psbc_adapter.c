@@ -319,6 +319,31 @@ static int test_psbc_pgm_patch_and_eop(void)
         CHECK(ctx_words[7] == 519u && ctx_words[8] == 0u);
         CHECK(ctx_words[ctx_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] == OPENAGC_PM4_EOP_HEADER);
     }
+    /* SET_CONTEXT then graphics SET_SH + EOP (Step Q vehicle: no linkage). */
+    {
+        static const uint32_t ctx_offsets[] = { 433u, 451u, 519u };
+        static const uint32_t ctx_values[] = { 128u, 4u, 0u };
+        static const uint32_t sh_offsets[] = { 72u, 73u, 74u, 75u };
+        uint32_t sh_values[4];
+        uint32_t combo_words[OPENAGC_PM4_GRAPHICS_CONTEXT_SH_EOP_WORDS(3u, 4u)];
+        uint32_t combo_count;
+
+        sh_values[0] = reflection.shader_values[0];
+        sh_values[1] = reflection.shader_values[1];
+        sh_values[2] = reflection.shader_values[2];
+        sh_values[3] = reflection.shader_values[3];
+        combo_count = openagc_pm4_encode_graphics_context_sh_eop(
+            ctx_offsets, ctx_values, 3u, sh_offsets, sh_values, 4u, 1u, UINT64_C(0x3000),
+            combo_words);
+        CHECK(combo_count == OPENAGC_PM4_GRAPHICS_CONTEXT_SH_EOP_WORDS(3u, 4u));
+        CHECK(combo_count == 45u);
+        CHECK(combo_words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(combo_words[1] == 433u && combo_words[2] == 128u);
+        CHECK(combo_words[9] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_SH_REG, 3u, 0u));
+        CHECK(combo_words[10] == 72u && combo_words[11] == sh_values[0]);
+        CHECK(combo_words[combo_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] ==
+              OPENAGC_PM4_EOP_HEADER);
+    }
     free(json);
     return 0;
 }
