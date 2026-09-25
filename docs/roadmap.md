@@ -280,10 +280,11 @@ Blocked by two independent gates:
    gfx10 `SPI_*`/`PA_*`/`GE_*`/`VGT_*`/`DB_SHADER_CONTROL`/
    `CB_SHADER_MASK` (`pm4_context_regs_gfx10.h`); smoke does **not** own
    `CB_COLOR0_BASE`/pitch/tiling — do not pin CB_BIND from smoke. Step W
-   scaffolds public-cite `COPY_DATA` register→memory probe +
-   `tag=ctxreg-cb` dump intake (`pm4_copy_data_fw940.h`) to obtain
-   COLOR_BASE-class values without inventing; pin count stays 0 until a
-   real capture is owned.
+   (relative COPY_DATA `src_lo`) was console-negative (`completed=0`,
+   poison). Step X scaffolds the distinct absolute aperture form
+   (`CONTEXT_REG_START+offset`, `tag=ctxreg-abs`) from
+   `PACKET3_SET_CONTEXT_REG_START` + `emit_rreg`; pin count stays 0 until
+   a real capture is owned. Do not retry Step W.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the

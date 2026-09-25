@@ -141,6 +141,12 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     `openagc_pm4_encode_copy_data_cb_probe_eop` and `tag=ctxreg-cb` parse
     are locked. One push, no retries. Reads public offsets only; does
     not SET CB binds or invent values; dump is not a CB pin.
+    **Console-negative** (`completed=0`, poison) — do not retry.
+24. `ctxreg_abs_dump_eop.c` (Step X, absolute `CONTEXT_REG_START+offset`
+    COPY_DATA src → `openagc-ib-dump-ctxreg-abs.log`) only after host
+    `openagc_pm4_encode_copy_data_cb_probe_abs_eop` and `tag=ctxreg-abs`
+    parse are locked. Distinct from Step W; one push, no retries. Same
+    probe set; no invent CB binds.
 
 ## Toolchain result (2026-09-25)
 

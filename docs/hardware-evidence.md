@@ -1096,8 +1096,42 @@ This proves the dump vehicle and that the public-cite `COPY_DATA`
 register→memory encoding used here did **not** complete on the FW9.40
 graphics submit path within the deadline. It does **not** unlock CB/DB
 binds, DRAW, or owned COLOR_BASE values. `hardware_qualified` stays
-**false**; `OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**. No retry
-of alternate COPY_DATA encodings without a separate reviewed cite.
+**false**; `OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**. Do **not**
+retry this relative-offset encoding. Step X tests the distinct absolute
+aperture form (`CONTEXT_REG_START+offset`) under a separate cite.
+
+## Bounded experiment: absolute COPY_DATA CB probe (Step X)
+
+**Question.** Does the same public `PACKET3_COPY_DATA` control as Step W
+complete when `src_lo` uses the absolute context aperture address
+`PACKET3_SET_CONTEXT_REG_START (0xA000) + relative_offset` instead of the
+relative SET_CONTEXT dword index alone?
+
+**Hypothesis (public cite).** `gfx_v10_0_ring_emit_rreg` passes absolute
+mm-mapped register dword addresses as `src_lo`. Context registers programmed
+via `PACKET3_SET_CONTEXT_REG` are relative to
+`PACKET3_SET_CONTEXT_REG_START` (`soc15d.h` `0x0000a000`). Step W used
+relative indices (e.g. `CB_COLOR0_BASE=792`) and timed out; Step X uses
+`0xA000+792` (=`0xA318`) for the same probe set. Control word unchanged
+(`SRC_SEL=reg|DST_SEL=mem|WR_CONFIRM`). Not a blind retry of Step W.
+
+**Design.** `tools/payload/ctxreg_abs_dump_eop.c` encodes
+`openagc_pm4_encode_copy_data_cb_probe_abs_eop`, submits once, polls EOP,
+writes `/data/prosperoai/openagc-ib-dump-ctxreg-abs.log`. Host
+`openagc_ib_dump_parse` accepts `tag=ctxreg-abs` as `CTXREG_ABS` with
+`evidence_qualified=0`. Same eight public offsets as Step W; no invent
+CB SET values; pin table stays empty.
+
+**Why it matters.** Stage 5 still needs owned COLOR_BASE-class *values*.
+If absolute addressing completes, the dump may record live residue or
+zeros without inventing binds. If it also times out, COPY_DATA
+register→memory on this graphics submit path remains unproven and needs
+a different public-cite path (not another offset tweak without review).
+
+**Status.** Host encode + dump parse locked. Console push recorded below
+when executed.
+
+**Artifact.** *(pending one validated push)*
 
 ### Stage 6/7 refuse contracts (fail-closed scaffold)
 
