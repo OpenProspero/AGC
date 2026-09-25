@@ -16,8 +16,10 @@
  * real cite is pinned in the evidence table (currently empty).
  *
  * PSBC smoke metadata owns SPI/PA/GE/VGT/DB_SHADER_CONTROL/CB_SHADER_MASK
- * SET_CONTEXT pairs (console Steps P–U) but NOT CB_COLOR0_BASE/pitch/
- * tiling — do not pin a CB_BIND digest derived from smoke alone.
+ * SET_CONTEXT pairs (console Steps P–U) but NOT CB_COLOR0_INFO/ATTRIB/
+ * VIEW/tiling. Step Z may own CB_COLOR0_BASE(+EXT) from a GPU VA via
+ * public Mesa va>>8 encoding + absolute COPY_DATA match, but that alone
+ * is not a full CB_BIND capture digest to pin here.
  *
  * Do not emit PACKET3_DRAW_INDEX_AUTO or CB/DB register programs from
  * guessed offsets/values. Capture bytes must come from an independently

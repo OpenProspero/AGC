@@ -31,8 +31,11 @@
  *   Console-proven completed=1 (COLOR_BASE-class zeros; masks ffffffff).
  * Step Y: SET_CONTEXT smoke-owned SPI/PA/DB_SHADER/CB_SHADER_MASK values,
  *   then absolute COPY_DATA readback (round-trip). Not a COLOR_BASE bind.
+ * Step Z: SET_CONTEXT CB_COLOR0_BASE + BASE_EXT from owned GPU VA (Mesa
+ *   encoding va>>8 / (va>>8)>>32) plus owned CB_SHADER_MASK, then absolute
+ *   COPY_DATA of the CB probe set. Does not invent INFO/ATTRIB/VIEW/DRAW.
  *
- * Does not SET color binds and does not invent CB values.
+ * Does not invent CB INFO/ATTRIB values.
  * hardware_qualified / gpu_executable stay false.
  */
 
@@ -63,6 +66,27 @@
 #define OPENAGC_PM4_CTXREG_RT_EOP_WORDS                                     \
     (OPENAGC_PM4_CTXREG_RT_SET_WORDS + OPENAGC_PM4_CTXREG_RT_COPY_WORDS +  \
      OPENAGC_PM4_EOP_WITH_NOP_WORDS)
+
+/* Step Z: SET BASE+BASE_EXT+SHADER_MASK + abs COPY_DATA CB probe + EOP. */
+#define OPENAGC_PM4_CTXREG_CB_BIND_SET_WORDS                                 \
+    ((uint32_t)(OPENAGC_GFX10_CTXREG_CB_BIND_SET_COUNT *                   \
+                OPENAGC_PM4_SET_CONTEXT_WORDS(1u)))
+#define OPENAGC_PM4_CTXREG_CB_BIND_COPY_WORDS                               \
+    ((uint32_t)(OPENAGC_GFX10_CB_PROBE_COUNT * OPENAGC_PM4_COPY_DATA_WORDS))
+#define OPENAGC_PM4_CTXREG_CB_BIND_EOP_WORDS                                \
+    (OPENAGC_PM4_CTXREG_CB_BIND_SET_WORDS +                                \
+     OPENAGC_PM4_CTXREG_CB_BIND_COPY_WORDS + OPENAGC_PM4_EOP_WITH_NOP_WORDS)
+
+/* Mesa radeonsi/radv: CB_COLORi_BASE = (gpu_va + surf_offset) >> 8. */
+static inline uint32_t openagc_pm4_cb_color0_base_lo(uint64_t color_va)
+{
+    return (uint32_t)(color_va >> 8);
+}
+
+static inline uint32_t openagc_pm4_cb_color0_base_ext(uint64_t color_va)
+{
+    return (uint32_t)((color_va >> 8) >> 32);
+}
 
 /* Absolute COPY_DATA src for a SET_CONTEXT_REG relative offset. */
 static inline uint32_t openagc_pm4_copy_data_src_context_abs(uint32_t relative_offset)
@@ -144,6 +168,41 @@ static inline uint32_t openagc_pm4_encode_ctxreg_rt_abs_eop(
     for (i = 0u; i < OPENAGC_GFX10_CTXREG_RT_COUNT; ++i) {
         openagc_pm4_encode_copy_data_reg_to_mem(
             openagc_pm4_copy_data_src_context_abs(openagc_gfx10_ctxreg_rt_offsets[i]),
+            dst_base_va + (uint64_t)i * 4u, words + cursor);
+        cursor += OPENAGC_PM4_COPY_DATA_WORDS;
+    }
+    openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
+    return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+}
+
+/*
+ * Step Z vehicle: SET_CONTEXT owned CB_COLOR0_BASE + BASE_EXT (from
+ * color_va via public Mesa va>>8 encoding) and owned CB_SHADER_MASK, then
+ * absolute COPY_DATA of the eight CB probe offsets, then EOP.
+ * Does not SET INFO/ATTRIB/VIEW/TARGET_MASK (unowned). words must hold
+ * OPENAGC_PM4_CTXREG_CB_BIND_EOP_WORDS.
+ */
+static inline uint32_t openagc_pm4_encode_ctxreg_cb_bind_abs_eop(
+    uint64_t color_va, uint64_t dst_base_va, uint32_t sequence,
+    uint64_t marker_va, uint32_t *words)
+{
+    static const uint32_t offsets[OPENAGC_GFX10_CTXREG_CB_BIND_SET_COUNT] = {
+        OPENAGC_GFX10_CB_COLOR0_BASE, OPENAGC_GFX10_CB_COLOR0_BASE_EXT,
+        OPENAGC_GFX10_CB_SHADER_MASK
+    };
+    uint32_t values[OPENAGC_GFX10_CTXREG_CB_BIND_SET_COUNT];
+    uint32_t i;
+    uint32_t cursor;
+
+    values[0] = openagc_pm4_cb_color0_base_lo(color_va);
+    values[1] = openagc_pm4_cb_color0_base_ext(color_va);
+    values[2] = OPENAGC_GFX10_CB_SHADER_MASK_OWNED;
+
+    cursor = openagc_pm4_encode_psbc_context_pairs(
+        offsets, values, OPENAGC_GFX10_CTXREG_CB_BIND_SET_COUNT, words);
+    for (i = 0u; i < OPENAGC_GFX10_CB_PROBE_COUNT; ++i) {
+        openagc_pm4_encode_copy_data_reg_to_mem(
+            openagc_pm4_copy_data_src_context_abs(openagc_gfx10_cb_probe_offsets[i]),
             dst_base_va + (uint64_t)i * 4u, words + cursor);
         cursor += OPENAGC_PM4_COPY_DATA_WORDS;
     }

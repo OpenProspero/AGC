@@ -16,12 +16,12 @@
  * SET_SH_REG offsets use SH base 0xB000: pkt = (R_00Bxxx - 0xB000) >> 2.
  *
  * Offsets only — never invent register *values*. Smoke metadata values
- * are owned via PSBC fixtures + Steps P–U; CB_COLOR*_BASE/PITCH/… values
- * are not present in smoke and must come from an independently owned
- * console readback/capture. Step W (relative COPY_DATA src) was
- * console-negative; Step X proved absolute CONTEXT_REG_START+offset;
- * Step Y uses that proven abs path after SET_CONTEXT of smoke-owned
- * SPI/PA/DB_SHADER/CB_SHADER_MASK values (round-trip; not COLOR_BASE).
+ * are owned via PSBC fixtures + Steps P–U; CB_COLOR*_BASE values are not
+ * present in smoke. Step W (relative COPY_DATA src) was console-negative;
+ * Step X proved absolute CONTEXT_REG_START+offset; Step Y used that path
+ * after SET_CONTEXT of smoke-owned SPI/PA/DB_SHADER/CB_SHADER_MASK values.
+ * Step Z SETs owned CB_COLOR0_BASE(+EXT) from a GPU VA (Mesa: va>>8) then
+ * absolute COPY_DATA readback — not INFO/ATTRIB invent, not DRAW.
  * hardware_qualified stays false.
  */
 
@@ -60,11 +60,24 @@ typedef struct openagc_gfx10_reg_name {
 /* Public CB bind class — NOT in smoke metadata (gap for Stage 5). */
 #define OPENAGC_GFX10_CB_TARGET_MASK 142u
 #define OPENAGC_GFX10_CB_COLOR0_BASE 792u
-#define OPENAGC_GFX10_CB_COLOR0_PITCH 793u
-#define OPENAGC_GFX10_CB_COLOR0_SLICE 794u
+/*
+ * GFX10 (Mesa R_028C64_CB_COLOR0_BASE_EXT): dword after BASE is BASE_EXT,
+ * not SI-era PITCH. Value = (gpu_va >> 8) >> 32. Do not program as pitch.
+ */
+#define OPENAGC_GFX10_CB_COLOR0_BASE_EXT 793u
+#define OPENAGC_GFX10_CB_COLOR0_PITCH OPENAGC_GFX10_CB_COLOR0_BASE_EXT
+/*
+ * GFX10 (Mesa R_028C68_CB_COLOR0_ATTRIB2): not SI-era SLICE. INFO/ATTRIB
+ * remain unowned; do not invent values for a "full" bind.
+ */
+#define OPENAGC_GFX10_CB_COLOR0_ATTRIB2 794u
+#define OPENAGC_GFX10_CB_COLOR0_SLICE OPENAGC_GFX10_CB_COLOR0_ATTRIB2
 #define OPENAGC_GFX10_CB_COLOR0_VIEW 795u
 #define OPENAGC_GFX10_CB_COLOR0_INFO 796u
 #define OPENAGC_GFX10_CB_COLOR0_ATTRIB 797u
+
+/* Owned smoke.frag CB_SHADER_MASK — cite fixture; used by Steps Y/Z. */
+#define OPENAGC_GFX10_CB_SHADER_MASK_OWNED 15u
 
 /* smoke.vert / smoke.frag shader_registers (SET_SH_REG) */
 #define OPENAGC_GFX10_SPI_SHADER_PGM_LO_VS 72u
@@ -77,14 +90,18 @@ typedef struct openagc_gfx10_reg_name {
 #define OPENAGC_GFX10_SPI_SHADER_PGM_RSRC2_PS 11u
 
 /*
- * Fixed CB probe order for COLOR_BASE-class readback dumps (Steps W/X).
- * Values must come from console COPY_DATA; do not invent.
+ * Fixed CB probe order for COLOR_BASE-class readback dumps (Steps W/X/Z).
+ * Indices: [0]=BASE [1]=BASE_EXT [2]=ATTRIB2 [3]=VIEW [4]=INFO [5]=ATTRIB
+ * [6]=TARGET_MASK [7]=SHADER_MASK. Values from console COPY_DATA only.
  */
 #define OPENAGC_GFX10_CB_PROBE_COUNT 8u
+#define OPENAGC_GFX10_CB_PROBE_IDX_BASE 0u
+#define OPENAGC_GFX10_CB_PROBE_IDX_BASE_EXT 1u
+#define OPENAGC_GFX10_CB_PROBE_IDX_SHADER_MASK 7u
 
 static const uint32_t openagc_gfx10_cb_probe_offsets[OPENAGC_GFX10_CB_PROBE_COUNT] = {
-    OPENAGC_GFX10_CB_COLOR0_BASE,   OPENAGC_GFX10_CB_COLOR0_PITCH,
-    OPENAGC_GFX10_CB_COLOR0_SLICE,  OPENAGC_GFX10_CB_COLOR0_VIEW,
+    OPENAGC_GFX10_CB_COLOR0_BASE,   OPENAGC_GFX10_CB_COLOR0_BASE_EXT,
+    OPENAGC_GFX10_CB_COLOR0_ATTRIB2, OPENAGC_GFX10_CB_COLOR0_VIEW,
     OPENAGC_GFX10_CB_COLOR0_INFO,   OPENAGC_GFX10_CB_COLOR0_ATTRIB,
     OPENAGC_GFX10_CB_TARGET_MASK,   OPENAGC_GFX10_CB_SHADER_MASK
 };
@@ -105,8 +122,15 @@ static const uint32_t openagc_gfx10_ctxreg_rt_offsets[OPENAGC_GFX10_CTXREG_RT_CO
 
 /* Owned smoke.frag values — do not invent; cite the fixture JSON. */
 static const uint32_t openagc_gfx10_ctxreg_rt_values[OPENAGC_GFX10_CTXREG_RT_COUNT] = {
-    9u, 128u, 128u, 32768u, 16u, 15u
+    9u, 128u, 128u, 32768u, 16u, OPENAGC_GFX10_CB_SHADER_MASK_OWNED
 };
+
+/*
+ * Step Z owned CB BASE bind pairs (dynamic BASE/BASE_EXT from color VA).
+ * INFO/ATTRIB/VIEW/TARGET_MASK are deliberately absent — public offsets
+ * exist but safe values are not owned without more capture evidence.
+ */
+#define OPENAGC_GFX10_CTXREG_CB_BIND_SET_COUNT 3u
 
 static const openagc_gfx10_reg_name openagc_gfx10_psbc_smoke_regs[] = {
     /* vert context */
@@ -152,11 +176,14 @@ static const openagc_gfx10_reg_name openagc_gfx10_psbc_smoke_regs[] = {
       "smoke.frag SH" },
     { OPENAGC_GFX10_SPI_SHADER_PGM_RSRC2_PS, "SPI_SHADER_PGM_RSRC2_PS", 0u, 1u,
       "smoke.frag SH" },
-    /* CB bind gap (offsets public; values not smoke-owned) */
+    /* CB bind gap (offsets public; BASE value owned only after Step Z VA) */
     { OPENAGC_GFX10_CB_TARGET_MASK, "CB_TARGET_MASK", 1u, 0u, "not in smoke" },
-    { OPENAGC_GFX10_CB_COLOR0_BASE, "CB_COLOR0_BASE", 1u, 0u, "Stage 5 gap" },
-    { OPENAGC_GFX10_CB_COLOR0_PITCH, "CB_COLOR0_PITCH", 1u, 0u, "Stage 5 gap" },
-    { OPENAGC_GFX10_CB_COLOR0_SLICE, "CB_COLOR0_SLICE", 1u, 0u, "Stage 5 gap" },
+    { OPENAGC_GFX10_CB_COLOR0_BASE, "CB_COLOR0_BASE", 1u, 0u,
+      "Stage 5; Mesa va>>8; Step Z may own from GPU VA" },
+    { OPENAGC_GFX10_CB_COLOR0_BASE_EXT, "CB_COLOR0_BASE_EXT", 1u, 0u,
+      "GFX10 BASE_EXT (not SI PITCH); (va>>8)>>32" },
+    { OPENAGC_GFX10_CB_COLOR0_ATTRIB2, "CB_COLOR0_ATTRIB2", 1u, 0u,
+      "GFX10 ATTRIB2 (not SI SLICE); value unowned" },
     { OPENAGC_GFX10_CB_COLOR0_VIEW, "CB_COLOR0_VIEW", 1u, 0u, "Stage 5 gap" },
     { OPENAGC_GFX10_CB_COLOR0_INFO, "CB_COLOR0_INFO", 1u, 0u, "Stage 5 gap" },
     { OPENAGC_GFX10_CB_COLOR0_ATTRIB, "CB_COLOR0_ATTRIB", 1u, 0u, "Stage 5 gap" },
