@@ -289,7 +289,8 @@ Blocked by two independent gates:
    zeros and mask `ffffffff` — owned readback, still not a CB_BIND pin.
    Step Y scaffolds SET_CONTEXT of smoke-owned non-zero SPI/PA/
    DB_SHADER/`CB_SHADER_MASK` values then absolute COPY_DATA readback
-   (`tag=ctxreg-rt`); round-trip is owned evidence for those registers
+   (`tag=ctxreg-rt`); console completed once with exact fixture values
+   (`9/128/128/32768/16/15`) — owned round-trip for those registers
    only — still not COLOR_BASE / CB_BIND / DRAW.
 
 Until both close, stages 3 and 4 must refuse draws and general

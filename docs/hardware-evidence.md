@@ -1174,10 +1174,25 @@ polls EOP, writes `/data/prosperoai/openagc-ib-dump-ctxreg-rt.log` with
 plans. It does **not** close Stage 5: COLOR_BASE-class binds remain
 unowned.
 
-**Status.** Host encode + dump parse locked. Console push recorded below
-when executed.
+**Status.** Host encode + dump parse locked. Console push recorded below.
 
-**Artifact.** *(pending one validated push distinct from Step X)*
+**Artifact.** `ctxreg_rt_dump_eop.elf`
+(`f999c36ccec06c8012bdf946f8de91e688879b942d88b4644eab6ee6a5bdffe7`,
+110,152 bytes): one push wrote
+`/data/prosperoai/openagc-ib-dump-ctxreg-rt.log` with
+`tag=ctxreg-rt fw=0x9400008 completed=1 words=6` and
+`ib 00000009 00000080 00000080 00008000 00000010 0000000f`
+(probe order: `SPI_SHADER_COL_FORMAT=9`, `SPI_PS_INPUT_ENA=128`,
+`SPI_PS_INPUT_ADDR=128`, `SPI_PS_IN_CONTROL=32768`,
+`DB_SHADER_CONTROL=16`, `CB_SHADER_MASK=15` — exact smoke.frag fixture
+values; `CB_SHADER_MASK` distinct from Step X residue `0xffffffff`).
+Host `openagc_ib_dump_parse` accepts the log as `CTXREG_RT` with
+`evidence_qualified=0`. Loader still accepted connections on 9021 afterward.
+This proves owned SET_CONTEXT → absolute COPY_DATA round-trip for the six
+smoke-owned SPI/PA/DB_SHADER/`CB_SHADER_MASK` registers on FW9.40. It does
+**not** unlock CB/DB binds or DRAW: no COLOR_BASE was written or claimed.
+`hardware_qualified` stays **false**;
+`OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**.
 
 ### Stage 6/7 refuse contracts (fail-closed scaffold)
 
