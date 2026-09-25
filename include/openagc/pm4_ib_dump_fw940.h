@@ -35,6 +35,9 @@
  * SET_CONTEXT smoke-owned values then absolute COPY_DATA readback.
  * tag=ctxreg-cb-bind means Step-Z SET owned CB_COLOR0_BASE(+EXT) from a
  * GPU VA then absolute COPY_DATA of the CB probe set.
+ * tag=mmio-tilemode means Step-AA read-only absolute COPY_DATA of
+ * GB_ADDR_CONFIG then GB_TILE_MODE0..31 (console tile-mode table; no
+ * write, no CB bind, no DRAW).
  * None of these alone is a full CB_BIND pin (INFO/ATTRIB still unowned);
  * evidence_qualified stays 0 until an owned capture is pinned separately.
  * Use openagc_ib_dump_cb_bind_owned_base_match for fail-closed BASE match.
@@ -48,6 +51,7 @@
 #define OPENAGC_IB_DUMP_TAG_CTXREG_ABS "ctxreg-abs"
 #define OPENAGC_IB_DUMP_TAG_CTXREG_RT "ctxreg-rt"
 #define OPENAGC_IB_DUMP_TAG_CTXREG_CB_BIND "ctxreg-cb-bind"
+#define OPENAGC_IB_DUMP_TAG_MMIO_TILEMODE "mmio-tilemode"
 
 typedef uint32_t openagc_ib_dump_kind;
 enum {
@@ -74,7 +78,13 @@ enum {
      * COPY_DATA CB probe. owned_base_match may be 1; pin table stays 0
      * until a full CB_BIND capture (INFO/ATTRIB) is cited.
      */
-    OPENAGC_IB_DUMP_KIND_CTXREG_CB_BIND = 5u
+    OPENAGC_IB_DUMP_KIND_CTXREG_CB_BIND = 5u,
+    /*
+     * Step-AA read-only GB_ADDR_CONFIG + GB_TILE_MODE0..31 capture.
+     * Owns the console tile-mode table for (ARRAY_MODE,
+     * MICRO_TILE_MODE_NEW) lookups; not a CB_BIND cite.
+     */
+    OPENAGC_IB_DUMP_KIND_MMIO_TILEMODE = 6u
 };
 
 typedef struct openagc_ib_dump_info {
@@ -138,6 +148,50 @@ static inline uint32_t openagc_ib_dump_cb_bind_owned_base_match(
         return 0u;
     }
     return 1u;
+}
+
+/*
+ * Fail-closed GB tile-mode lookup over a parsed tag=mmio-tilemode dump.
+ *
+ * Dump layout: words[0] = GB_ADDR_CONFIG, words[1 + i] = GB_TILE_MODEi.
+ * Returns 1 and writes *index (0..31) only when:
+ *   - info is parsed MMIO_TILEMODE with completed=1
+ *   - word_count covers the whole probe set
+ *   - exactly the entry whose ARRAY_MODE / MICRO_TILE_MODE_NEW fields
+ *     equal the requested pair
+ *
+ * Mismatch, incomplete dump, wrong kind, or NULL outputs → 0. Never sets
+ * evidence_qualified and never invents a tile mode.
+ */
+static inline uint32_t openagc_ib_dump_mmio_tilemode_lookup(
+    const openagc_ib_dump_info *info, const uint32_t *words, uint32_t array_mode,
+    uint32_t micro_tile_mode_new, uint32_t *index)
+{
+    uint32_t i;
+
+    if (info == NULL || words == NULL || index == NULL) {
+        return 0u;
+    }
+    if (info->dump_parsed == 0u || info->completed == 0u) {
+        return 0u;
+    }
+    if (info->kind != OPENAGC_IB_DUMP_KIND_MMIO_TILEMODE) {
+        return 0u;
+    }
+    if (info->word_count < OPENAGC_GFX10_MMIO_TILEMODE_PROBE_COUNT) {
+        return 0u;
+    }
+    for (i = 0u; i < OPENAGC_GFX10_MMIO_GB_TILE_MODE_COUNT; ++i) {
+        uint32_t word = words[1u + i];
+
+        if (openagc_gfx10_gb_tile_mode_array_mode(word) == array_mode &&
+            openagc_gfx10_gb_tile_mode_micro_tile_mode_new(word) ==
+                micro_tile_mode_new) {
+            *index = i;
+            return 1u;
+        }
+    }
+    return 0u;
 }
 
 #endif /* OPENAGC_PM4_IB_DUMP_FW940_H */

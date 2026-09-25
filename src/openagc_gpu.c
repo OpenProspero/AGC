@@ -1295,6 +1295,11 @@ openagc_result openagc_ib_dump_parse(const char *text, uint32_t *words,
                 /* Longer tag before ctxreg-cb prefix. */
                 kind = OPENAGC_IB_DUMP_KIND_CTXREG_CB_BIND;
             } else if (tag != NULL &&
+                       (size_t)(p - tag) == strlen(OPENAGC_IB_DUMP_TAG_MMIO_TILEMODE) &&
+                       strncmp(tag, OPENAGC_IB_DUMP_TAG_MMIO_TILEMODE,
+                               strlen(OPENAGC_IB_DUMP_TAG_MMIO_TILEMODE)) == 0) {
+                kind = OPENAGC_IB_DUMP_KIND_MMIO_TILEMODE;
+            } else if (tag != NULL &&
                        (size_t)(p - tag) == strlen(OPENAGC_IB_DUMP_TAG_CTXREG_CB) &&
                        strncmp(tag, OPENAGC_IB_DUMP_TAG_CTXREG_CB,
                                strlen(OPENAGC_IB_DUMP_TAG_CTXREG_CB)) == 0) {

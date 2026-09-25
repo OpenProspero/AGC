@@ -1072,9 +1072,13 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     uint32_t probe_words[OPENAGC_PM4_COPY_DATA_CB_PROBE_EOP_WORDS];
     uint32_t rt_words[OPENAGC_PM4_CTXREG_RT_EOP_WORDS];
     uint32_t bind_words[OPENAGC_PM4_CTXREG_CB_BIND_EOP_WORDS];
+    uint32_t mmio_probe_words[OPENAGC_PM4_MMIO_TILEMODE_PROBE_EOP_WORDS];
+    uint32_t mmio_words[OPENAGC_GFX10_MMIO_TILEMODE_PROBE_COUNT];
     uint32_t probe_count;
     uint32_t rt_count;
     uint32_t bind_count;
+    uint32_t mmio_count;
+    uint32_t tile_index;
     uint32_t expected_base_lo;
     uint32_t expected_base_ext;
     const openagc_gfx10_reg_name *named;
@@ -1116,6 +1120,21 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     static const char bad_tag[] =
         "openagc-ib-dump: tag=cb-invent fw=0x9400008 completed=1 words=1\n"
         "ib deadbeef\n";
+    /* Step-AA tile-mode dump: addr config + GB_TILE_MODE0..31. */
+    static const char mmio_tilemode_text[] =
+        "openagc-ib-dump: tag=mmio-tilemode fw=0x9400008 completed=1 words=33\n"
+        "ib 04100009 00000000 00000010 00000000 00000000 00000000 00800004 00000000\n"
+        "00000000 00000000 00400008 00000000 00000000 00000000 00000000 00000000\n"
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000\n"
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000\n"
+        "00000000\n";
+    static const char mmio_tilemode_incomplete[] =
+        "openagc-ib-dump: tag=mmio-tilemode fw=0x9400008 completed=0 words=33\n"
+        "ib 04100009 00000000 00000010 00000000 00000000 00000000 00800004 00000000\n"
+        "00000000 00000000 00400008 00000000 00000000 00000000 00000000 00000000\n"
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000\n"
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000\n"
+        "00000000\n";
 
     CHECK(OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT == 0u);
     CHECK(OPENAGC_NATIVE_TILING_SUPPORTED == 0u);
@@ -1189,6 +1208,22 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
           openagc_pm4_header3(OPENAGC_PM4_OP_COPY_DATA, 6u, 0u));
     CHECK(bind_words[OPENAGC_PM4_CTXREG_CB_BIND_SET_WORDS + 2u] ==
           openagc_pm4_copy_data_src_context_abs(OPENAGC_GFX10_CB_COLOR0_BASE));
+
+    mmio_count = openagc_pm4_encode_mmio_tilemode_probe_eop(0x1000u, 1u, 0x2000u,
+                                                            mmio_probe_words);
+    CHECK(mmio_count == OPENAGC_PM4_MMIO_TILEMODE_PROBE_EOP_WORDS);
+    CHECK(OPENAGC_PM4_MMIO_TILEMODE_PROBE_EOP_WORDS ==
+          33u * OPENAGC_PM4_COPY_DATA_WORDS + OPENAGC_PM4_EOP_WITH_NOP_WORDS);
+    CHECK(mmio_probe_words[0] ==
+          openagc_pm4_header3(OPENAGC_PM4_OP_COPY_DATA, 6u, 0u));
+    CHECK(mmio_probe_words[2] == OPENAGC_GFX10_MMIO_GB_ADDR_CONFIG);
+    CHECK(mmio_probe_words[OPENAGC_PM4_COPY_DATA_WORDS + 2u] ==
+          OPENAGC_GFX10_MMIO_GB_TILE_MODE_BASE);
+    CHECK(openagc_gfx10_mmio_gb_tile_mode_offset(31u) == 0x1403u);
+    CHECK(mmio_probe_words[32u * OPENAGC_PM4_COPY_DATA_WORDS + 2u] ==
+          openagc_gfx10_mmio_gb_tile_mode_offset(31u));
+    CHECK(mmio_probe_words[OPENAGC_PM4_MMIO_TILEMODE_PROBE_WORDS] ==
+          OPENAGC_PM4_EOP_HEADER);
 
     EXPECT(openagc_ib_dump_parse(NULL, words, 8u, &info), OPENAGC_ERROR_INVALID_ARGUMENT);
     EXPECT(openagc_ib_dump_parse(dump_text, words, 8u, &info), OPENAGC_OK);
@@ -1283,6 +1318,49 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
            OPENAGC_ERROR_UNSUPPORTED_OPERATION);
     CHECK(info.dump_parsed == 0u);
     CHECK(info.evidence_qualified == 0u);
+
+    /* Step-AA tile-mode table: owned words drive a fail-closed lookup. */
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(mmio_tilemode_text, mmio_words,
+                                 OPENAGC_GFX10_MMIO_TILEMODE_PROBE_COUNT, &info),
+           OPENAGC_OK);
+    CHECK(info.kind == OPENAGC_IB_DUMP_KIND_MMIO_TILEMODE);
+    CHECK(info.completed == 1u);
+    CHECK(info.word_count == OPENAGC_GFX10_MMIO_TILEMODE_PROBE_COUNT);
+    CHECK(info.evidence_qualified == 0u);
+    CHECK(mmio_words[0] == 0x04100009u);
+    CHECK(openagc_gfx10_gb_tile_mode_array_mode(mmio_words[1]) == 0u);
+    CHECK(openagc_gfx10_gb_tile_mode_array_mode(mmio_words[6]) == 1u);
+    CHECK(openagc_gfx10_gb_tile_mode_micro_tile_mode_new(mmio_words[6]) == 2u);
+    CHECK(openagc_ib_dump_mmio_tilemode_lookup(&info, mmio_words, 0u, 0u,
+                                               &tile_index) == 1u);
+    CHECK(tile_index == 0u);
+    CHECK(openagc_ib_dump_mmio_tilemode_lookup(&info, mmio_words, 1u, 2u,
+                                               &tile_index) == 1u);
+    CHECK(tile_index == 5u);
+    CHECK(openagc_ib_dump_mmio_tilemode_lookup(&info, mmio_words, 2u, 1u,
+                                               &tile_index) == 1u);
+    CHECK(tile_index == 9u);
+    CHECK(openagc_ib_dump_mmio_tilemode_lookup(&info, mmio_words, 3u, 3u,
+                                               &tile_index) == 0u);
+    CHECK(openagc_ib_dump_mmio_tilemode_lookup(&info, mmio_words, 1u, 2u, NULL) == 0u);
+    CHECK(openagc_ib_dump_mmio_tilemode_lookup(NULL, mmio_words, 1u, 2u,
+                                               &tile_index) == 0u);
+
+    /* completed=0 refuses: a partial readback never resolves an index. */
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(mmio_tilemode_incomplete, mmio_words,
+                                 OPENAGC_GFX10_MMIO_TILEMODE_PROBE_COUNT, &info),
+           OPENAGC_OK);
+    CHECK(info.completed == 0u);
+    CHECK(openagc_ib_dump_mmio_tilemode_lookup(&info, mmio_words, 1u, 2u,
+                                               &tile_index) == 0u);
+
+    /* Wrong kind refuses even when the words look like a tile-mode table. */
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(ctxreg_cb_bind_text, words, 8u, &info), OPENAGC_OK);
+    CHECK(openagc_ib_dump_mmio_tilemode_lookup(&info, mmio_words, 1u, 2u,
+                                               &tile_index) == 0u);
     return 0;
 }
 

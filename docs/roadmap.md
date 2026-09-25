@@ -298,7 +298,12 @@ Blocked by two independent gates:
    console completed once with `BASE=02000240`, `BASE_EXT=0`, mask `15`
    matching the owned VA — owned COLOR_BASE round-trip only;
    `INFO`/`ATTRIB2`/`VIEW`/`TARGET_MASK` stay unowned and no DRAW was
-   submitted.
+   submitted. Step AA adds the read-only GB tile-mode table vehicle
+   (`tag=mmio-tilemode`): absolute `COPY_DATA` of `GB_ADDR_CONFIG` +
+   `GB_TILE_MODE0..31` with a fail-closed
+   (`ARRAY_MODE`, `MICRO_TILE_MODE_NEW`) index lookup, so
+   `CB_COLOR0_ATTRIB.TILE_MODE_INDEX` comes from the console's table
+   instead of a guess. It writes nothing and still owns no CB bind.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the

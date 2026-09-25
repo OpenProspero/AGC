@@ -162,6 +162,13 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     **Console result:** `completed=1`, readback BASE `02000240` =
     `color_va >> 8`, `BASE_EXT=0`, `CB_SHADER_MASK=15` — owned BASE
     round-trip proven; remaining bind dwords still unowned.
+27. `mmio_tilemode_dump_eop.c` (Step AA, read-only absolute COPY_DATA of
+    `GB_ADDR_CONFIG` + `GB_TILE_MODE0..31` → `openagc-ib-dump-mmio-tilemode.log`)
+    only after host `openagc_pm4_encode_mmio_tilemode_probe_eop`,
+    `openagc_ib_dump_mmio_tilemode_lookup`, and `tag=mmio-tilemode`
+    parse are locked. One push, no retries. No register write, no
+    SET_CONTEXT, no DRAW; the dump owns the tile-mode table, not a CB
+    bind. A `completed=0` timeout is a negative result — do not re-push.
 
 ## Toolchain result (2026-09-25)
 

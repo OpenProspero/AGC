@@ -210,4 +210,35 @@ static inline uint32_t openagc_pm4_encode_ctxreg_cb_bind_abs_eop(
     return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
 }
 
+/*
+ * Step AA vehicle: absolute COPY_DATA read of GB_ADDR_CONFIG followed by
+ * GB_TILE_MODE0..31 (read-only console state; src_lo is the mem-mapped
+ * register address, no SET_CONTEXT, no write, no EOP-less probe), then
+ * EOP. words must hold OPENAGC_PM4_MMIO_TILEMODE_PROBE_EOP_WORDS.
+ */
+#define OPENAGC_PM4_MMIO_TILEMODE_PROBE_WORDS                                \
+    ((uint32_t)(OPENAGC_GFX10_MMIO_TILEMODE_PROBE_COUNT *                  \
+                OPENAGC_PM4_COPY_DATA_WORDS))
+#define OPENAGC_PM4_MMIO_TILEMODE_PROBE_EOP_WORDS                            \
+    (OPENAGC_PM4_MMIO_TILEMODE_PROBE_WORDS + OPENAGC_PM4_EOP_WITH_NOP_WORDS)
+
+static inline uint32_t openagc_pm4_encode_mmio_tilemode_probe_eop(
+    uint64_t dst_base_va, uint32_t sequence, uint64_t marker_va, uint32_t *words)
+{
+    uint32_t cursor = 0u;
+    uint32_t i;
+
+    openagc_pm4_encode_copy_data_reg_to_mem(OPENAGC_GFX10_MMIO_GB_ADDR_CONFIG,
+                                            dst_base_va, words + cursor);
+    cursor += OPENAGC_PM4_COPY_DATA_WORDS;
+    for (i = 0u; i < OPENAGC_GFX10_MMIO_GB_TILE_MODE_COUNT; ++i) {
+        openagc_pm4_encode_copy_data_reg_to_mem(
+            openagc_gfx10_mmio_gb_tile_mode_offset(i),
+            dst_base_va + (uint64_t)(1u + i) * 4u, words + cursor);
+        cursor += OPENAGC_PM4_COPY_DATA_WORDS;
+    }
+    openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
+    return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+}
+
 #endif /* OPENAGC_PM4_COPY_DATA_FW940_H */

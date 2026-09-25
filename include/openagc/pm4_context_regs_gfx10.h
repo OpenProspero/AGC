@@ -107,6 +107,55 @@ static const uint32_t openagc_gfx10_cb_probe_offsets[OPENAGC_GFX10_CB_PROBE_COUN
 };
 
 /*
+ * Public GFX10 MMIO cites for the GB tile-mode table (Step AA).
+ *
+ * gc_10_1_0_offset.h (BASE_IDX is 0 for all of these, so the address is
+ * used as-is in PACKET3_COPY_DATA, whose src_sel=0 is "mem-mapped
+ * register" — the same aperture Step X proved with 0xA000+ctxreg):
+ *   mmGB_ADDR_CONFIG = 0x13DE
+ *   mmGB_TILE_MODE0..31 = 0x13E4..0x1403
+ * gc_10_1_0_sh_mask.h:
+ *   GB_TILE_MODE0__ARRAY_MODE__SHIFT=2       mask 0x0000003C
+ *   GB_TILE_MODE0__PIPE_CONFIG__SHIFT=6      mask 0x000007C0
+ *   GB_TILE_MODE0__TILE_SPLIT__SHIFT=11
+ *   GB_TILE_MODE0__MICRO_TILE_MODE_NEW__SHIFT=22 mask 0x01C00000
+ *   GB_TILE_MODE0__SAMPLE_SPLIT__SHIFT=25
+ *   GB_ADDR_CONFIG NUM_PIPES=0, PIPE_INTERLEAVE_SIZE=3,
+ *   MAX_COMPRESSED_FRAGS=6, NUM_SHADER_ENGINES=19, NUM_RB_PER_SE=26
+ *
+ * The table is console state, never a value to invent: read it, then look
+ * up the index for a requested (ARRAY_MODE, MICRO_TILE_MODE_NEW) pair.
+ * Reading it owns no CB bind and opens no DRAW.
+ */
+#define OPENAGC_GFX10_MMIO_GB_ADDR_CONFIG 0x13DEu
+#define OPENAGC_GFX10_MMIO_GB_TILE_MODE_BASE 0x13E4u
+#define OPENAGC_GFX10_MMIO_GB_TILE_MODE_COUNT 32u
+#define OPENAGC_GFX10_MMIO_TILEMODE_PROBE_COUNT \
+    (1u + OPENAGC_GFX10_MMIO_GB_TILE_MODE_COUNT)
+
+#define OPENAGC_GFX10_GB_TILE_MODE_ARRAY_MODE_SHIFT 2u
+#define OPENAGC_GFX10_GB_TILE_MODE_ARRAY_MODE_MASK 0x0000003Cu
+#define OPENAGC_GFX10_GB_TILE_MODE_MICRO_TILE_MODE_NEW_SHIFT 22u
+#define OPENAGC_GFX10_GB_TILE_MODE_MICRO_TILE_MODE_NEW_MASK 0x01C00000u
+
+static inline uint32_t openagc_gfx10_mmio_gb_tile_mode_offset(uint32_t index)
+{
+    return OPENAGC_GFX10_MMIO_GB_TILE_MODE_BASE + index;
+}
+
+static inline uint32_t openagc_gfx10_gb_tile_mode_array_mode(uint32_t word)
+{
+    return (word & OPENAGC_GFX10_GB_TILE_MODE_ARRAY_MODE_MASK) >>
+           OPENAGC_GFX10_GB_TILE_MODE_ARRAY_MODE_SHIFT;
+}
+
+static inline uint32_t openagc_gfx10_gb_tile_mode_micro_tile_mode_new(uint32_t word)
+{
+    return (word & OPENAGC_GFX10_GB_TILE_MODE_MICRO_TILE_MODE_NEW_MASK) >>
+           OPENAGC_GFX10_GB_TILE_MODE_MICRO_TILE_MODE_NEW_SHIFT;
+}
+
+/*
  * Step Y round-trip probe: smoke.frag context pairs with non-zero values
  * from tests/fixtures/psbc_smoke/smoke.frag.metadata.json. Deliberately
  * excludes zeros (ambiguous vs. clear) and COLOR_BASE-class offsets.

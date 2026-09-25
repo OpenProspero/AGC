@@ -1274,6 +1274,68 @@ graphics-adjacent gate is owning the remaining CB bind dwords from a
 citeable source; inventing `INFO`/`ATTRIB` values or DRAW remains out of
 scope.
 
+## Bounded experiment: GB tile-mode table readback (Step AA)
+
+**Question.** Does one read-only absolute `COPY_DATA`
+(`src_sel=0` mem-mapped register, the aperture Step X proved) of
+`GB_ADDR_CONFIG` and `GB_TILE_MODE0..31` complete on the FW9.40
+graphics submit path and return the console's own tile-mode table as
+`tag=mmio-tilemode`?
+
+**Why it matters.** Any color-target bind needs
+`CB_COLOR0_ATTRIB.TILE_MODE_INDEX`, and that index is meaningful only
+relative to the table firmware/driver programmed — console state the
+host must not invent. Every capture so far read the submit's *own*
+context. This is the first read of GPU configuration state that is not
+the payload's own context, and it is purely read-only.
+
+**Public cites.** `gc_10_1_0_offset.h`: `mmGB_ADDR_CONFIG=0x13DE`,
+`mmGB_TILE_MODE0..31=0x13E4..0x1403`, all `BASE_IDX=0` (address used
+as-is). `gc_10_1_0_sh_mask.h`: `GB_TILE_MODE0__ARRAY_MODE__SHIFT=2`
+(mask `0x3C`), `PIPE_CONFIG=6`, `TILE_SPLIT=11`,
+`MICRO_TILE_MODE_NEW=22` (mask `0x1C00000`), `SAMPLE_SPLIT=25`;
+`GB_ADDR_CONFIG` `NUM_PIPES=0`, `PIPE_INTERLEAVE_SIZE=3`,
+`MAX_COMPRESSED_FRAGS=6`, `NUM_SHADER_ENGINES=19`, `NUM_RB_PER_SE=26`.
+drm/amdgpu `gfx_v10_0_ring_emit_rreg` establishes `PACKET3_COPY_DATA`
+register→memory with an absolute mem-mapped source address.
+
+**Why not write / DRAW.** A tile-mode index only makes a bind *valid*,
+it does not make one safe; `CB_COLOR0_INFO`/`ATTRIB2`/`VIEW`/
+`TARGET_MASK` values and DRAW stay out of scope. This IB writes no
+register at all and submits no draw.
+
+**Entry conditions.** Steps A–Z proven on `fw=0x9400008`; host encode +
+parse + lookup locked in CTest; payload ELF-validated; one push, no
+retries.
+
+**Payload contract (`tools/payload/mmio_tilemode_dump_eop.c`).**
+
+May do: open `/dev/gc`; map one arena; submit **one** IB of
+`OPENAGC_PM4_MMIO_TILEMODE_PROBE_EOP_WORDS` (=222) dwords — 33 absolute
+`COPY_DATA` reads (`GB_ADDR_CONFIG`, then `GB_TILE_MODE0..31` in index
+order so a partial result still reads as a prefix) plus the shared
+EOP+NOP trailer; poll the marker 30s; write
+`/data/prosperoai/openagc-ib-dump-mmio-tilemode.log`; exit.
+
+Must not do: no register write, no `SET_CONTEXT_REG`, no shader, no
+DRAW, no `flat_load`, no second submit, no retry, no VideoOut, no
+queue-create/ACB, no malformed ELF.
+
+**Acceptance criteria.** `completed=1` with 33 non-poison dwords,
+`GB_TILE_MODE` entries that yield at least one resolvable
+(`ARRAY_MODE`, `MICRO_TILE_MODE_NEW`) index, no fault/hang/timeout in the
+live klog window (TCP 3232), loader still accepting connections
+afterward. A timeout (`completed=0`, poison) retires MMIO reads on this
+submit path; it is a negative result, not a retry trigger.
+
+**Status before push.** Host encode, `tag=mmio-tilemode` parse, and the
+fail-closed `openagc_ib_dump_mmio_tilemode_lookup` are locked in
+`test_openagc_gpu` (including completed=0 and wrong-kind refusals).
+`OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays 0;
+`evidence_qualified` stays 0. One push, no retries.
+
+**Observed result (pending).** Not yet run.
+
 ### Stage 6/7 refuse contracts (fail-closed scaffold)
 
 **Status.** `include/openagc/presentation_refuse_fw940.h` documents
