@@ -147,6 +147,11 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     `openagc_pm4_encode_copy_data_cb_probe_abs_eop` and `tag=ctxreg-abs`
     parse are locked. Distinct from Step W; one push, no retries. Same
     probe set; no invent CB binds.
+25. `ctxreg_rt_dump_eop.c` (Step Y, SET_CONTEXT smoke-owned RT pairs +
+    absolute COPY_DATA readback → `openagc-ib-dump-ctxreg-rt.log`) only
+    after host `openagc_pm4_encode_ctxreg_rt_abs_eop` and `tag=ctxreg-rt`
+    parse are locked. Distinct from Step X (writes before read);
+    one push, no retries. No COLOR_BASE invent; dump is not a CB pin.
 
 ## Toolchain result (2026-09-25)
 
@@ -176,6 +181,7 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
 | `ib_dump_step_u_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,240 bytes; one nc push: `openagc-ib-dump tag=step-u completed=1 words=93`; host parse `REGISTER_EOP` `evidence_qualified=0` |
 | `ctxreg_cb_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,000 bytes; one nc push: `openagc-ib-dump tag=ctxreg-cb completed=0 words=8` (poison `cccccccc`); host parse `CTXREG_CB` `evidence_qualified=0`; relative COPY_DATA src not console-proven — do not retry |
 | `ctxreg_abs_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-abs completed=1 words=8` (`00000000`×6 + `ffffffff`×2); host parse `CTXREG_ABS` `evidence_qualified=0`; absolute COPY_DATA proven; not a CB_BIND pin |
+| `ctxreg_rt_dump_eop.c` | sdk (`prospero-clang`) | *(pending one validated push)* SET_CONTEXT smoke RT pairs + abs COPY_DATA; `tag=ctxreg-rt`; not a CB_BIND pin |
 
 Firmware identity on the console: `fw=0x9400008` (9.40) from
 `/data/libkernel-dump.log`.

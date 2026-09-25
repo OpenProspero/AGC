@@ -287,6 +287,10 @@ Blocked by two independent gates:
    a real capture is owned. Do not retry Step W. Step X absolute
    COPY_DATA completed once (`completed=1`) with COLOR_BASE-class
    zeros and mask `ffffffff` — owned readback, still not a CB_BIND pin.
+   Step Y scaffolds SET_CONTEXT of smoke-owned non-zero SPI/PA/
+   DB_SHADER/`CB_SHADER_MASK` values then absolute COPY_DATA readback
+   (`tag=ctxreg-rt`); round-trip is owned evidence for those registers
+   only — still not COLOR_BASE / CB_BIND / DRAW.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the

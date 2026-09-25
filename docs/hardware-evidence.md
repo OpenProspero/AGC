@@ -1148,6 +1148,37 @@ usable bind to pin), and mask dwords alone are not a CB_BIND capture.
 `OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**. Do not invent non-zero
 COLOR_BASE values from this dump.
 
+## Bounded experiment: SET_CONTEXT + abs COPY_DATA round-trip (Step Y)
+
+**Question.** Can one FW9.40 IB write smoke-owned context register values
+via proven `PACKET3_SET_CONTEXT_REG`, then read them back with the Step-X
+proven absolute `COPY_DATA` (`CONTEXT_REG_START+offset`) and recover the
+same citeable non-default dwords?
+
+**Hypothesis.** Step X proved absolute register→memory completes. Steps
+P–U proved SET_CONTEXT of smoke SPI/PA/DB_SHADER/`CB_SHADER_MASK` pairs.
+Combining them yields owned write→read evidence without inventing
+`CB_COLOR0_BASE` binds. `CB_SHADER_MASK=15` from
+`tests/fixtures/psbc_smoke/smoke.frag.metadata.json` is distinct from the
+Step X live residue (`0xffffffff`), so a matching readback is unambiguous.
+
+**Design.** `tools/payload/ctxreg_rt_dump_eop.c` encodes
+`openagc_pm4_encode_ctxreg_rt_abs_eop` (six non-zero smoke.frag context
+pairs, then six absolute COPY_DATA readbacks, then EOP), submits once,
+polls EOP, writes `/data/prosperoai/openagc-ib-dump-ctxreg-rt.log` with
+`tag=ctxreg-rt`. Host `openagc_ib_dump_parse` accepts `CTXREG_RT` with
+`evidence_qualified=0`. No COLOR_BASE SET; pin table stays empty.
+
+**Why it matters.** Round-trip ownership of smoke SPI/PA/DB_SHADER/
+`CB_SHADER_MASK` values strengthens the register path used by host PSBC
+plans. It does **not** close Stage 5: COLOR_BASE-class binds remain
+unowned.
+
+**Status.** Host encode + dump parse locked. Console push recorded below
+when executed.
+
+**Artifact.** *(pending one validated push distinct from Step X)*
+
 ### Stage 6/7 refuse contracts (fail-closed scaffold)
 
 **Status.** `include/openagc/presentation_refuse_fw940.h` documents
