@@ -1288,6 +1288,11 @@ openagc_result openagc_ib_dump_parse(const char *text, uint32_t *words,
                        strncmp(tag, OPENAGC_IB_DUMP_TAG_CTXREG_ABS,
                                strlen(OPENAGC_IB_DUMP_TAG_CTXREG_ABS)) == 0) {
                 kind = OPENAGC_IB_DUMP_KIND_CTXREG_ABS;
+            } else if (tag != NULL &&
+                       (size_t)(p - tag) == strlen(OPENAGC_IB_DUMP_TAG_CTXREG_RT) &&
+                       strncmp(tag, OPENAGC_IB_DUMP_TAG_CTXREG_RT,
+                               strlen(OPENAGC_IB_DUMP_TAG_CTXREG_RT)) == 0) {
+                kind = OPENAGC_IB_DUMP_KIND_CTXREG_RT;
             } else {
                 return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
             }

@@ -1070,7 +1070,9 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     openagc_ib_dump_info info = OPENAGC_IB_DUMP_INFO_INIT;
     uint32_t words[8];
     uint32_t probe_words[OPENAGC_PM4_COPY_DATA_CB_PROBE_EOP_WORDS];
+    uint32_t rt_words[OPENAGC_PM4_CTXREG_RT_EOP_WORDS];
     uint32_t probe_count;
+    uint32_t rt_count;
     const openagc_gfx10_reg_name *named;
     static const char dump_text[] =
         "openagc-ib-dump: tag=step-u fw=0x9400008 completed=1 words=4\n"
@@ -1081,6 +1083,9 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     static const char ctxreg_abs_text[] =
         "openagc-ib-dump: tag=ctxreg-abs fw=0x9400008 completed=0 words=8\n"
         "ib cccccccc cccccccc cccccccc cccccccc cccccccc cccccccc cccccccc cccccccc\n";
+    static const char ctxreg_rt_text[] =
+        "openagc-ib-dump: tag=ctxreg-rt fw=0x9400008 completed=1 words=6\n"
+        "ib 00000009 00000080 00000080 00008000 00000010 0000000f\n";
     static const char bad_tag[] =
         "openagc-ib-dump: tag=cb-invent fw=0x9400008 completed=1 words=1\n"
         "ib deadbeef\n";
@@ -1105,6 +1110,9 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     CHECK(openagc_gfx10_cb_probe_offsets[0] == OPENAGC_GFX10_CB_COLOR0_BASE);
     CHECK(openagc_pm4_copy_data_src_context_abs(OPENAGC_GFX10_CB_COLOR0_BASE) ==
           (OPENAGC_PM4_CONTEXT_REG_START + OPENAGC_GFX10_CB_COLOR0_BASE));
+    CHECK(OPENAGC_GFX10_CTXREG_RT_COUNT == 6u);
+    CHECK(openagc_gfx10_ctxreg_rt_offsets[5] == OPENAGC_GFX10_CB_SHADER_MASK);
+    CHECK(openagc_gfx10_ctxreg_rt_values[5] == 15u);
 
     probe_count = openagc_pm4_encode_copy_data_cb_probe_eop(0x1000u, 1u, 0x2000u,
                                                             probe_words);
@@ -1121,6 +1129,17 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     CHECK(probe_words[2] ==
           openagc_pm4_copy_data_src_context_abs(OPENAGC_GFX10_CB_COLOR0_BASE));
     CHECK(probe_words[2] != OPENAGC_GFX10_CB_COLOR0_BASE);
+
+    rt_count = openagc_pm4_encode_ctxreg_rt_abs_eop(0x1000u, 1u, 0x2000u, rt_words);
+    CHECK(rt_count == OPENAGC_PM4_CTXREG_RT_EOP_WORDS);
+    CHECK(rt_words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+    CHECK(rt_words[1] == OPENAGC_GFX10_SPI_SHADER_COL_FORMAT);
+    CHECK(rt_words[2] == 9u);
+    CHECK(rt_words[OPENAGC_PM4_CTXREG_RT_SET_WORDS] ==
+          openagc_pm4_header3(OPENAGC_PM4_OP_COPY_DATA, 6u, 0u));
+    CHECK(rt_words[OPENAGC_PM4_CTXREG_RT_SET_WORDS + 1u] == OPENAGC_PM4_COPY_DATA_CONTROL);
+    CHECK(rt_words[OPENAGC_PM4_CTXREG_RT_SET_WORDS + 2u] ==
+          openagc_pm4_copy_data_src_context_abs(OPENAGC_GFX10_SPI_SHADER_COL_FORMAT));
 
     EXPECT(openagc_ib_dump_parse(NULL, words, 8u, &info), OPENAGC_ERROR_INVALID_ARGUMENT);
     EXPECT(openagc_ib_dump_parse(dump_text, words, 8u, &info), OPENAGC_OK);
@@ -1147,6 +1166,14 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     CHECK(info.completed == 0u);
     CHECK(info.word_count == 8u);
     CHECK(words[0] == 0xccccccccu && words[7] == 0xccccccccu);
+
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(ctxreg_rt_text, words, 8u, &info), OPENAGC_OK);
+    CHECK(info.kind == OPENAGC_IB_DUMP_KIND_CTXREG_RT);
+    CHECK(info.evidence_qualified == 0u);
+    CHECK(info.completed == 1u);
+    CHECK(info.word_count == 6u);
+    CHECK(words[0] == 0x00000009u && words[5] == 0x0000000fu);
 
     info = OPENAGC_IB_DUMP_INFO_INIT;
     EXPECT(openagc_ib_dump_parse(bad_tag, words, 8u, &info),
