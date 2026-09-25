@@ -746,5 +746,39 @@ IB on console in host snapshot order (no linkage). It does **not**
 unlock linkage writes, CB/DB, DRAW, tiling, VideoOut, or host
 `gpu_execution`. `hardware_qualified` stays **false**. The
 `openagc_ps5_policy` target stays deny-all. The next graphics-adjacent
-gate remains an independently owned FW9.40 capture of CB/DB bind or
-DRAW packets — inventing those is still out of scope.
+gate is a bounded linkage-only SET_CONTEXT IB (Step R); inventing
+CB/DB or DRAW remains out of scope.
+
+## Bounded experiment: linkage SET_CONTEXT + EOP (Step R)
+
+**Question.** Does one FW9.40 IB of **three** public-AMD
+`SET_CONTEXT_REG` packets for the smoke.vert **linkage** pairs
+(`ge_cntl` / `stages_en` / `user_vgpr_en` — offsets/values from the
+pin-checked PSBC fixture metadata) plus the shared EOP+NOP trailer
+complete with a fired marker and no GPU fault?
+
+**Why it matters.** Host PSBC plans already append those three linkage
+context pairs after context+shader registers
+(`openagc_psbc_reflection_encode_register_program`). Steps P–Q proved
+the non-linkage SET_CONTEXT vehicle and the combined ctx+SH snapshot.
+Owning the linkage writes alone on console — same SET_CONTEXT opcode
+and EOP trailer already proven — is the smallest proof that the host's
+full register snapshot (including linkage) is a safe IB shape on this
+firmware, without inventing CB/DB or DRAW.
+
+**Why not DRAW / CB yet.** DRAW and CB/DB still lack an independently
+owned FW9.40 capture. Step R deliberately omits both; it only writes
+the three verified linkage context pairs.
+
+**Entry conditions.** Steps A–Q proven on `fw=0x9400008`; host encoding
+reuses `openagc_pm4_encode_graphics_context_eop` (Step P vehicle) with
+linkage offsets/values from `smoke.vert.metadata.json`; payload
+ELF-validated; one push, no retries.
+
+**Payload (`tools/payload/set_context_linkage_eop.c`).** One IB of
+`OPENAGC_PM4_GRAPHICS_CONTEXT_EOP_WORDS(3)` (=33) dwords. Pairs
+`(603,131200)`, `(725,65536)`, `(610,0)` from smoke.vert linkage.
+No code upload, no SET_SH, no DRAW, no CB/DB.
+
+**Status before push.** Host encoding locked in CTest
+(`test_openagc_psbc_adapter`).
