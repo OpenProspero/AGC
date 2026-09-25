@@ -732,4 +732,19 @@ no DRAW, no CB/DB.
 **Status before push.** Host encoding locked in CTest
 (`test_openagc_psbc_adapter`).
 
-**Observed result.** *Pending one validated push.*
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`set_context_sh_eop.elf`
+(`047cd712b0cab8b3da81bb05bb76684a641645dbff6b42089f9d27ad9f7c0d1b`,
+109,936 bytes):
+`submit=ok completed=1 ctx=3 sh=4 words=45 code_va=0000000200020000 marker=1`,
+exit implied by completed marker. Live klog was attached across the push
+(no fault/hang/timeout string required for acceptance beyond marker=1
+and loader still accepting). Loader still accepted connections on 9021
+afterward.
+This proves the combined SET_CONTEXT_REG + graphics SET_SH_REG + EOP
+IB on console in host snapshot order (no linkage). It does **not**
+unlock linkage writes, CB/DB, DRAW, tiling, VideoOut, or host
+`gpu_execution`. `hardware_qualified` stays **false**. The
+`openagc_ps5_policy` target stays deny-all. The next graphics-adjacent
+gate remains an independently owned FW9.40 capture of CB/DB bind or
+DRAW packets — inventing those is still out of scope.
