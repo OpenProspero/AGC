@@ -86,6 +86,25 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
    on the same firmware. One push, no retries.
 6. `write_data_rows.c` (Step F, multi-row WRITE_DATA) only after Step E.
    One push, no retries. Draw/CB remain out of scope.
+7. `write_data_wide_rows.c` (Step G, 16-dword × multi-row) only after
+   Step F. One push, no retries. Draw/CB remain out of scope.
+8. `dma_write_eop.c` (Step H, DMA + WRITE_DATA + EOP) only after Steps
+   B and G. One push, no retries. Draw/CB remain out of scope.
+9. `store_span.c` (Step I, 8-lane compute flat_store) only after Step C.
+   One push, no retries. Draw/CB remain out of scope.
+10. `store_span2.c` (Step J, dual store_span) only after Step I. One
+    push, no retries. Draw/CB remain out of scope.
+11. `store_span4.c` (Step K, four store_span / 128 bytes) only after
+    Step J. One push, no retries. Draw/CB remain out of scope.
+12. `store_span8.c` (Step L, SPAN_MAX=8 / 256 bytes) only after Step K.
+    One push, no retries. Draw/CB remain out of scope.
+13. `write_data_max_rows.c` (Step M, MAX_ROWS=8 × 16 dwords / 512 bytes)
+    only after Step G. One push, no retries. Draw/CB remain out of scope.
+14. `write_data_grid.c` (Step N, 8×2 × 16 dwords / 1024 bytes) only after
+    Step M. One push, no retries. Draw/CB remain out of scope.
+15. `set_sh_gfx_eop.c` (Step O, graphics-bank SET_SH ×4 + EOP) only after
+    Step N and host PGM-patch encoding is locked. One push, no retries.
+    No SET_CONTEXT, no DRAW, no CB/DB.
 
 ## Toolchain result (2026-09-25)
 
@@ -97,6 +116,15 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
 | `write_data.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,208 bytes; one nc push: `submit=ok completed=1 matched=1 value=a5a5a5a5 marker=1`, exit 0 |
 | `write_data_clear.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,216 bytes; one nc push: `submit=ok completed=1 matched=1 dwords=16 value=a5a5a5a5 marker=1`, exit 0 |
 | `write_data_rows.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,216 bytes; one nc push: `submit=ok completed=1 matched=1 rows=2 dwords=8 pitch=64 marker=1`, exit 0 |
+| `write_data_wide_rows.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,216 bytes; one nc push: `submit=ok completed=1 matched=1 rows=2 dwords=16 pitch=128 marker=1`, exit 0 |
+| `dma_write_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,208 bytes; one nc push: `submit=ok completed=1 matched=1 dma_bytes=64 write_dwords=4 marker=1`, exit 0 |
+| `store_span.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,256 bytes; one nc push: `submit=ok completed=1 matched=1 lanes=8 marker=1`, exit 0 |
+| `store_span2.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,256 bytes; one nc push: `submit=ok completed=1 matched=1 lanes=16 marker=1`, exit 0 |
+| `store_span4.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,256 bytes; one nc push: `submit=ok completed=1 matched=1 spans=4 lanes=32 marker=1`, exit 0 |
+| `store_span8.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,256 bytes; one nc push: `submit=ok completed=1 matched=1 spans=8 lanes=64 marker=1`, exit 0 |
+| `write_data_max_rows.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,216 bytes; one nc push: `submit=ok completed=1 matched=1 rows=8 dwords=16 pitch=64 marker=1`, exit 0 |
+| `write_data_grid.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,216 bytes; one nc push: `submit=ok completed=1 matched=1 rows=8 cols=2 dwords=16 pitch=128 marker=1`, exit 0 |
+| `set_sh_gfx_eop.c` | sdk (`prospero-clang`) | Host encoding locked; console push pending Step O entry conditions |
 
 Firmware identity on the console: `fw=0x9400008` (9.40) from
 `/data/libkernel-dump.log`.
