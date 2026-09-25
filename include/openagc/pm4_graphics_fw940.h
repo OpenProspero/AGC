@@ -134,4 +134,29 @@ static inline uint32_t openagc_pm4_encode_graphics_context_eop(
     return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
 }
 
+/*
+ * SET_CONTEXT_REG pairs then graphics SET_SH_REG pairs + shared EOP+NOP
+ * (Step Q vehicle). Same proven pair sources as Steps P and O; order
+ * matches host openagc_psbc_reflection_encode_register_program without
+ * linkage. No ge_cntl/stages_en, no DRAW, no CB/DB.
+ * words must hold 3*(ctx_count+sh_count) + EOP dwords.
+ */
+#define OPENAGC_PM4_GRAPHICS_CONTEXT_SH_EOP_WORDS(ctx_count, sh_count) \
+    ((uint32_t)(3u * ((ctx_count) + (sh_count)) + OPENAGC_PM4_EOP_WITH_NOP_WORDS))
+
+static inline uint32_t openagc_pm4_encode_graphics_context_sh_eop(
+    const uint32_t *ctx_offsets, const uint32_t *ctx_values, uint32_t ctx_count,
+    const uint32_t *sh_offsets, const uint32_t *sh_values, uint32_t sh_count,
+    uint32_t sequence, uint64_t marker_va, uint32_t *words)
+{
+    uint32_t cursor;
+
+    cursor = openagc_pm4_encode_psbc_context_pairs(ctx_offsets, ctx_values, ctx_count,
+                                                   words);
+    cursor += openagc_pm4_encode_psbc_shader_pairs(sh_offsets, sh_values, sh_count,
+                                                   words + cursor);
+    openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
+    return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+}
+
 #endif /* OPENAGC_PM4_GRAPHICS_FW940_H */
