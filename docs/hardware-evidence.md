@@ -794,9 +794,43 @@ capture). Loader still accepted connections on 9021 afterward.
 This proves linkage SET_CONTEXT_REG + EOP on console for the three
 smoke.vert linkage pairs. It does **not** unlock CB/DB, DRAW, tiling,
 VideoOut, or host `gpu_execution`. `hardware_qualified` stays **false**.
-The `openagc_ps5_policy` target stays deny-all. The next
-graphics-adjacent gate remains an independently owned FW9.40 capture of
-CB/DB bind or DRAW packets — inventing those is still out of scope.
-Host plans may now treat the full register snapshot (context + shader +
-linkage) as console-aligned for encode/record purposes only; draws stay
+The `openagc_ps5_policy` target stays deny-all. The next graphics-adjacent
+gate is a bounded full host-aligned register program IB (Step S:
+context + SH + linkage + EOP); inventing CB/DB or DRAW remains out of
+scope. Host plans may encode/record the full register snapshot; draws stay
 `NOT_READY`.
+
+## Bounded experiment: full host register program + EOP (Step S)
+
+**Question.** Does one FW9.40 IB that concatenates the Step Q
+SET_CONTEXT ×3 + graphics SET_SH ×4 pairs with the Step R linkage
+SET_CONTEXT ×3 pairs — same offsets/values, host snapshot order
+(context → SH → linkage), PGM patched to uploaded smoke.vert code —
+plus the shared EOP+NOP trailer, complete with a fired marker and no
+GPU fault?
+
+**Why it matters.** Host PSBC plans already emit the full register
+program including linkage
+(`openagc_psbc_reflection_encode_register_program`). Steps O–R proved
+each piece and the non-linkage combination. Owning the full host-aligned
+IB on console is the smallest proof that the snapshot the frontends
+record is a safe single-submit shape on this firmware, without inventing
+CB/DB or DRAW.
+
+**Why not DRAW / CB yet.** DRAW and CB/DB still lack an independently
+owned FW9.40 capture. Step S deliberately omits both; it only submits
+the verified register program the host already encodes.
+
+**Entry conditions.** Steps A–R proven on `fw=0x9400008`; host encoding
+locked in `pm4_graphics_fw940.h`
+(`openagc_pm4_encode_graphics_context_sh_linkage_eop`); payload
+ELF-validated; one push, no retries.
+
+**Payload (`tools/payload/set_context_sh_linkage_eop.c`).** One IB of
+`OPENAGC_PM4_GRAPHICS_CONTEXT_SH_LINKAGE_EOP_WORDS(3,4)` (=54) dwords.
+Context + SH from Step Q; linkage from Step R; code upload from Step O.
+No DRAW, no CB/DB.
+
+**Status before push.** Host encoding locked in CTest
+(`test_openagc_psbc_adapter`); Step S encoder byte-identical to
+`openagc_psbc_reflection_encode_register_program_eop` for smoke.vert.

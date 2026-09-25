@@ -117,6 +117,11 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     only after Step Q and host `openagc_pm4_encode_graphics_linkage_eop`
     is locked. One push, no retries. smoke.vert linkage pairs only —
     no context_registers, no SET_SH, no DRAW, no CB/DB.
+19. `set_context_sh_linkage_eop.c` (Step S, ctx + SH + linkage + EOP)
+    only after Steps Q–R and host
+    `openagc_pm4_encode_graphics_context_sh_linkage_eop` is locked. One
+    push, no retries. Full host-aligned register program; no DRAW, no
+    CB/DB.
 
 ## Toolchain result (2026-09-25)
 
