@@ -169,6 +169,9 @@ static int test_ownership_and_binding(void)
     EXPECT(openagc_gpu_buffer_bind_memory(buffer_a, memory_a, 64u), OPENAGC_OK);
     EXPECT(openagc_gpu_buffer_bind_memory(buffer_a, memory_a, 0u),
            OPENAGC_ERROR_BAD_STATE);
+    EXPECT(openagc_gpu_buffer_unbind_memory(buffer_a), OPENAGC_OK);
+    EXPECT(openagc_gpu_buffer_unbind_memory(buffer_a), OPENAGC_ERROR_BAD_STATE);
+    EXPECT(openagc_gpu_buffer_bind_memory(buffer_a, memory_a, 64u), OPENAGC_OK);
     EXPECT(openagc_gpu_memory_destroy(memory_a), OPENAGC_ERROR_BUSY);
     EXPECT(openagc_gpu_device_destroy(device_a), OPENAGC_ERROR_BUSY);
 
@@ -248,6 +251,9 @@ static int test_packet_words_and_fence(void)
     EXPECT(openagc_gpu_buffer_bind_memory(source, source_memory, 0u), OPENAGC_OK);
     EXPECT(openagc_gpu_buffer_bind_memory(destination, destination_memory, 0u), OPENAGC_OK);
     EXPECT(openagc_gpu_memory_write(source_memory, 0u, data, sizeof(data)), OPENAGC_OK);
+    EXPECT(openagc_gpu_buffer_read(source, 0u, copied, sizeof(data)), OPENAGC_OK);
+    CHECK(memcmp(copied, data, sizeof(data)) == 0);
+    EXPECT(openagc_gpu_buffer_read(source, 64u, copied, 4u), OPENAGC_ERROR_OUT_OF_RANGE);
     EXPECT(openagc_gpu_queue_create(device, &queue_desc, &queue), OPENAGC_OK);
     EXPECT(openagc_gpu_command_buffer_create(device, &command_desc, &command_buffer),
            OPENAGC_OK);

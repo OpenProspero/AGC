@@ -206,9 +206,57 @@ static int test_intake_and_integrity(void)
     desc.toolchain_release_minor = 3u;
     memcpy(desc.compiler_source_revision, OPENAGC_SHADER_PINNED_PSBC_REVISION,
            sizeof(desc.compiler_source_revision));
+    desc.compiler_metadata_version = 13u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(candidate == NULL);
+    desc.compiler_metadata_version = OPENAGC_SHADER_PINNED_PSBC_METADATA_VERSION;
+    EXPECT(openagc_shader_artifact_intake_host(device, &desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    {
+        static const char metadata[] =
+            "{\"version\":14,\"target\":2,\"source_stage\":1,\"machine_code_size\":4,"
+            "\"hardware_stage\":0,\"unresolved_fields\":0}";
+        static const char wrong_size[] =
+            "{\"version\":14,\"target\":2,\"source_stage\":1,\"machine_code_size\":8,"
+            "\"hardware_stage\":0,\"unresolved_fields\":0}";
+
+        desc.compiler_metadata = (const uint8_t *)wrong_size;
+        desc.compiler_metadata_size = (uint32_t)(sizeof(wrong_size) - 1u);
+        EXPECT(openagc_shader_artifact_intake_host(device, &desc, &candidate),
+               OPENAGC_ERROR_INTEGRITY);
+        CHECK(candidate == NULL);
+        desc.compiler_metadata = (const uint8_t *)metadata;
+        desc.compiler_metadata_size = (uint32_t)(sizeof(metadata) - 1u);
+    }
     EXPECT(openagc_shader_artifact_intake_host(device, &desc, &candidate),
            OPENAGC_ERROR_NOT_READY);
     CHECK(candidate == NULL);
+    {
+        openagc_shader_artifact_desc pixel = fixture_desc(OPENAGC_SHADER_STAGE_PIXEL, code);
+        static const char pixel_metadata[] =
+            "{\"version\":14,\"target\":2,\"source_stage\":5,\"machine_code_size\":4,"
+            "\"hardware_stage\":1,\"unresolved_fields\":0}";
+        static const char vertex_stage_on_pixel[] =
+            "{\"version\":14,\"target\":2,\"source_stage\":1,\"machine_code_size\":4,"
+            "\"hardware_stage\":1,\"unresolved_fields\":0}";
+
+        pixel.compiler = OPENAGC_SHADER_COMPILER_OPENGNM_PSBC;
+        pixel.compiler_metadata_version = OPENAGC_SHADER_PINNED_PSBC_METADATA_VERSION;
+        pixel.toolchain_release_minor = 3u;
+        pixel.compiler_binary_sha256[0] = 1u;
+        memcpy(pixel.compiler_source_revision, OPENAGC_SHADER_PINNED_PSBC_REVISION,
+               sizeof(pixel.compiler_source_revision));
+        pixel.compiler_metadata = (const uint8_t *)vertex_stage_on_pixel;
+        pixel.compiler_metadata_size = (uint32_t)(sizeof(vertex_stage_on_pixel) - 1u);
+        EXPECT(openagc_shader_artifact_intake_host(device, &pixel, &candidate),
+               OPENAGC_ERROR_INTEGRITY);
+        pixel.compiler_metadata = (const uint8_t *)pixel_metadata;
+        pixel.compiler_metadata_size = (uint32_t)(sizeof(pixel_metadata) - 1u);
+        EXPECT(openagc_shader_artifact_intake_host(device, &pixel, &candidate),
+               OPENAGC_ERROR_NOT_READY);
+        CHECK(candidate == NULL);
+    }
 
     EXPECT(openagc_shader_artifact_destroy(artifact), OPENAGC_OK);
     EXPECT(openagc_gpu_device_destroy(device), OPENAGC_OK);
@@ -525,6 +573,349 @@ static int test_pipeline_format_bindings_and_ownership(void)
     return 0;
 }
 
+static int test_sampled_texture_bindings(void)
+{
+    openagc_context *context = NULL;
+    openagc_context *other_context = NULL;
+    openagc_gpu_device *device = NULL;
+    openagc_gpu_device *other_device = NULL;
+    openagc_gpu_memory_desc memory_desc = OPENAGC_GPU_MEMORY_DESC_INIT(96u);
+    openagc_gpu_buffer_desc uniform_desc =
+        OPENAGC_GPU_BUFFER_DESC_INIT(64u, OPENAGC_GPU_BUFFER_SHADER_READ_BIT);
+    openagc_graphics_image_desc sampled_desc = OPENAGC_GRAPHICS_IMAGE_DESC_INIT(
+        2u, 2u, 8u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM);
+    openagc_graphics_image_desc bgra_sampled_desc = OPENAGC_GRAPHICS_IMAGE_DESC_INIT(
+        2u, 2u, 8u, OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM);
+    openagc_graphics_image_desc target_desc = OPENAGC_GRAPHICS_IMAGE_DESC_INIT(
+        2u, 2u, 8u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM);
+    openagc_graphics_command_buffer_desc command_desc =
+        OPENAGC_GRAPHICS_COMMAND_BUFFER_DESC_INIT(5u);
+    openagc_graphics_transition_desc to_shader_read = OPENAGC_GRAPHICS_TRANSITION_DESC_INIT(
+        OPENAGC_GRAPHICS_STATE_UNDEFINED, OPENAGC_GRAPHICS_OWNER_HOST,
+        OPENAGC_GRAPHICS_STATE_SHADER_READ, OPENAGC_GRAPHICS_OWNER_GRAPHICS);
+    openagc_graphics_transition_desc to_target = OPENAGC_GRAPHICS_TRANSITION_DESC_INIT(
+        OPENAGC_GRAPHICS_STATE_UNDEFINED, OPENAGC_GRAPHICS_OWNER_HOST,
+        OPENAGC_GRAPHICS_STATE_COLOR_TARGET, OPENAGC_GRAPHICS_OWNER_GRAPHICS);
+    uint8_t code[4] = { 't', 'e', 's', 't' };
+    openagc_shader_binding_decl uniform = {
+        0u, 0u, OPENAGC_SHADER_BINDING_UNIFORM_BUFFER, 16u
+    };
+    openagc_shader_binding_decl colliding_uniform = {
+        0u, 1u, OPENAGC_SHADER_BINDING_UNIFORM_BUFFER, 16u
+    };
+    openagc_shader_texture_decl texture = { 0u, 1u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM };
+    openagc_shader_texture_decl bgra_texture = { 0u, 1u, OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM };
+    openagc_shader_texture_decl two_textures[2] = {
+        { 0u, 1u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM },
+        { 0u, 2u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM }
+    };
+    openagc_shader_texture_decl duplicate_textures[2] = {
+        { 0u, 1u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM },
+        { 0u, 1u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM }
+    };
+    openagc_shader_texture_decl depth_texture = {
+        0u, 1u, OPENAGC_GRAPHICS_FORMAT_D24_UNORM_S8_UINT
+    };
+    openagc_shader_texture_decl set_texture = { 1u, 1u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM };
+    openagc_shader_texture_decl slot_texture = { 0u, 8u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM };
+    openagc_shader_texture_decl read_texture;
+    openagc_shader_artifact_desc vertex_desc =
+        fixture_desc(OPENAGC_SHADER_STAGE_VERTEX, code);
+    openagc_shader_artifact_desc pixel_desc =
+        fixture_desc(OPENAGC_SHADER_STAGE_PIXEL, code);
+    openagc_shader_resource_binding resource = { 0u, 0u, NULL, 0u, 32u };
+    openagc_shader_texture_binding textures[2] = { { 0u, 1u, NULL }, { 0u, 2u, NULL } };
+    openagc_shader_pipeline_desc pipeline_desc = OPENAGC_SHADER_PIPELINE_DESC_INIT;
+    openagc_shader_artifact_info artifact_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+    openagc_shader_pipeline_info plan_info = OPENAGC_SHADER_PIPELINE_INFO_INIT;
+    openagc_gpu_memory *uniform_memory = NULL;
+    openagc_gpu_memory *image_memory = NULL;
+    openagc_gpu_memory *other_memory = NULL;
+    openagc_gpu_buffer *uniform_buffer = NULL;
+    openagc_graphics_image *sampled = NULL;
+    openagc_graphics_image *sampled_second = NULL;
+    openagc_graphics_image *sampled_bgra = NULL;
+    openagc_graphics_image *target_only = NULL;
+    openagc_graphics_image *sampled_idle = NULL;
+    openagc_graphics_image *unbound_sampled = NULL;
+    openagc_graphics_image *foreign_sampled = NULL;
+    openagc_graphics_command_buffer *command = NULL;
+    openagc_shader_artifact *vertex = NULL;
+    openagc_shader_artifact *pixel = NULL;
+    openagc_shader_artifact *two_slots = NULL;
+    openagc_shader_artifact *vertex_texture = NULL;
+    openagc_shader_artifact *pixel_bgra_texture = NULL;
+    openagc_shader_artifact *depth_artifact = NULL;
+    openagc_shader_artifact *set_artifact = NULL;
+    openagc_shader_artifact *slot_artifact = NULL;
+    openagc_shader_artifact *duplicate_artifact = NULL;
+    openagc_shader_artifact *collision_artifact = NULL;
+    openagc_shader_artifact *compute_texture = NULL;
+    openagc_shader_artifact_desc compute_desc = OPENAGC_SHADER_ARTIFACT_DESC_INIT;
+    openagc_shader_pipeline_plan *plan = NULL;
+    openagc_shader_pipeline_plan *candidate = NULL;
+    openagc_shader_artifact *artifact_candidate = NULL;
+
+    CHECK(make_device(&context, &device) == 0);
+    CHECK(make_device(&other_context, &other_device) == 0);
+    sampled_desc.usage = OPENAGC_GRAPHICS_USAGE_SAMPLED_BIT;
+    bgra_sampled_desc.usage = OPENAGC_GRAPHICS_USAGE_SAMPLED_BIT;
+    EXPECT(openagc_gpu_memory_allocate(device, &memory_desc, &uniform_memory), OPENAGC_OK);
+    EXPECT(openagc_gpu_memory_allocate(device, &memory_desc, &image_memory), OPENAGC_OK);
+    EXPECT(openagc_gpu_memory_allocate(other_device, &memory_desc, &other_memory),
+           OPENAGC_OK);
+    EXPECT(openagc_gpu_buffer_create(device, &uniform_desc, &uniform_buffer), OPENAGC_OK);
+    EXPECT(openagc_gpu_buffer_bind_memory(uniform_buffer, uniform_memory, 0u), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_create(device, &sampled_desc, &sampled), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_create(device, &sampled_desc, &sampled_second),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_image_create(device, &bgra_sampled_desc, &sampled_bgra),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_image_create(device, &target_desc, &target_only), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_create(device, &sampled_desc, &sampled_idle), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_create(device, &sampled_desc, &unbound_sampled),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_image_create(other_device, &sampled_desc, &foreign_sampled),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_image_bind_memory(sampled, image_memory, 0u), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_bind_memory(sampled_second, image_memory, 16u),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_image_bind_memory(sampled_bgra, image_memory, 32u), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_bind_memory(target_only, image_memory, 48u), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_bind_memory(sampled_idle, image_memory, 64u), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_bind_memory(foreign_sampled, other_memory, 0u), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_buffer_create(device, &command_desc, &command),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_command_buffer_begin(command), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_transition(command, sampled, &to_shader_read),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_command_transition(command, sampled_second, &to_shader_read),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_command_transition(command, sampled_bgra, &to_shader_read),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_command_transition(command, target_only, &to_target),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_command_buffer_end(command), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_buffer_apply_host_state(command), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_buffer_destroy(command), OPENAGC_OK);
+
+    vertex_desc.bindings = &uniform;
+    vertex_desc.binding_count = 1u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &vertex_desc, &vertex), OPENAGC_OK);
+    pixel_desc.textures = &texture;
+    pixel_desc.texture_count = 1u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &pixel), OPENAGC_OK);
+    EXPECT(openagc_shader_artifact_get_info(pixel, &artifact_info), OPENAGC_OK);
+    CHECK(artifact_info.binding_count == 0u && artifact_info.texture_count == 1u);
+    EXPECT(openagc_shader_artifact_get_texture(pixel, 0u, &read_texture), OPENAGC_OK);
+    CHECK(read_texture.set == 0u && read_texture.binding == 1u);
+    CHECK(read_texture.format == OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM);
+    EXPECT(openagc_shader_artifact_get_texture(vertex, 0u, &read_texture),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_shader_artifact_get_texture(pixel, 1u, &read_texture),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_shader_artifact_get_texture(pixel, 0u, NULL),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+
+    pixel_desc.textures = NULL;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &artifact_candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    pixel_desc.textures = &texture;
+    pixel_desc.texture_count = 0u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &artifact_candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    pixel_desc.texture_count = 9u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &artifact_candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    pixel_desc.texture_count = 1u;
+    pixel_desc.textures = &depth_texture;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &depth_artifact),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    pixel_desc.textures = &set_texture;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &set_artifact),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    pixel_desc.textures = &slot_texture;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &slot_artifact),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    pixel_desc.textures = duplicate_textures;
+    pixel_desc.texture_count = 2u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &duplicate_artifact),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    pixel_desc.bindings = &colliding_uniform;
+    pixel_desc.binding_count = 1u;
+    pixel_desc.textures = &texture;
+    pixel_desc.texture_count = 1u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &collision_artifact),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    CHECK(artifact_candidate == NULL);
+    pixel_desc.bindings = NULL;
+    pixel_desc.binding_count = 0u;
+    pixel_desc.textures = two_textures;
+    pixel_desc.texture_count = 2u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &two_slots), OPENAGC_OK);
+    pixel_desc.textures = &bgra_texture;
+    pixel_desc.texture_count = 1u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &pixel_desc, &pixel_bgra_texture),
+           OPENAGC_OK);
+    vertex_desc.textures = &texture;
+    vertex_desc.texture_count = 1u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &vertex_desc, &vertex_texture),
+           OPENAGC_OK);
+    pixel_desc.textures = &texture;
+    pixel_desc.texture_count = 1u;
+
+    pipeline_desc.kind = OPENAGC_SHADER_PIPELINE_GRAPHICS;
+    pipeline_desc.vertex = vertex;
+    pipeline_desc.pixel = pixel;
+    pipeline_desc.color_target = target_only;
+    resource.buffer = uniform_buffer;
+    pipeline_desc.resources = &resource;
+    pipeline_desc.resource_count = 1u;
+    textures[0].image = sampled;
+    pipeline_desc.textures = textures;
+    pipeline_desc.texture_count = 1u;
+
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &plan),
+           OPENAGC_OK);
+    EXPECT(openagc_shader_pipeline_plan_get_info(plan, &plan_info), OPENAGC_OK);
+    {
+        uint32_t input_mask = 1u;
+
+        EXPECT(openagc_shader_pipeline_plan_vertex_input(plan, &input_mask), OPENAGC_OK);
+        CHECK(input_mask == 0u);
+    }
+    CHECK(plan_info.resource_count == 1u && plan_info.texture_count == 1u);
+    CHECK(plan_info.color_format == OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM &&
+          plan_info.target_image_id == 4u);
+    EXPECT(openagc_graphics_image_destroy(sampled), OPENAGC_ERROR_BUSY);
+    EXPECT(openagc_shader_pipeline_plan_destroy(plan), OPENAGC_OK);
+    plan = NULL;
+
+    pipeline_desc.textures = NULL;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    pipeline_desc.textures = textures;
+    pipeline_desc.texture_count = 0u;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    pipeline_desc.texture_count = 9u;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    pipeline_desc.texture_count = 1u;
+    textures[0].binding = 0u;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    textures[0].binding = 1u;
+    textures[0].set = 1u;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    textures[0].set = 0u;
+    textures[0].image = NULL;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    textures[0].image = unbound_sampled;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_BAD_STATE);
+    textures[0].image = sampled_idle;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_BAD_STATE);
+    textures[0].image = target_only;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    textures[0].image = sampled_bgra;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    textures[0].image = foreign_sampled;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_OWNERSHIP);
+    textures[0].image = sampled;
+    pipeline_desc.pixel = two_slots;
+    pipeline_desc.texture_count = 2u;
+    textures[1].image = sampled;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    textures[1].image = sampled_bgra;
+    textures[1].binding = 1u;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    textures[1].binding = 2u;
+    textures[1].image = sampled_second;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &plan),
+           OPENAGC_OK);
+    EXPECT(openagc_shader_pipeline_plan_get_info(plan, &plan_info), OPENAGC_OK);
+    CHECK(plan_info.texture_count == 2u);
+    EXPECT(openagc_shader_pipeline_plan_destroy(plan), OPENAGC_OK);
+    plan = NULL;
+
+    pipeline_desc.pixel = pixel_bgra_texture;
+    pipeline_desc.texture_count = 1u;
+    textures[0].image = sampled_bgra;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &plan),
+           OPENAGC_OK);
+    EXPECT(openagc_shader_pipeline_plan_destroy(plan), OPENAGC_OK);
+    plan = NULL;
+    pipeline_desc.vertex = vertex_texture;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_BAD_STATE);
+    pipeline_desc.vertex = vertex;
+    pipeline_desc.pixel = pixel;
+    textures[0].image = sampled;
+    CHECK(candidate == NULL);
+
+    compute_desc = fixture_desc(OPENAGC_SHADER_STAGE_COMPUTE, code);
+    compute_desc.textures = &texture;
+    compute_desc.texture_count = 1u;
+    EXPECT(openagc_shader_artifact_intake_host(device, &compute_desc, &compute_texture),
+           OPENAGC_OK);
+    pipeline_desc.kind = OPENAGC_SHADER_PIPELINE_COMPUTE;
+    pipeline_desc.vertex = NULL;
+    pipeline_desc.pixel = NULL;
+    pipeline_desc.compute = compute_texture;
+    pipeline_desc.color_target = NULL;
+    pipeline_desc.resources = NULL;
+    pipeline_desc.resource_count = 0u;
+    pipeline_desc.texture_count = 1u;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &plan),
+           OPENAGC_OK);
+    EXPECT(openagc_shader_pipeline_plan_get_info(plan, &plan_info), OPENAGC_OK);
+    CHECK(plan_info.kind == OPENAGC_SHADER_PIPELINE_COMPUTE &&
+          plan_info.texture_count == 1u && plan_info.target_image_id == 0u);
+    textures[0].image = sampled_bgra;
+    pipeline_desc.textures = NULL;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    pipeline_desc.textures = textures;
+    EXPECT(openagc_shader_pipeline_plan_create_host(device, &pipeline_desc, &candidate),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    textures[0].image = sampled;
+    CHECK(candidate == NULL);
+    EXPECT(openagc_shader_pipeline_plan_destroy(plan), OPENAGC_OK);
+    plan = NULL;
+
+    EXPECT(openagc_shader_artifact_destroy(compute_texture), OPENAGC_OK);
+    EXPECT(openagc_shader_artifact_destroy(vertex), OPENAGC_OK);
+    EXPECT(openagc_shader_artifact_destroy(pixel), OPENAGC_OK);
+    EXPECT(openagc_shader_artifact_destroy(two_slots), OPENAGC_OK);
+    EXPECT(openagc_shader_artifact_destroy(vertex_texture), OPENAGC_OK);
+    EXPECT(openagc_shader_artifact_destroy(pixel_bgra_texture), OPENAGC_OK);
+    EXPECT(openagc_gpu_buffer_destroy(uniform_buffer), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_destroy(sampled), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_destroy(sampled_second), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_destroy(sampled_bgra), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_destroy(target_only), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_destroy(sampled_idle), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_destroy(unbound_sampled), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_destroy(foreign_sampled), OPENAGC_OK);
+    EXPECT(openagc_gpu_memory_destroy(uniform_memory), OPENAGC_OK);
+    EXPECT(openagc_gpu_memory_destroy(image_memory), OPENAGC_OK);
+    EXPECT(openagc_gpu_memory_destroy(other_memory), OPENAGC_OK);
+    EXPECT(openagc_gpu_device_destroy(device), OPENAGC_OK);
+    EXPECT(openagc_gpu_device_destroy(other_device), OPENAGC_OK);
+    EXPECT(openagc_context_destroy(context), OPENAGC_OK);
+    EXPECT(openagc_context_destroy(other_context), OPENAGC_OK);
+    return 0;
+}
+
 static int test_artifact_and_plan_capacity(void)
 {
     openagc_context *context = NULL;
@@ -574,6 +965,7 @@ int main(void)
         test_sha256_block_boundaries_and_compute() != 0 ||
         test_graphics_plan_and_resource_lifetime() != 0 ||
         test_pipeline_format_bindings_and_ownership() != 0 ||
+        test_sampled_texture_bindings() != 0 ||
         test_artifact_and_plan_capacity() != 0) {
         return 1;
     }

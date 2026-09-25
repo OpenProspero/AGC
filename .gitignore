@@ -1,3 +1,6 @@
 /build/
 /out/
 /CMakeUserPresets.json
+/.commandcode
+*.pyc
+__pycache__/

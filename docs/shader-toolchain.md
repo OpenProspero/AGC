@@ -46,10 +46,15 @@ This check establishes byte integrity and shape only. The positive
 CTest fixtures contain arbitrary test bytes, **not machine code or a
 compiled shader**.
 
-An envelope claiming `OPENAGC_SHADER_COMPILER_OPENGNM_PSBC` must at
-least declare the v0.3.0 toolchain release, the source revision above,
-a nonzero metadata version and an executable digest. Even when those
-fields, the payload digest, and reflection shape pass, intake returns
+An envelope claiming `OPENAGC_SHADER_COMPILER_OPENGNM_PSBC` must
+declare the v0.3.0 toolchain release, the source revision above,
+metadata version 14, and an executable digest. Another metadata
+version is `INVALID_ARGUMENT`. The envelope must also carry the
+compiler metadata object: `version`, `target` 2, `source_stage`
+(vertex 1, pixel 5), `machine_code_size` equal to the payload, and
+the two integer stage fields. A mismatch is `INTEGRITY`. Compute
+metadata is refused. Even when those fields, the payload digest, and
+reflection shape pass, intake returns
 `OPENAGC_ERROR_NOT_READY` with a null handle: a caller-supplied
 fingerprint is not independent proof that a compiler is installed,
 pinned, or that reflection came from its output. Shader capabilities

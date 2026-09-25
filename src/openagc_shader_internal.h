@@ -14,7 +14,10 @@ void openagc_gpu_shader_buffer_release(openagc_gpu_buffer *buffer);
 openagc_result openagc_graphics_shader_target_validate(
     const openagc_gpu_device *device, const openagc_graphics_image *image,
     openagc_graphics_format format, uint32_t *image_id);
-void openagc_graphics_shader_target_retain(openagc_graphics_image *image);
-void openagc_graphics_shader_target_release(openagc_graphics_image *image);
+openagc_result openagc_graphics_shader_texture_validate(
+    const openagc_gpu_device *device, const openagc_graphics_image *image,
+    openagc_graphics_format format);
+void openagc_graphics_shader_image_retain(openagc_graphics_image *image);
+void openagc_graphics_shader_image_release(openagc_graphics_image *image);
 
 #endif

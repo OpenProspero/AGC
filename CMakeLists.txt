@@ -8,6 +8,9 @@ if(NOT OPENAGC_PS5_POLICY_ONLY)
         src/openagc.c
         src/openagc_gpu.c
         src/openagc_graphics.c
+        src/openagc_frontend.c
+        src/openagc_vulkan.c
+        src/openagc_opengl.c
         src/openagc_sha256.c
         src/openagc_shader.c)
     add_library(OpenAGC::openagc ALIAS openagc)
@@ -66,6 +69,30 @@ if(NOT OPENAGC_PS5_POLICY_ONLY)
         set_target_properties(openagc_shader_tests PROPERTIES
             C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
         add_test(NAME openagc_shader COMMAND openagc_shader_tests)
+
+        add_executable(openagc_frontend_tests tests/test_openagc_frontend.c)
+        target_link_libraries(openagc_frontend_tests PRIVATE OpenAGC::openagc)
+        set_target_properties(openagc_frontend_tests PROPERTIES
+            C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+        add_test(NAME openagc_frontend COMMAND openagc_frontend_tests)
+
+        add_executable(openagc_vulkan_tests tests/test_openagc_vulkan.c)
+        target_link_libraries(openagc_vulkan_tests PRIVATE OpenAGC::openagc)
+        set_target_properties(openagc_vulkan_tests PROPERTIES
+            C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+        add_test(NAME openagc_vulkan COMMAND openagc_vulkan_tests)
+
+        add_executable(openagc_opengl_tests tests/test_openagc_opengl.c)
+        target_link_libraries(openagc_opengl_tests PRIVATE OpenAGC::openagc)
+        set_target_properties(openagc_opengl_tests PROPERTIES
+            C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+        add_test(NAME openagc_opengl COMMAND openagc_opengl_tests)
+
+        add_executable(openagc_equivalence_tests tests/test_openagc_equivalence.c)
+        target_link_libraries(openagc_equivalence_tests PRIVATE OpenAGC::openagc)
+        set_target_properties(openagc_equivalence_tests PROPERTIES
+            C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+        add_test(NAME openagc_equivalence COMMAND openagc_equivalence_tests)
 
         add_executable(openagc_policy_tests tests/test_ps5_policy.c)
         target_link_libraries(openagc_policy_tests PRIVATE OpenAGC::ps5_policy)

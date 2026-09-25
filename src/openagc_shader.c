@@ -20,9 +20,11 @@ struct openagc_shader_artifact {
     openagc_gpu_device *device;
     uint8_t *code;
     openagc_shader_binding_decl *bindings;
+    openagc_shader_texture_decl *textures;
     uint8_t code_sha256[32];
     uint32_t code_size;
     uint32_t binding_count;
+    uint32_t texture_count;
     uint32_t pipeline_references;
     openagc_shader_stage stage;
     uint32_t vertex_position_written;
@@ -42,10 +44,12 @@ struct openagc_shader_pipeline_plan {
     openagc_shader_artifact *compute;
     openagc_graphics_image *color_target;
     openagc_shader_resource_binding *resources;
+    openagc_shader_texture_binding *textures;
     openagc_shader_pipeline_kind kind;
     openagc_graphics_format color_format;
     uint32_t target_image_id;
     uint32_t resource_count;
+    uint32_t texture_count;
 };
 
 static int openagc_shader_digest_is_zero(const uint8_t digest[32])
@@ -74,9 +78,11 @@ static int openagc_shader_revision_is_zero(const char revision[41])
 
 static openagc_result openagc_shader_validate_reflection(
     const openagc_shader_artifact_desc *desc,
-    const openagc_shader_binding_decl *bindings)
+    const openagc_shader_binding_decl *bindings,
+    const openagc_shader_texture_decl *textures)
 {
     uint32_t i;
+    uint32_t j;
 
     if (desc->varying_input_mask > OPENAGC_SHADER_VARYING_MASK ||
         desc->varying_output_mask > OPENAGC_SHADER_VARYING_MASK ||
@@ -94,6 +100,20 @@ static openagc_result openagc_shader_validate_reflection(
         }
         if (binding->kind != OPENAGC_SHADER_BINDING_UNIFORM_BUFFER) {
             return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+    }
+    for (i = 0u; i < desc->texture_count; ++i) {
+        const openagc_shader_texture_decl *texture = &textures[i];
+        if (texture->set != 0u || texture->binding >= OPENAGC_SHADER_MAX_BINDINGS ||
+            (i != 0u && texture->binding <= textures[i - 1u].binding) ||
+            (texture->format != OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM &&
+             texture->format != OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM)) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+        for (j = 0u; j < desc->binding_count; ++j) {
+            if (bindings[j].binding == texture->binding) {
+                return OPENAGC_ERROR_OUT_OF_RANGE;
+            }
         }
     }
 
@@ -154,6 +174,114 @@ openagc_result openagc_shader_get_capabilities(
     return OPENAGC_OK;
 }
 
+static int openagc_shader_json_uint(const uint8_t *json, uint32_t size, const char *key,
+                                   uint32_t *out)
+{
+    uint32_t index;
+    uint32_t key_length = 0u;
+    uint32_t value = 0u;
+    int found = 0;
+
+    while (key[key_length] != '\0') {
+        key_length++;
+    }
+    for (index = 0u; index + key_length + 2u < size; ++index) {
+        uint32_t cursor;
+
+        if (json[index] != '"' ||
+            memcmp(json + index + 1u, key, key_length) != 0 ||
+            json[index + 1u + key_length] != '"') {
+            continue;
+        }
+        cursor = index + key_length + 2u;
+        while (cursor < size && (json[cursor] == ' ' || json[cursor] == '\t')) {
+            cursor++;
+        }
+        if (cursor >= size || json[cursor] != ':') {
+            return 0;
+        }
+        cursor++;
+        while (cursor < size && (json[cursor] == ' ' || json[cursor] == '\t')) {
+            cursor++;
+        }
+        if (cursor >= size || json[cursor] < '0' || json[cursor] > '9') {
+            return 0;
+        }
+        if (found != 0) {
+            return 0;
+        }
+        found = 1;
+        while (cursor < size && json[cursor] >= '0' && json[cursor] <= '9') {
+            uint32_t digit = (uint32_t)(json[cursor] - '0');
+
+            if (value > (0xffffffffu - digit) / 10u) {
+                return 0;
+            }
+            value = value * 10u + digit;
+            cursor++;
+        }
+        index = cursor;
+    }
+    if (found == 0) {
+        return 0;
+    }
+    *out = value;
+    return 1;
+}
+
+static openagc_result openagc_shader_psbc_metadata_matches(const uint8_t *metadata, uint32_t size,
+                                                           openagc_shader_stage stage,
+                                                           uint32_t code_size)
+{
+    uint32_t version = 0u;
+    uint32_t target = 0u;
+    uint32_t source_stage = 0u;
+    uint32_t machine_code_size = 0u;
+    uint32_t hardware_stage = 0u;
+    uint32_t unresolved_fields = 0u;
+    uint32_t expected_stage;
+
+    if (metadata == NULL || size < 2u) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    {
+        uint32_t begin = 0u;
+        uint32_t end = size;
+
+        while (begin < end && (metadata[begin] == ' ' || metadata[begin] == '\n' ||
+                               metadata[begin] == '\r' || metadata[begin] == '\t')) {
+            begin++;
+        }
+        while (end > begin && (metadata[end - 1u] == ' ' || metadata[end - 1u] == '\n' ||
+                               metadata[end - 1u] == '\r' || metadata[end - 1u] == '\t')) {
+            end--;
+        }
+        if (begin >= end || metadata[begin] != '{' || metadata[end - 1u] != '}') {
+            return OPENAGC_ERROR_INVALID_ARGUMENT;
+        }
+    }
+    if (stage == OPENAGC_SHADER_STAGE_VERTEX) {
+        expected_stage = 1u;
+    } else if (stage == OPENAGC_SHADER_STAGE_PIXEL) {
+        expected_stage = 5u;
+    } else {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (openagc_shader_json_uint(metadata, size, "version", &version) == 0 ||
+        openagc_shader_json_uint(metadata, size, "target", &target) == 0 ||
+        openagc_shader_json_uint(metadata, size, "source_stage", &source_stage) == 0 ||
+        openagc_shader_json_uint(metadata, size, "machine_code_size", &machine_code_size) == 0 ||
+        openagc_shader_json_uint(metadata, size, "hardware_stage", &hardware_stage) == 0 ||
+        openagc_shader_json_uint(metadata, size, "unresolved_fields", &unresolved_fields) == 0) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (version != OPENAGC_SHADER_PINNED_PSBC_METADATA_VERSION || target != 2u ||
+        source_stage != expected_stage || machine_code_size != code_size) {
+        return OPENAGC_ERROR_INTEGRITY;
+    }
+    return OPENAGC_OK;
+}
+
 openagc_result openagc_shader_artifact_intake_host(
     openagc_gpu_device *device, const openagc_shader_artifact_desc *desc,
     openagc_shader_artifact **out_artifact)
@@ -187,7 +315,10 @@ openagc_result openagc_shader_artifact_intake_host(
         (snapshot.code_size & 3u) != 0u ||
         snapshot.binding_count > OPENAGC_SHADER_MAX_BINDINGS ||
         (snapshot.binding_count != 0u && snapshot.bindings == NULL) ||
-        (snapshot.binding_count == 0u && snapshot.bindings != NULL)) {
+        (snapshot.binding_count == 0u && snapshot.bindings != NULL) ||
+        snapshot.texture_count > OPENAGC_SHADER_MAX_BINDINGS ||
+        (snapshot.texture_count != 0u && snapshot.textures == NULL) ||
+        (snapshot.texture_count == 0u && snapshot.textures != NULL)) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
     if (snapshot.compiler == OPENAGC_SHADER_COMPILER_UNVERIFIED_FIXTURE) {
@@ -199,7 +330,8 @@ openagc_result openagc_shader_artifact_intake_host(
             !openagc_shader_digest_is_zero(snapshot.compiler_binary_sha256)) {
             return OPENAGC_ERROR_INVALID_ARGUMENT;
         }
-    } else if (snapshot.compiler_metadata_version == 0u ||
+    } else if (snapshot.compiler_metadata_version !=
+                   OPENAGC_SHADER_PINNED_PSBC_METADATA_VERSION ||
                snapshot.toolchain_release_major != 0u ||
                snapshot.toolchain_release_minor != 3u ||
                snapshot.toolchain_release_patch != 0u ||
@@ -222,8 +354,13 @@ openagc_result openagc_shader_artifact_intake_host(
         artifact->bindings = (openagc_shader_binding_decl *)calloc(
             (size_t)snapshot.binding_count, sizeof(*artifact->bindings));
     }
+    if (snapshot.texture_count != 0u) {
+        artifact->textures = (openagc_shader_texture_decl *)calloc(
+            (size_t)snapshot.texture_count, sizeof(*artifact->textures));
+    }
     if (artifact->code == NULL ||
-        (snapshot.binding_count != 0u && artifact->bindings == NULL)) {
+        (snapshot.binding_count != 0u && artifact->bindings == NULL) ||
+        (snapshot.texture_count != 0u && artifact->textures == NULL)) {
         result = OPENAGC_ERROR_OUT_OF_MEMORY;
         goto fail;
     }
@@ -232,7 +369,12 @@ openagc_result openagc_shader_artifact_intake_host(
         memcpy(artifact->bindings, snapshot.bindings,
                (size_t)snapshot.binding_count * sizeof(*artifact->bindings));
     }
-    result = openagc_shader_validate_reflection(&snapshot, artifact->bindings);
+    if (snapshot.texture_count != 0u) {
+        memcpy(artifact->textures, snapshot.textures,
+               (size_t)snapshot.texture_count * sizeof(*artifact->textures));
+    }
+    result = openagc_shader_validate_reflection(&snapshot, artifact->bindings,
+                                                artifact->textures);
     if (result != OPENAGC_OK) {
         goto fail;
     }
@@ -242,12 +384,19 @@ openagc_result openagc_shader_artifact_intake_host(
         goto fail;
     }
     if (snapshot.compiler == OPENAGC_SHADER_COMPILER_OPENGNM_PSBC) {
+        result = openagc_shader_psbc_metadata_matches(
+            snapshot.compiler_metadata, snapshot.compiler_metadata_size, snapshot.stage,
+            snapshot.code_size);
+        if (result != OPENAGC_OK) {
+            goto fail;
+        }
         result = OPENAGC_ERROR_NOT_READY;
         goto fail;
     }
     artifact->device = device;
     artifact->code_size = snapshot.code_size;
     artifact->binding_count = snapshot.binding_count;
+    artifact->texture_count = snapshot.texture_count;
     artifact->stage = snapshot.stage;
     artifact->vertex_position_written = snapshot.vertex_position_written;
     artifact->varying_input_mask = snapshot.varying_input_mask;
@@ -263,6 +412,7 @@ openagc_result openagc_shader_artifact_intake_host(
     return OPENAGC_OK;
 
 fail:
+    free(artifact->textures);
     free(artifact->bindings);
     free(artifact->code);
     free(artifact);
@@ -282,6 +432,7 @@ openagc_result openagc_shader_artifact_get_info(
     info->target = OPENAGC_SHADER_TARGET_GFX1013;
     info->code_size = artifact->code_size;
     info->binding_count = artifact->binding_count;
+    info->texture_count = artifact->texture_count;
     info->compiler_verified = 0u;
     info->gpu_executable = 0u;
     memcpy(info->code_sha256, artifact->code_sha256, sizeof(info->code_sha256));
@@ -302,6 +453,20 @@ openagc_result openagc_shader_artifact_get_binding(
     return OPENAGC_OK;
 }
 
+openagc_result openagc_shader_artifact_get_texture(
+    const openagc_shader_artifact *artifact, uint32_t index,
+    openagc_shader_texture_decl *out_texture)
+{
+    if (artifact == NULL || out_texture == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (index >= artifact->texture_count) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    *out_texture = artifact->textures[index];
+    return OPENAGC_OK;
+}
+
 openagc_result openagc_shader_artifact_destroy(openagc_shader_artifact *artifact)
 {
     if (artifact == NULL) {
@@ -311,6 +476,7 @@ openagc_result openagc_shader_artifact_destroy(openagc_shader_artifact *artifact
         return OPENAGC_ERROR_BUSY;
     }
     artifact->device->shader_artifact_count--;
+    free(artifact->textures);
     free(artifact->bindings);
     free(artifact->code);
     free(artifact);
@@ -337,6 +503,22 @@ static void openagc_shader_require_bindings(
     }
 }
 
+static openagc_result openagc_shader_require_textures(
+    const openagc_shader_artifact *artifact,
+    openagc_graphics_format required[OPENAGC_SHADER_MAX_BINDINGS])
+{
+    uint32_t i;
+
+    for (i = 0u; i < artifact->texture_count; ++i) {
+        uint32_t slot = artifact->textures[i].binding;
+        if (required[slot] != 0u && required[slot] != artifact->textures[i].format) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        required[slot] = artifact->textures[i].format;
+    }
+    return OPENAGC_OK;
+}
+
 openagc_result openagc_shader_pipeline_plan_create_host(
     openagc_gpu_device *device, const openagc_shader_pipeline_desc *desc,
     openagc_shader_pipeline_plan **out_plan)
@@ -344,8 +526,11 @@ openagc_result openagc_shader_pipeline_plan_create_host(
     openagc_shader_pipeline_plan *plan;
     openagc_shader_pipeline_desc snapshot;
     openagc_shader_resource_binding resources[OPENAGC_SHADER_MAX_BINDINGS] = { 0 };
+    openagc_shader_texture_binding textures[OPENAGC_SHADER_MAX_BINDINGS] = { 0 };
     uint32_t required[OPENAGC_SHADER_MAX_BINDINGS] = { 0u };
+    openagc_graphics_format required_textures[OPENAGC_SHADER_MAX_BINDINGS] = { 0u };
     uint32_t required_count = 0u;
+    uint32_t required_texture_count = 0u;
     uint32_t target_id = 0u;
     uint32_t slot;
     uint32_t index;
@@ -373,6 +558,15 @@ openagc_result openagc_shader_pipeline_plan_create_host(
         memcpy(resources, snapshot.resources,
                (size_t)snapshot.resource_count * sizeof(resources[0]));
     }
+    if (snapshot.texture_count > OPENAGC_SHADER_MAX_BINDINGS ||
+        (snapshot.texture_count != 0u && snapshot.textures == NULL) ||
+        (snapshot.texture_count == 0u && snapshot.textures != NULL)) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (snapshot.texture_count != 0u) {
+        memcpy(textures, snapshot.textures,
+               (size_t)snapshot.texture_count * sizeof(textures[0]));
+    }
     if (snapshot.kind == OPENAGC_SHADER_PIPELINE_GRAPHICS) {
         if (snapshot.vertex == NULL || snapshot.pixel == NULL ||
             snapshot.compute != NULL || snapshot.color_target == NULL) {
@@ -394,6 +588,14 @@ openagc_result openagc_shader_pipeline_plan_create_host(
         }
         openagc_shader_require_bindings(snapshot.vertex, required);
         openagc_shader_require_bindings(snapshot.pixel, required);
+        result = openagc_shader_require_textures(snapshot.vertex, required_textures);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+        result = openagc_shader_require_textures(snapshot.pixel, required_textures);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
     } else if (snapshot.kind == OPENAGC_SHADER_PIPELINE_COMPUTE) {
         if (snapshot.compute == NULL || snapshot.vertex != NULL ||
             snapshot.pixel != NULL || snapshot.color_target != NULL) {
@@ -406,6 +608,10 @@ openagc_result openagc_shader_pipeline_plan_create_host(
             return OPENAGC_ERROR_BAD_STATE;
         }
         openagc_shader_require_bindings(snapshot.compute, required);
+        result = openagc_shader_require_textures(snapshot.compute, required_textures);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
     } else {
         return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
     }
@@ -437,6 +643,33 @@ openagc_result openagc_shader_pipeline_plan_create_host(
             index++;
         }
     }
+    for (slot = 0u; slot < OPENAGC_SHADER_MAX_BINDINGS; ++slot) {
+        required_texture_count += required_textures[slot] != 0u ? 1u : 0u;
+    }
+    if (snapshot.texture_count != required_texture_count) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    index = 0u;
+    for (slot = 0u; slot < OPENAGC_SHADER_MAX_BINDINGS; ++slot) {
+        if (required_textures[slot] != 0u) {
+            const openagc_shader_texture_binding *texture = &textures[index];
+            if (texture->set != 0u || texture->binding != slot ||
+                texture->image == NULL) {
+                return OPENAGC_ERROR_INVALID_ARGUMENT;
+            }
+            for (i = 0u; i < index; ++i) {
+                if (textures[i].image == texture->image) {
+                    return OPENAGC_ERROR_INVALID_ARGUMENT;
+                }
+            }
+            result = openagc_graphics_shader_texture_validate(
+                device, texture->image, required_textures[slot]);
+            if (result != OPENAGC_OK) {
+                return result;
+            }
+            index++;
+        }
+    }
     if (device->shader_pipeline_plan_count >= OPENAGC_SHADER_MAX_PIPELINE_PLANS) {
         return OPENAGC_ERROR_CAPACITY;
     }
@@ -460,6 +693,17 @@ openagc_result openagc_shader_pipeline_plan_create_host(
         memcpy(plan->resources, resources,
                (size_t)snapshot.resource_count * sizeof(*plan->resources));
     }
+    if (snapshot.texture_count != 0u) {
+        plan->textures = (openagc_shader_texture_binding *)calloc(
+            (size_t)snapshot.texture_count, sizeof(*plan->textures));
+        if (plan->textures == NULL) {
+            free(plan->resources);
+            free(plan);
+            return OPENAGC_ERROR_OUT_OF_MEMORY;
+        }
+        memcpy(plan->textures, textures,
+               (size_t)snapshot.texture_count * sizeof(*plan->textures));
+    }
     plan->device = device;
     plan->kind = snapshot.kind;
     plan->vertex = snapshot.vertex;
@@ -467,17 +711,21 @@ openagc_result openagc_shader_pipeline_plan_create_host(
     plan->compute = snapshot.compute;
     plan->color_target = snapshot.color_target;
     plan->resource_count = snapshot.resource_count;
+    plan->texture_count = snapshot.texture_count;
     plan->target_image_id = target_id;
     if (snapshot.kind == OPENAGC_SHADER_PIPELINE_GRAPHICS) {
         plan->color_format = snapshot.pixel->color_export_format;
         snapshot.vertex->pipeline_references++;
         snapshot.pixel->pipeline_references++;
-        openagc_graphics_shader_target_retain(snapshot.color_target);
+        openagc_graphics_shader_image_retain(snapshot.color_target);
     } else {
         snapshot.compute->pipeline_references++;
     }
     for (i = 0u; i < snapshot.resource_count; ++i) {
         openagc_gpu_shader_buffer_retain(plan->resources[i].buffer);
+    }
+    for (i = 0u; i < snapshot.texture_count; ++i) {
+        openagc_graphics_shader_image_retain(plan->textures[i].image);
     }
     device->shader_pipeline_plan_count++;
     *out_plan = plan;
@@ -496,10 +744,57 @@ openagc_result openagc_shader_pipeline_plan_get_info(
     info->kind = plan->kind;
     info->stage_count = plan->kind == OPENAGC_SHADER_PIPELINE_GRAPHICS ? 2u : 1u;
     info->resource_count = plan->resource_count;
+    info->texture_count = plan->texture_count;
     info->color_format = plan->color_format;
     info->target_image_id = plan->target_image_id;
     info->compiler_verified = 0u;
     info->gpu_executable = 0u;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_shader_pipeline_plan_slot(
+    const openagc_shader_pipeline_plan *plan, uint32_t slot, openagc_gpu_buffer **buffer,
+    uint64_t *offset, uint64_t *size_bytes, openagc_graphics_image **image)
+{
+    uint32_t index;
+
+    if (buffer == NULL || offset == NULL || size_bytes == NULL || image == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *buffer = NULL;
+    *offset = 0u;
+    *size_bytes = 0u;
+    *image = NULL;
+    if (plan == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (slot >= OPENAGC_SHADER_MAX_BINDINGS) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    for (index = 0u; index < plan->resource_count; ++index) {
+        if (plan->resources[index].binding == slot) {
+            *buffer = plan->resources[index].buffer;
+            *offset = plan->resources[index].offset;
+            *size_bytes = plan->resources[index].size_bytes;
+            break;
+        }
+    }
+    for (index = 0u; index < plan->texture_count; ++index) {
+        if (plan->textures[index].binding == slot) {
+            *image = plan->textures[index].image;
+            break;
+        }
+    }
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_shader_pipeline_plan_vertex_input(
+    const openagc_shader_pipeline_plan *plan, uint32_t *input_mask)
+{
+    if (plan == NULL || input_mask == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *input_mask = plan->vertex != NULL ? plan->vertex->varying_input_mask : 0u;
     return OPENAGC_OK;
 }
 
@@ -513,14 +808,18 @@ openagc_result openagc_shader_pipeline_plan_destroy(openagc_shader_pipeline_plan
     for (i = 0u; i < plan->resource_count; ++i) {
         openagc_gpu_shader_buffer_release(plan->resources[i].buffer);
     }
+    for (i = 0u; i < plan->texture_count; ++i) {
+        openagc_graphics_shader_image_release(plan->textures[i].image);
+    }
     if (plan->kind == OPENAGC_SHADER_PIPELINE_GRAPHICS) {
         plan->vertex->pipeline_references--;
         plan->pixel->pipeline_references--;
-        openagc_graphics_shader_target_release(plan->color_target);
+        openagc_graphics_shader_image_release(plan->color_target);
     } else {
         plan->compute->pipeline_references--;
     }
     plan->device->shader_pipeline_plan_count--;
+    free(plan->textures);
     free(plan->resources);
     free(plan);
     return OPENAGC_OK;

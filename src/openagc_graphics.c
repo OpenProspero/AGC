@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/graphics.h"
 #include "openagc_gpu_internal.h"
+#include "openagc_graphics_internal.h"
 #include "openagc_shader_internal.h"
 
 #include <stdlib.h>
@@ -17,7 +18,8 @@ typedef enum openagc_graphics_recording_state {
     OPENAGC_GRAPHICS_INITIAL,
     OPENAGC_GRAPHICS_RECORDING,
     OPENAGC_GRAPHICS_EXECUTABLE,
-    OPENAGC_GRAPHICS_HOST_APPLIED
+    OPENAGC_GRAPHICS_HOST_APPLIED,
+    OPENAGC_GRAPHICS_HOST_EXECUTED
 } openagc_graphics_recording_state;
 
 typedef struct openagc_graphics_shadow {
@@ -27,10 +29,12 @@ typedef struct openagc_graphics_shadow {
     openagc_graphics_owner initial_owner;
     openagc_graphics_image_state recorded_state;
     openagc_graphics_owner recorded_owner;
+    uint64_t applied_revision;
 } openagc_graphics_shadow;
 
 struct openagc_graphics_image {
     openagc_gpu_device *device;
+    openagc_graphics_image *next;
     openagc_gpu_memory *memory;
     uint64_t footprint_bytes;
     uint64_t memory_offset;
@@ -39,6 +43,7 @@ struct openagc_graphics_image {
     uint32_t height;
     uint32_t row_pitch_bytes;
     openagc_graphics_format format;
+    openagc_graphics_usage usage;
     uint32_t command_references;
     uint32_t pipeline_references;
     uint64_t state_revision;
@@ -51,6 +56,7 @@ struct openagc_graphics_command_buffer {
     openagc_graphics_command *commands;
     openagc_graphics_shadow *shadows;
     openagc_graphics_image *target;
+    openagc_graphics_image *depth_target;
     uint32_t max_commands;
     uint32_t command_count;
     uint32_t shadow_count;
@@ -124,6 +130,7 @@ static void openagc_graphics_release_images(openagc_graphics_command_buffer *com
     command_buffer->shadow_count = 0u;
     command_buffer->command_count = 0u;
     command_buffer->target = NULL;
+    command_buffer->depth_target = NULL;
     command_buffer->scissor_valid = 0u;
 }
 
@@ -133,7 +140,94 @@ static int openagc_graphics_supported_state(openagc_graphics_image_state state,
     return (state == OPENAGC_GRAPHICS_STATE_UNDEFINED &&
             owner == OPENAGC_GRAPHICS_OWNER_HOST) ||
            (state == OPENAGC_GRAPHICS_STATE_COLOR_TARGET &&
+            owner == OPENAGC_GRAPHICS_OWNER_GRAPHICS) ||
+           (state == OPENAGC_GRAPHICS_STATE_TRANSFER_SOURCE &&
+            owner == OPENAGC_GRAPHICS_OWNER_COPY) ||
+           (state == OPENAGC_GRAPHICS_STATE_TRANSFER_DESTINATION &&
+            owner == OPENAGC_GRAPHICS_OWNER_COPY) ||
+           (state == OPENAGC_GRAPHICS_STATE_SHADER_READ &&
+            owner == OPENAGC_GRAPHICS_OWNER_GRAPHICS) ||
+           (state == OPENAGC_GRAPHICS_STATE_DEPTH_TARGET &&
             owner == OPENAGC_GRAPHICS_OWNER_GRAPHICS);
+}
+
+static openagc_graphics_usage openagc_graphics_required_usage(
+    openagc_graphics_image_state state)
+{
+    if (state == OPENAGC_GRAPHICS_STATE_COLOR_TARGET) {
+        return OPENAGC_GRAPHICS_USAGE_COLOR_TARGET_BIT;
+    }
+    if (state == OPENAGC_GRAPHICS_STATE_SHADER_READ) {
+        return OPENAGC_GRAPHICS_USAGE_SAMPLED_BIT;
+    }
+    if (state == OPENAGC_GRAPHICS_STATE_DEPTH_TARGET) {
+        return OPENAGC_GRAPHICS_USAGE_DEPTH_STENCIL_BIT;
+    }
+    return 0u;
+}
+
+static void openagc_graphics_unlink_image(openagc_gpu_device *device,
+                                          const openagc_graphics_image *image)
+{
+    openagc_graphics_image **link = &device->images;
+
+    while (*link != NULL) {
+        if (*link == image) {
+            *link = image->next;
+            return;
+        }
+        link = &(*link)->next;
+    }
+}
+
+static void openagc_graphics_fill_scissor(openagc_graphics_image *image,
+                                          const openagc_graphics_scissor *scissor,
+                                          openagc_color color)
+{
+    uint8_t texel[OPENAGC_GRAPHICS_PIXEL_BYTES];
+    uint8_t *base = image->memory->bytes + (size_t)image->memory_offset;
+    uint32_t row;
+
+    texel[0] = image->format == OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM ? color.b : color.r;
+    texel[1] = color.g;
+    texel[2] = image->format == OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM ? color.r : color.b;
+    texel[3] = color.a;
+    for (row = 0u; row < scissor->height; ++row) {
+        uint8_t *pixel = base +
+            ((size_t)scissor->y + row) * image->row_pitch_bytes +
+            (size_t)scissor->x * OPENAGC_GRAPHICS_PIXEL_BYTES;
+        uint32_t column;
+
+        for (column = 0u; column < scissor->width; ++column) {
+            memcpy(pixel, texel, sizeof(texel));
+            pixel += OPENAGC_GRAPHICS_PIXEL_BYTES;
+        }
+    }
+}
+
+static void openagc_graphics_fill_depth_scissor(openagc_graphics_image *image,
+                                                const openagc_graphics_scissor *scissor,
+                                                uint32_t depth24, uint32_t stencil)
+{
+    uint8_t texel[OPENAGC_GRAPHICS_PIXEL_BYTES];
+    uint8_t *base = image->memory->bytes + (size_t)image->memory_offset;
+    uint32_t row;
+
+    /* D24_UNORM_S8_UINT keeps depth in the low 24 bits and stencil in the high byte. */
+    texel[0] = (uint8_t)depth24;
+    texel[1] = (uint8_t)(depth24 >> 8);
+    texel[2] = (uint8_t)(depth24 >> 16);
+    texel[3] = (uint8_t)stencil;
+    for (row = 0u; row < scissor->height; ++row) {
+        uint8_t *pixel = base + ((size_t)scissor->y + row) * image->row_pitch_bytes +
+                         (size_t)scissor->x * OPENAGC_GRAPHICS_PIXEL_BYTES;
+        uint32_t column;
+
+        for (column = 0u; column < scissor->width; ++column) {
+            memcpy(pixel, texel, sizeof(texel));
+            pixel += OPENAGC_GRAPHICS_PIXEL_BYTES;
+        }
+    }
 }
 
 openagc_result openagc_graphics_get_capabilities(
@@ -150,9 +244,15 @@ openagc_result openagc_graphics_get_capabilities(
     capabilities->rasterization = 0u;
     capabilities->video_output = 0u;
     capabilities->host_state_recording = 1u;
+    capabilities->host_clear_simulation = 1u;
     capabilities->supported_format_mask =
         (1u << (OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM - 1u)) |
-        (1u << (OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM - 1u));
+        (1u << (OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM - 1u)) |
+        (1u << (OPENAGC_GRAPHICS_FORMAT_D24_UNORM_S8_UINT - 1u));
+    capabilities->supported_usage_mask =
+        OPENAGC_GRAPHICS_USAGE_COLOR_TARGET_BIT |
+        OPENAGC_GRAPHICS_USAGE_SAMPLED_BIT |
+        OPENAGC_GRAPHICS_USAGE_DEPTH_STENCIL_BIT;
     capabilities->max_width = OPENAGC_GRAPHICS_MAX_DIMENSION;
     capabilities->max_height = OPENAGC_GRAPHICS_MAX_DIMENSION;
     capabilities->max_image_bytes = OPENAGC_GPU_MAX_ALLOCATION_BYTES;
@@ -183,13 +283,22 @@ openagc_result openagc_graphics_image_create(openagc_gpu_device *device,
         return OPENAGC_ERROR_INCOMPATIBLE_VERSION;
     }
     if (desc->format != OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM &&
-        desc->format != OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM) {
+        desc->format != OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM &&
+        desc->format != OPENAGC_GRAPHICS_FORMAT_D24_UNORM_S8_UINT) {
         return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
     }
     if (desc->tiling != OPENAGC_GRAPHICS_TILING_HOST_LINEAR ||
-        desc->usage != OPENAGC_GRAPHICS_USAGE_COLOR_TARGET_BIT ||
         desc->mip_levels != 1u || desc->array_layers != 1u ||
         desc->sample_count != 1u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (desc->format == OPENAGC_GRAPHICS_FORMAT_D24_UNORM_S8_UINT) {
+        if (desc->usage != OPENAGC_GRAPHICS_USAGE_DEPTH_STENCIL_BIT) {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+    } else if (desc->usage == 0u ||
+               (desc->usage & ~(OPENAGC_GRAPHICS_USAGE_COLOR_TARGET_BIT |
+                                OPENAGC_GRAPHICS_USAGE_SAMPLED_BIT)) != 0u) {
         return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
     }
     if (desc->width == 0u || desc->height == 0u ||
@@ -222,6 +331,7 @@ openagc_result openagc_graphics_image_create(openagc_gpu_device *device,
     }
     image->device = device;
     image->format = desc->format;
+    image->usage = desc->usage;
     image->width = desc->width;
     image->height = desc->height;
     image->row_pitch_bytes = desc->row_pitch_bytes;
@@ -229,6 +339,8 @@ openagc_result openagc_graphics_image_create(openagc_gpu_device *device,
     image->image_id = ++device->next_graphics_image_id;
     image->state = OPENAGC_GRAPHICS_STATE_UNDEFINED;
     image->owner = OPENAGC_GRAPHICS_OWNER_HOST;
+    image->next = device->images;
+    device->images = image;
     device->image_count++;
     *out_image = image;
     return OPENAGC_OK;
@@ -269,6 +381,7 @@ openagc_result openagc_graphics_image_get_info(const openagc_graphics_image *ima
     }
     info->image_id = image->image_id;
     info->format = image->format;
+    info->usage = image->usage;
     info->width = image->width;
     info->height = image->height;
     info->row_pitch_bytes = image->row_pitch_bytes;
@@ -291,6 +404,7 @@ openagc_result openagc_graphics_image_destroy(openagc_graphics_image *image)
     if (image->memory != NULL) {
         image->memory->bound_images--;
     }
+    openagc_graphics_unlink_image(image->device, image);
     image->device->image_count--;
     free(image);
     return OPENAGC_OK;
@@ -387,6 +501,9 @@ openagc_result openagc_graphics_command_transition(
         desc->before_owner == desc->after_owner) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
+    if ((openagc_graphics_required_usage(desc->after_state) & ~image->usage) != 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
     openagc_graphics_current_state(command_buffer, image, &current_state, &current_owner);
     if (current_state != desc->before_state || current_owner != desc->before_owner) {
         return OPENAGC_ERROR_BAD_STATE;
@@ -430,6 +547,9 @@ openagc_result openagc_graphics_command_bind_color_target(
     if (image->device != command_buffer->device) {
         return OPENAGC_ERROR_OWNERSHIP;
     }
+    if ((image->usage & OPENAGC_GRAPHICS_USAGE_COLOR_TARGET_BIT) == 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
     if (image->memory == NULL || command_buffer->target != NULL) {
         return OPENAGC_ERROR_BAD_STATE;
     }
@@ -456,6 +576,54 @@ openagc_result openagc_graphics_command_bind_color_target(
     return OPENAGC_OK;
 }
 
+openagc_result openagc_graphics_command_bind_depth_target(
+    openagc_graphics_command_buffer *command_buffer, openagc_graphics_image *image)
+{
+    openagc_graphics_image_state state;
+    openagc_graphics_owner owner;
+    openagc_graphics_shadow *shadow;
+    openagc_graphics_command *command;
+    openagc_result result;
+
+    if (command_buffer == NULL || image == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (command_buffer->state != OPENAGC_GRAPHICS_RECORDING) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if (image->device != command_buffer->device) {
+        return OPENAGC_ERROR_OWNERSHIP;
+    }
+    if (image->format != OPENAGC_GRAPHICS_FORMAT_D24_UNORM_S8_UINT ||
+        (image->usage & OPENAGC_GRAPHICS_USAGE_DEPTH_STENCIL_BIT) == 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (image->memory == NULL || command_buffer->depth_target != NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    openagc_graphics_current_state(command_buffer, image, &state, &owner);
+    if (state != OPENAGC_GRAPHICS_STATE_DEPTH_TARGET ||
+        owner != OPENAGC_GRAPHICS_OWNER_GRAPHICS) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if (command_buffer->command_count == command_buffer->max_commands) {
+        return OPENAGC_ERROR_CAPACITY;
+    }
+    result = openagc_graphics_retain_image(command_buffer, image, &shadow);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    (void)shadow;
+    command = &command_buffer->commands[command_buffer->command_count];
+    memset(command, 0, sizeof(*command));
+    command->type = OPENAGC_GRAPHICS_COMMAND_BIND_DEPTH_TARGET;
+    command->image_id = image->image_id;
+    command_buffer->depth_target = image;
+    command_buffer->scissor_valid = 0u;
+    command_buffer->command_count++;
+    return OPENAGC_OK;
+}
+
 openagc_result openagc_graphics_command_set_scissor(
     openagc_graphics_command_buffer *command_buffer, const openagc_graphics_scissor *scissor)
 {
@@ -467,20 +635,37 @@ openagc_result openagc_graphics_command_set_scissor(
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
     if (command_buffer->state != OPENAGC_GRAPHICS_RECORDING ||
-        command_buffer->target == NULL) {
+        (command_buffer->target == NULL && command_buffer->depth_target == NULL)) {
         return OPENAGC_ERROR_BAD_STATE;
     }
-    openagc_graphics_current_state(command_buffer, command_buffer->target, &state, &owner);
-    if (state != OPENAGC_GRAPHICS_STATE_COLOR_TARGET ||
-        owner != OPENAGC_GRAPHICS_OWNER_GRAPHICS) {
-        return OPENAGC_ERROR_BAD_STATE;
+    if (command_buffer->target != NULL) {
+        openagc_graphics_current_state(command_buffer, command_buffer->target, &state, &owner);
+        if (state != OPENAGC_GRAPHICS_STATE_COLOR_TARGET ||
+            owner != OPENAGC_GRAPHICS_OWNER_GRAPHICS) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        if (scissor->width == 0u || scissor->height == 0u ||
+            scissor->x > command_buffer->target->width ||
+            scissor->y > command_buffer->target->height ||
+            scissor->width > command_buffer->target->width - scissor->x ||
+            scissor->height > command_buffer->target->height - scissor->y) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
     }
-    if (scissor->width == 0u || scissor->height == 0u ||
-        scissor->x > command_buffer->target->width ||
-        scissor->y > command_buffer->target->height ||
-        scissor->width > command_buffer->target->width - scissor->x ||
-        scissor->height > command_buffer->target->height - scissor->y) {
-        return OPENAGC_ERROR_OUT_OF_RANGE;
+    if (command_buffer->depth_target != NULL) {
+        openagc_graphics_current_state(command_buffer, command_buffer->depth_target, &state,
+                                       &owner);
+        if (state != OPENAGC_GRAPHICS_STATE_DEPTH_TARGET ||
+            owner != OPENAGC_GRAPHICS_OWNER_GRAPHICS) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        if (scissor->width == 0u || scissor->height == 0u ||
+            scissor->x > command_buffer->depth_target->width ||
+            scissor->y > command_buffer->depth_target->height ||
+            scissor->width > command_buffer->depth_target->width - scissor->x ||
+            scissor->height > command_buffer->depth_target->height - scissor->y) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
     }
     if (command_buffer->command_count == command_buffer->max_commands) {
         return OPENAGC_ERROR_CAPACITY;
@@ -488,7 +673,8 @@ openagc_result openagc_graphics_command_set_scissor(
     command = &command_buffer->commands[command_buffer->command_count];
     memset(command, 0, sizeof(*command));
     command->type = OPENAGC_GRAPHICS_COMMAND_SET_SCISSOR;
-    command->image_id = command_buffer->target->image_id;
+    command->image_id = command_buffer->target != NULL ? command_buffer->target->image_id
+                                                       : command_buffer->depth_target->image_id;
     command->data.scissor = *scissor;
     command_buffer->scissor_valid = 1u;
     command_buffer->command_count++;
@@ -522,6 +708,41 @@ openagc_result openagc_graphics_command_clear_color(
     command->type = OPENAGC_GRAPHICS_COMMAND_CLEAR_COLOR;
     command->image_id = command_buffer->target->image_id;
     command->data.clear = color;
+    command_buffer->command_count++;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_graphics_command_clear_depth(
+    openagc_graphics_command_buffer *command_buffer, uint32_t depth24, uint32_t stencil)
+{
+    openagc_graphics_image_state state;
+    openagc_graphics_owner owner;
+    openagc_graphics_command *command;
+
+    if (command_buffer == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (depth24 > 16777215u || stencil > 255u) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if (command_buffer->state != OPENAGC_GRAPHICS_RECORDING ||
+        command_buffer->depth_target == NULL || command_buffer->scissor_valid == 0u) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    openagc_graphics_current_state(command_buffer, command_buffer->depth_target, &state, &owner);
+    if (state != OPENAGC_GRAPHICS_STATE_DEPTH_TARGET ||
+        owner != OPENAGC_GRAPHICS_OWNER_GRAPHICS) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if (command_buffer->command_count == command_buffer->max_commands) {
+        return OPENAGC_ERROR_CAPACITY;
+    }
+    command = &command_buffer->commands[command_buffer->command_count];
+    memset(command, 0, sizeof(*command));
+    command->type = OPENAGC_GRAPHICS_COMMAND_CLEAR_DEPTH;
+    command->image_id = command_buffer->depth_target->image_id;
+    command->data.depth.depth24 = depth24;
+    command->data.depth.stencil = stencil;
     command_buffer->command_count++;
     return OPENAGC_OK;
 }
@@ -569,8 +790,77 @@ openagc_result openagc_graphics_command_buffer_apply_host_state(
         shadow->image->state = shadow->recorded_state;
         shadow->image->owner = shadow->recorded_owner;
         shadow->image->state_revision++;
+        shadow->applied_revision = shadow->image->state_revision;
     }
     command_buffer->state = OPENAGC_GRAPHICS_HOST_APPLIED;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_graphics_command_buffer_execute_host(
+    openagc_graphics_command_buffer *command_buffer,
+    openagc_graphics_execution_info *info)
+{
+    openagc_graphics_scissor scissor;
+    uint64_t cleared_pixels = 0u;
+    uint32_t clear_count = 0u;
+    uint32_t i;
+
+    if (command_buffer == NULL || info == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (info->struct_size != sizeof(*info)) {
+        return OPENAGC_ERROR_INCOMPATIBLE_VERSION;
+    }
+    if (command_buffer->state != OPENAGC_GRAPHICS_HOST_APPLIED ||
+        (command_buffer->target == NULL && command_buffer->depth_target == NULL)) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    for (i = 0u; i < command_buffer->shadow_count; ++i) {
+        const openagc_graphics_shadow *shadow = &command_buffer->shadows[i];
+
+        if (shadow->image->state_revision != shadow->applied_revision ||
+            shadow->image->state != shadow->recorded_state ||
+            shadow->image->owner != shadow->recorded_owner) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        if (shadow->image->memory == NULL) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+    }
+    for (i = 0u; i < command_buffer->command_count; ++i) {
+        if (command_buffer->commands[i].type == OPENAGC_GRAPHICS_COMMAND_CLEAR_COLOR ||
+            command_buffer->commands[i].type == OPENAGC_GRAPHICS_COMMAND_CLEAR_DEPTH) {
+            clear_count++;
+        }
+    }
+    if (clear_count == 0u) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+
+    memset(&scissor, 0, sizeof(scissor));
+    for (i = 0u; i < command_buffer->command_count; ++i) {
+        const openagc_graphics_command *command = &command_buffer->commands[i];
+
+        if (command->type == OPENAGC_GRAPHICS_COMMAND_SET_SCISSOR) {
+            scissor = command->data.scissor;
+        } else if (command->type == OPENAGC_GRAPHICS_COMMAND_CLEAR_COLOR) {
+            openagc_graphics_fill_scissor(command_buffer->target, &scissor,
+                                          command->data.clear);
+            cleared_pixels += (uint64_t)scissor.width * scissor.height;
+        } else if (command->type == OPENAGC_GRAPHICS_COMMAND_CLEAR_DEPTH) {
+            openagc_graphics_fill_depth_scissor(command_buffer->depth_target, &scissor,
+                                                command->data.depth.depth24,
+                                                command->data.depth.stencil);
+            cleared_pixels += (uint64_t)scissor.width * scissor.height;
+        }
+    }
+    command_buffer->state = OPENAGC_GRAPHICS_HOST_EXECUTED;
+    info->target_image_id = command_buffer->target != NULL
+                                ? command_buffer->target->image_id
+                                : command_buffer->depth_target->image_id;
+    info->clear_count = clear_count;
+    info->gpu_submitted = 0u;
+    info->cleared_pixels = cleared_pixels;
     return OPENAGC_OK;
 }
 
@@ -585,12 +875,16 @@ openagc_result openagc_graphics_command_buffer_get_recording(
         return OPENAGC_ERROR_INCOMPATIBLE_VERSION;
     }
     if (command_buffer->state != OPENAGC_GRAPHICS_EXECUTABLE &&
-        command_buffer->state != OPENAGC_GRAPHICS_HOST_APPLIED) {
+        command_buffer->state != OPENAGC_GRAPHICS_HOST_APPLIED &&
+        command_buffer->state != OPENAGC_GRAPHICS_HOST_EXECUTED) {
         return OPENAGC_ERROR_BAD_STATE;
     }
     view->command_count = command_buffer->command_count;
     view->host_state_applied =
-        command_buffer->state == OPENAGC_GRAPHICS_HOST_APPLIED ? 1u : 0u;
+        (command_buffer->state == OPENAGC_GRAPHICS_HOST_APPLIED ||
+         command_buffer->state == OPENAGC_GRAPHICS_HOST_EXECUTED)
+            ? 1u
+            : 0u;
     view->gpu_submitted = 0u;
     view->commands = command_buffer->commands;
     return OPENAGC_OK;
@@ -634,6 +928,9 @@ openagc_result openagc_graphics_shader_target_validate(
     if (image->device != device) {
         return OPENAGC_ERROR_OWNERSHIP;
     }
+    if ((image->usage & OPENAGC_GRAPHICS_USAGE_COLOR_TARGET_BIT) == 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
     if (image->memory == NULL ||
         image->state != OPENAGC_GRAPHICS_STATE_COLOR_TARGET ||
         image->owner != OPENAGC_GRAPHICS_OWNER_GRAPHICS) {
@@ -649,12 +946,61 @@ openagc_result openagc_graphics_shader_target_validate(
     return OPENAGC_OK;
 }
 
-void openagc_graphics_shader_target_retain(openagc_graphics_image *image)
+openagc_result openagc_graphics_shader_texture_validate(
+    const openagc_gpu_device *device, const openagc_graphics_image *image,
+    openagc_graphics_format format)
+{
+    if (image == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (image->device != device) {
+        return OPENAGC_ERROR_OWNERSHIP;
+    }
+    if ((image->usage & OPENAGC_GRAPHICS_USAGE_SAMPLED_BIT) == 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (image->memory == NULL ||
+        image->state != OPENAGC_GRAPHICS_STATE_SHADER_READ ||
+        image->owner != OPENAGC_GRAPHICS_OWNER_GRAPHICS) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if (image->format != format) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (image->pipeline_references == UINT32_MAX) {
+        return OPENAGC_ERROR_OVERFLOW;
+    }
+    return OPENAGC_OK;
+}
+
+void openagc_graphics_shader_image_retain(openagc_graphics_image *image)
 {
     image->pipeline_references++;
 }
 
-void openagc_graphics_shader_target_release(openagc_graphics_image *image)
+void openagc_graphics_shader_image_release(openagc_graphics_image *image)
 {
     image->pipeline_references--;
+}
+
+openagc_result openagc_graphics_image_copy_access(
+    const openagc_gpu_device *device, const openagc_gpu_memory *memory,
+    uint64_t offset, uint64_t size_bytes, openagc_graphics_image_state required)
+{
+    const openagc_graphics_image *image;
+
+    for (image = device->images; image != NULL; image = image->next) {
+        if (image->memory != memory) {
+            continue;
+        }
+        if (image->memory_offset + image->footprint_bytes <= offset ||
+            offset + size_bytes <= image->memory_offset) {
+            continue;
+        }
+        if (image->state != required ||
+            image->owner != OPENAGC_GRAPHICS_OWNER_COPY) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+    }
+    return OPENAGC_OK;
 }

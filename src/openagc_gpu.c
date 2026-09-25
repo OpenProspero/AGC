@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc_gpu_internal.h"
+#include "openagc_graphics_internal.h"
 #include "openagc_shader_internal.h"
 
 #include <stddef.h>
@@ -358,6 +359,24 @@ openagc_result openagc_gpu_memory_read(const openagc_gpu_memory *memory,
     return OPENAGC_OK;
 }
 
+openagc_result openagc_gpu_buffer_read(const openagc_gpu_buffer *buffer,
+                                       uint64_t offset, void *data,
+                                       uint64_t size_bytes)
+{
+    if (buffer == NULL || data == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (buffer->memory == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if (size_bytes == 0u || offset > buffer->size_bytes ||
+        size_bytes > buffer->size_bytes - offset) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    return openagc_gpu_memory_read(buffer->memory, buffer->memory_offset + offset, data,
+                                   size_bytes);
+}
+
 openagc_result openagc_gpu_buffer_create(openagc_gpu_device *device,
                                          const openagc_gpu_buffer_desc *desc,
                                          openagc_gpu_buffer **out_buffer)
@@ -381,7 +400,10 @@ openagc_result openagc_gpu_buffer_create(openagc_gpu_device *device,
     }
     if ((desc->usage & ~(OPENAGC_GPU_BUFFER_COPY_SOURCE_BIT |
                          OPENAGC_GPU_BUFFER_COPY_DESTINATION_BIT |
-                         OPENAGC_GPU_BUFFER_SHADER_READ_BIT)) != 0u) {
+                         OPENAGC_GPU_BUFFER_SHADER_READ_BIT |
+                         OPENAGC_GPU_BUFFER_VERTEX_BIT |
+                         OPENAGC_GPU_BUFFER_INDEX_BIT |
+                         OPENAGC_GPU_BUFFER_INDIRECT_BIT)) != 0u) {
         return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
     }
     if (device->buffer_count >= OPENAGC_GPU_MAX_BUFFERS) {
@@ -420,6 +442,23 @@ openagc_result openagc_gpu_buffer_bind_memory(openagc_gpu_buffer *buffer,
     buffer->memory = memory;
     buffer->memory_offset = memory_offset;
     memory->bound_buffers++;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_gpu_buffer_unbind_memory(openagc_gpu_buffer *buffer)
+{
+    if (buffer == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (buffer->memory == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if (buffer->command_references != 0u || buffer->pipeline_references != 0u) {
+        return OPENAGC_ERROR_BUSY;
+    }
+    buffer->memory->bound_buffers--;
+    buffer->memory = NULL;
+    buffer->memory_offset = 0u;
     return OPENAGC_OK;
 }
 
@@ -555,6 +594,18 @@ openagc_result openagc_gpu_command_copy_buffer(
         source_memory_offset < destination_memory_offset + size_bytes &&
         destination_memory_offset < source_memory_offset + size_bytes) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    result = openagc_graphics_image_copy_access(
+        command_buffer->device, source->memory, source_memory_offset, size_bytes,
+        OPENAGC_GRAPHICS_STATE_TRANSFER_SOURCE);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_graphics_image_copy_access(
+        command_buffer->device, destination->memory, destination_memory_offset,
+        size_bytes, OPENAGC_GRAPHICS_STATE_TRANSFER_DESTINATION);
+    if (result != OPENAGC_OK) {
+        return result;
     }
     if (command_buffer->command_count == command_buffer->max_commands ||
         command_buffer->word_count > command_buffer->max_words - OPENAGC_GPU_DMA_WORDS) {
@@ -717,6 +768,23 @@ openagc_result openagc_gpu_queue_submit(openagc_gpu_queue *queue,
     result = openagc_gpu_encode_eop(fence->marker_va, sequence, eop);
     if (result != OPENAGC_OK) {
         return result;
+    }
+    for (i = 0u; i < command_buffer->command_count; ++i) {
+        const openagc_gpu_copy_record *record = &command_buffer->records[i];
+
+        result = openagc_graphics_image_copy_access(
+            queue->device, record->source->memory, record->source_memory_offset,
+            record->size_bytes, OPENAGC_GRAPHICS_STATE_TRANSFER_SOURCE);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+        result = openagc_graphics_image_copy_access(
+            queue->device, record->destination->memory,
+            record->destination_memory_offset, record->size_bytes,
+            OPENAGC_GRAPHICS_STATE_TRANSFER_DESTINATION);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
     }
 
     memcpy(queue->last_words, command_buffer->words,

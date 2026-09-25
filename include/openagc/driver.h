@@ -30,7 +30,12 @@ enum {
     OPENAGC_GPU_BUFFER_COPY_SOURCE_BIT = 1u,
     OPENAGC_GPU_BUFFER_COPY_DESTINATION_BIT = 2u,
     /* Host reflection metadata only; no shader execution is available. */
-    OPENAGC_GPU_BUFFER_SHADER_READ_BIT = 16u
+    OPENAGC_GPU_BUFFER_SHADER_READ_BIT = 16u,
+    /* Binding record only. No vertex fetch runs. */
+    OPENAGC_GPU_BUFFER_VERTEX_BIT = 32u,
+    /* Binding record only. No index fetch runs. */
+    OPENAGC_GPU_BUFFER_INDEX_BIT = 64u,
+    OPENAGC_GPU_BUFFER_INDIRECT_BIT = 128u
 };
 
 typedef uint32_t openagc_gpu_queue_family;
@@ -153,6 +158,10 @@ openagc_result openagc_gpu_memory_write(openagc_gpu_memory *memory,
 openagc_result openagc_gpu_memory_read(const openagc_gpu_memory *memory,
                                       uint64_t offset, void *data,
                                       uint64_t size_bytes);
+/* Host read of a bound buffer. Does not submit a copy. */
+openagc_result openagc_gpu_buffer_read(const openagc_gpu_buffer *buffer,
+                                       uint64_t offset, void *data,
+                                       uint64_t size_bytes);
 
 openagc_result openagc_gpu_buffer_create(openagc_gpu_device *device,
                                          const openagc_gpu_buffer_desc *desc,
@@ -160,6 +169,8 @@ openagc_result openagc_gpu_buffer_create(openagc_gpu_device *device,
 openagc_result openagc_gpu_buffer_bind_memory(openagc_gpu_buffer *buffer,
                                               openagc_gpu_memory *memory,
                                               uint64_t memory_offset);
+/* Drops a bind that no command still references. A second drop is BAD_STATE. */
+openagc_result openagc_gpu_buffer_unbind_memory(openagc_gpu_buffer *buffer);
 openagc_result openagc_gpu_buffer_destroy(openagc_gpu_buffer *buffer);
 
 openagc_result openagc_gpu_command_buffer_create(

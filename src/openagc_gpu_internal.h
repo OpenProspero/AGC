@@ -8,6 +8,8 @@
 
 #define OPENAGC_GPU_MAX_ALLOCATION_BYTES 16777216u
 
+struct openagc_graphics_image;
+
 struct openagc_gpu_device {
     openagc_context *context;
     uint64_t memory_budget_bytes;
@@ -18,6 +20,8 @@ struct openagc_gpu_device {
     uint32_t command_buffer_count;
     uint32_t queue_count;
     uint32_t fence_count;
+    /* Intrusive list owned by the graphics layer; used to police copy access. */
+    struct openagc_graphics_image *images;
     uint32_t image_count;
     uint32_t graphics_command_buffer_count;
     uint32_t next_graphics_image_id;

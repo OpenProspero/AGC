@@ -12,8 +12,9 @@ display driver.
 | Memory and buffers | Owned host allocations, one-time binding, capacity and lifetime checks | Unavailable |
 | Copy command buffers | Bounded host PM4 word recording and synchronous CPU copy simulation | Unavailable |
 | Queues and fences | One copy queue, synchronous simulated completion, poll/reset | Unavailable |
-| Images and render state | Host-linear RGBA8/BGRA8 metadata, explicit logical owner/state transitions, scissor and clear **recording only** | Unavailable |
-| Shader intake and pipelines | SHA-256-checked **unverified fixture** snapshots and host-only vertex/pixel/compute pipeline plans; no compiler or executable shader | Unavailable |
+| Images and render state | Host-linear RGBA8/BGRA8 metadata with declared color-target/sampled usage, explicit logical owner/state transitions including copy-queue and shader-read ownership, scissor and clear recording, and deterministic **CPU** clear execution into bound host memory | Unavailable |
+| Shader intake and pipelines | SHA-256-checked **unverified fixture** snapshots and host-only vertex/pixel/compute pipeline plans with exactly matched uniform-buffer and sampled-image descriptors; no compiler or executable shader | Unavailable |
+| Shared frontend core (Vulkan/OpenGL) | Versioned native-to-backend translation, one staging/copy/transition path per device, CPU image and buffer upload/readback that preserves logical state and owner, and per-usage copy direction | Unavailable |
 | Native tiling, executable shader pipelines, draws, rasterization, VideoOut | Not implemented | Not implemented |
 | Vulkan 1.0 and OpenGL frontends | Not implemented | Not implemented |
 
@@ -52,33 +53,75 @@ sent to a console. `openagc_gpu_fence_poll` distinguishes unsignaled
 The additive graphics header `include/openagc/graphics.h` (include
 `<openagc/graphics.h>`) defines versioned image and render-state descriptors.
 It supports only single-layer, single-mip, single-sample **host-linear**
-RGBA8/BGRA8 color-target images bound to same-device host memory.
-A graphics command buffer records logical `UNDEFINED/HOST` to
-`COLOR_TARGET/GRAPHICS` ownership transitions, one bound target, a
-bounded scissor, and RGBA8 clear commands. `apply_host_state` commits
-metadata only; it neither writes image pixels nor creates a graphics
-queue, GPU packet, fence, or display frame. Unsupported formats, native
-tiling, sampled/scanout usage, depth, multisampling, and presentation
-fail explicitly. Query `openagc_graphics_get_capabilities` rather than
-inferring rendering support from successful recording.
+RGBA8/BGRA8 images bound to same-device host memory, with declared
+color-target and/or sampled usage. A graphics command buffer records
+logical `UNDEFINED/HOST` to `COLOR_TARGET/GRAPHICS` ownership
+transitions, one bound target, a bounded scissor, and RGBA8 clear
+commands; an image may only enter a state its usage declares, so a
+color-target-only image cannot reach `SHADER_READ/GRAPHICS` and a
+sampled-only image cannot reach `COLOR_TARGET/GRAPHICS`. An image may
+also be handed to the copy queue as `TRANSFER_DESTINATION/COPY` (an
+upload target) or `TRANSFER_SOURCE/COPY` (a readback source), and the
+copy path enforces that direction: a copy that overlaps image memory is
+refused unless the image is copy-owned in the matching state, both when
+the copy is recorded and again when the queue preflights the whole
+submission. `apply_host_state` commits metadata only. After it succeeds,
+a separate `openagc_graphics_command_buffer_execute_host` runs the
+recorded clears as deterministic scissor-clipped **CPU** fills of the
+bound host-linear image bytes: RGBA8 stores R,G,B,A and BGRA8 stores
+B,G,R,A, row padding is never written, the reported `gpu_submitted`
+stays 0, and the logical state/owner is unchanged. It creates no
+graphics queue, GPU packet, fence, or display frame, and it draws
+nothing. Unsupported formats, native tiling, scanout usage, depth,
+multisampling, and presentation fail explicitly. Query
+`openagc_graphics_get_capabilities` rather than inferring rendering
+support from successful recording.
 
 `include/openagc/shader.h` (include `<openagc/shader.h>`) adds an
 immutable **structural-only** gfx1013 artifact/reflection intake and
 vertex/pixel/compute pipeline-plan validator. It deep-copies caller
 bytes and typed reflection, verifies the code SHA-256, and checks
-stage linkage, color format, uniform-buffer bindings, ownership,
-capacity, and object lifetimes. Host fixtures are labeled
-`OPENAGC_SHADER_COMPILER_UNVERIFIED_FIXTURE`; they are **not** compiled
-shaders. No PSBC/Mesa compiler or executable digest is installed, so
-a claimed OpenGNM PSBC artifact returns `OPENAGC_ERROR_NOT_READY`,
-and every accepted plan reports `compiler_verified=0` and
-`gpu_executable=0`. There is no shader command recording or execution.
+stage linkage, color format, uniform-buffer bindings, sampled-image
+declarations, ownership, capacity, and object lifetimes. A plan's
+supplied uniform buffers and sampled images must match the reflected
+binding slots exactly: buffers carry the shader-read usage and cover
+the declared minimum, while sampled images carry the sampled usage,
+sit in `SHADER_READ/GRAPHICS`, and match the declared format. Both
+kinds are retained until the plan is destroyed. Host fixtures are
+labeled `OPENAGC_SHADER_COMPILER_UNVERIFIED_FIXTURE`; they are **not**
+compiled shaders. No PSBC/Mesa compiler or executable digest is
+installed, so a claimed OpenGNM PSBC artifact returns
+`OPENAGC_ERROR_NOT_READY`, and every accepted plan reports
+`compiler_verified=0` and `gpu_executable=0`. There is no shader
+command recording or execution, and nothing samples an image.
 See the [pinned build-time compiler plan](docs/shader-toolchain.md)
 before attempting any real artifact. The user-approved
 [GitHub Actions compiler build](.github/workflows/build-psbc-host.yml)
 is **manual-only**; it never runs on a push, and even a successful
 private compiler artifact cannot unlock PS5 execution or runtime
 shader intake.
+
+`include/openagc/frontend.h` (include `<openagc/frontend.h>`) is the
+shared core a Vulkan 1.0 or OpenGL frontend is meant to reuse instead
+of talking to the driver directly. It translates published Vulkan and
+OpenGL enumerants onto this backend — format, image usage, image
+layout, buffer usage — and refuses everything the host core cannot
+represent: sRGB, depth, R8, `GL_RGB8`, transfer-only images, `GENERAL`,
+`PREINITIALIZED`, `PRESENT_SRC_KHR`, and storage or vertex/index
+buffer usage. `openagc_frontend_device_create` builds one staging
+allocation, one copy queue, and one transition recorder per backend
+device. `openagc_frontend_image_upload` and
+`openagc_frontend_image_readback` move bytes through that copy path
+with **CPU** copies and restore the image's logical state and owner
+afterwards, so neither frontend reimplements the ownership dance.
+`openagc_frontend_buffer_*` gives both frontends the same buffer object
+over that path, with the copy direction enforced by the translated
+usage, so a GL unpack buffer cannot be read and a pack buffer cannot be
+written.
+Capabilities report `host_translation=1` with `gpu_execution=0`,
+`rasterization=0`, and `presentation=0`. The staged plan for both
+frontends, including what stays refused, is
+[docs/roadmap.md](docs/roadmap.md).
 
 The earlier host UI recorder remains available and ABI-compatible. Its
 header provides `OPENAGC_CONTEXT_DESC_INIT(backend)`,
@@ -112,7 +155,9 @@ to a PS5 by OpenAGC.
 
 [The architecture and qualification status](docs/architecture.md) describe the
 separate backends, future Vulkan/OpenGL layers, and why no console capability
-is claimed. Public PS5_Vulkan and ps5-opengl graphics architecture and public
+is claimed. The staged plan for those two frontends on the shared host core is
+[docs/roadmap.md](docs/roadmap.md). Public PS5_Vulkan and ps5-opengl
+graphics architecture and public
 OpenAGC PM4 interface facts were consulted as **knowledge references**;
 FW9.40 empirical packet facts were read from the user's ProsperoAI notes.
 No source, licensed assets, proprietary SDK content, binaries, firmware,

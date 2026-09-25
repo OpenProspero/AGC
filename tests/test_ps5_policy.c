@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/shader.h"
+#include "openagc/vulkan.h"
+#include "openagc/opengl.h"
 
 #include <stdio.h>
 
@@ -166,6 +168,7 @@ static int test_graphics_policy(void)
         OPENAGC_GRAPHICS_STATE_COLOR_TARGET, OPENAGC_GRAPHICS_OWNER_GRAPHICS);
     openagc_graphics_scissor scissor = { 0u, 0u, 4u, 4u };
     openagc_graphics_recording_view view = OPENAGC_GRAPHICS_RECORDING_VIEW_INIT;
+    openagc_graphics_execution_info execution = OPENAGC_GRAPHICS_EXECUTION_INFO_INIT;
     openagc_color color = { 1u, 2u, 3u, 255u };
     openagc_graphics_image *created_image = 0;
     openagc_graphics_command_buffer *created_command = 0;
@@ -179,6 +182,8 @@ static int test_graphics_policy(void)
     CHECK(openagc_graphics_get_capabilities(device, &capabilities) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(capabilities.gpu_execution == 0u && capabilities.rasterization == 0u);
+    CHECK(capabilities.host_state_recording == 0u &&
+          capabilities.host_clear_simulation == 0u);
     CHECK(openagc_graphics_image_create(device, &image_desc, &created_image) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(created_image == 0);
@@ -203,6 +208,9 @@ static int test_graphics_policy(void)
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_graphics_command_buffer_apply_host_state(command) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_graphics_command_buffer_execute_host(command, &execution) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(execution.cleared_pixels == 0u && execution.gpu_submitted == 0u);
     CHECK(openagc_graphics_command_buffer_get_recording(command, &view) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(view.gpu_submitted == 0u);
@@ -221,6 +229,7 @@ static int test_shader_policy(void)
     openagc_shader_artifact_desc artifact_desc = OPENAGC_SHADER_ARTIFACT_DESC_INIT;
     openagc_shader_artifact_info artifact_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
     openagc_shader_binding_decl binding = { 0u, 0u, 1u, 16u };
+    openagc_shader_texture_decl texture = { 0u, 1u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM };
     openagc_shader_pipeline_desc pipeline_desc = OPENAGC_SHADER_PIPELINE_DESC_INIT;
     openagc_shader_pipeline_info pipeline_info = OPENAGC_SHADER_PIPELINE_INFO_INIT;
     openagc_shader_artifact *created_artifact = 0;
@@ -241,6 +250,8 @@ static int test_shader_policy(void)
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_shader_artifact_get_binding(artifact, 0u, &binding) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_shader_artifact_get_texture(artifact, 0u, &texture) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_shader_artifact_require_compiler(artifact) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_shader_artifact_destroy(artifact) ==
@@ -255,10 +266,188 @@ static int test_shader_policy(void)
     return 0;
 }
 
+static int test_frontend_policy(void)
+{
+    openagc_frontend_capabilities capabilities = OPENAGC_FRONTEND_CAPABILITIES_INIT;
+    openagc_frontend_device_desc device_desc = OPENAGC_FRONTEND_DEVICE_DESC_INIT;
+    openagc_frontend_image_desc image_desc = OPENAGC_FRONTEND_IMAGE_DESC_INIT(
+        OPENAGC_FRONTEND_VULKAN, OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+        OPENAGC_FRONTEND_VK_IMAGE_USAGE_SAMPLED_BIT,
+        OPENAGC_FRONTEND_VK_IMAGE_LAYOUT_UNDEFINED, 4u, 4u, 0u);
+    openagc_frontend_image_info image_info = OPENAGC_FRONTEND_IMAGE_INFO_INIT;
+    openagc_frontend_buffer_desc buffer_desc = OPENAGC_FRONTEND_BUFFER_DESC_INIT(
+        OPENAGC_FRONTEND_VULKAN, OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        64u);
+    openagc_frontend_buffer_info buffer_info = OPENAGC_FRONTEND_BUFFER_INFO_INIT;
+    openagc_frontend_timeline_info timeline_info = OPENAGC_FRONTEND_TIMELINE_INFO_INIT;
+    openagc_frontend_pipeline_info pipeline_info = OPENAGC_FRONTEND_PIPELINE_INFO_INIT;
+    openagc_shader_pipeline_desc plan_desc = OPENAGC_SHADER_PIPELINE_DESC_INIT;
+    openagc_graphics_format format = 0u;
+    openagc_graphics_usage usage = 0u;
+    openagc_graphics_image_state state = OPENAGC_GRAPHICS_STATE_UNDEFINED;
+    openagc_graphics_owner owner = OPENAGC_GRAPHICS_OWNER_HOST;
+    openagc_gpu_buffer_usage buffer_usage = 0u;
+    uint32_t native = 0u;
+    openagc_frontend_device *created_frontend = 0;
+    openagc_frontend_image *created_image = 0;
+    openagc_frontend_buffer *created_buffer = 0;
+    uint32_t dummy = 0u;
+    openagc_gpu_device *device = (openagc_gpu_device *)(void *)&dummy;
+    openagc_frontend_device *frontend = (openagc_frontend_device *)(void *)&dummy;
+    openagc_frontend_image *image = (openagc_frontend_image *)(void *)&dummy;
+    openagc_frontend_buffer *buffer = (openagc_frontend_buffer *)(void *)&dummy;
+    openagc_frontend_timeline *timeline = (openagc_frontend_timeline *)(void *)&dummy;
+    openagc_frontend_timeline *created_timeline = 0;
+    openagc_frontend_pipeline *pipeline = (openagc_frontend_pipeline *)(void *)&dummy;
+    openagc_frontend_pipeline *created_pipeline = 0;
+    uint8_t bytes[4] = { 0u, 0u, 0u, 0u };
+
+    CHECK(openagc_frontend_native_format_at(OPENAGC_FRONTEND_VULKAN, 0u, &native) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_translate_format(OPENAGC_FRONTEND_VULKAN, 37u, &format) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_translate_image_usage(OPENAGC_FRONTEND_VULKAN, 4u, &usage) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_translate_image_layout(OPENAGC_FRONTEND_VULKAN, 0u, &state,
+                                                  &owner) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_translate_buffer_usage(OPENAGC_FRONTEND_VULKAN, 1u,
+                                                  &buffer_usage) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_device_create(device, &device_desc, &created_frontend) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(created_frontend == 0);
+    CHECK(openagc_frontend_device_get_capabilities(frontend, &capabilities) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(capabilities.host_translation == 0u && capabilities.gpu_execution == 0u);
+    CHECK(openagc_frontend_device_destroy(frontend) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_image_create(frontend, &image_desc, &created_image) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(created_image == 0);
+    CHECK(openagc_frontend_image_get_info(image, &image_info) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_image_transition(image, OPENAGC_GRAPHICS_STATE_SHADER_READ,
+                                            OPENAGC_GRAPHICS_OWNER_GRAPHICS) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_image_upload(image, 0u, bytes, sizeof(bytes)) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_image_readback(image, 0u, bytes, sizeof(bytes)) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_image_clear(0, (openagc_color){ 0u, 0u, 0u, 0u }) ==
+          OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_frontend_image_destroy(image) == OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_buffer_create(frontend, &buffer_desc, &created_buffer) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(created_buffer == 0);
+    CHECK(openagc_frontend_buffer_get_info(buffer, &buffer_info) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_buffer_upload(buffer, 0u, bytes, sizeof(bytes)) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_buffer_readback(buffer, 0u, bytes, sizeof(bytes)) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_buffer_copy(buffer, 0u, buffer, 0u, sizeof(bytes)) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_buffer_copy(0, 0u, buffer, 0u, sizeof(bytes)) ==
+          OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_frontend_buffer_destroy(buffer) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_timeline_create(0, &created_timeline) ==
+          OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_frontend_timeline_create(frontend, &created_timeline) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(created_timeline == 0);
+    CHECK(openagc_frontend_timeline_signal(timeline) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_timeline_poll(timeline, 1u, &timeline_info) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_timeline_destroy(timeline) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    plan_desc.struct_size--;
+    CHECK(openagc_frontend_pipeline_create(frontend, &plan_desc, &created_pipeline) ==
+          OPENAGC_ERROR_INCOMPATIBLE_VERSION);
+    plan_desc.struct_size++;
+    CHECK(openagc_frontend_pipeline_create(frontend, &plan_desc, &created_pipeline) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(created_pipeline == 0);
+    CHECK(openagc_frontend_pipeline_get_info(pipeline, &pipeline_info) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_pipeline_destroy(pipeline) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    return 0;
+}
+
+static int test_vulkan_policy(void)
+{
+    openagc_vk_instance_desc instance_desc = OPENAGC_VK_INSTANCE_DESC_INIT;
+    openagc_vk_device_desc device_desc = OPENAGC_VK_DEVICE_DESC_INIT;
+    openagc_vk_capabilities caps = OPENAGC_VK_CAPABILITIES_INIT;
+    openagc_vk_queue_family family = OPENAGC_VK_QUEUE_FAMILY_INIT;
+    openagc_frontend_timeline_info info = OPENAGC_FRONTEND_TIMELINE_INFO_INIT;
+    uint32_t dummy = 0u;
+    openagc_vk_instance *instance = (openagc_vk_instance *)(void *)&dummy;
+    openagc_vk_instance *created = 0;
+    openagc_vk_device *device = (openagc_vk_device *)(void *)&dummy;
+    openagc_vk_device *created_device = 0;
+    openagc_vk_fence *fence = (openagc_vk_fence *)(void *)&dummy;
+    openagc_vk_fence *created_fence = 0;
+    openagc_vk_pipeline *created_pipeline = 0;
+    uint8_t bytes[4] = { 0u, 0u, 0u, 0u };
+
+    CHECK(openagc_vk_instance_create(&instance_desc, &created) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(created == 0);
+    CHECK(openagc_vk_get_capabilities(instance, &caps) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(caps.gpu_execution == 0u && caps.presentation == 0u);
+    CHECK(openagc_vk_get_queue_family(instance, 0u, &family) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_vk_device_create(instance, &device_desc, &created_device) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(created_device == 0);
+    CHECK(openagc_vk_cmd_draw((openagc_vk_command_buffer *)(void *)&dummy, 3u, 1u, 0u, 0u) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_vk_cmd_draw(0, 3u, 1u, 0u, 0u) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_cmd_dispatch(0, 1u, 1u, 1u) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_create_sampler(0, 0u, 0u, 0u, 0) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_allocate_memory(0, 64u, 0) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_bind_buffer_memory(0, 0, 0u) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_create_compute_pipeline(0, 0, 0) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_create_graphics_pipeline(0, 0, 0, 0, 0) ==
+          OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_create_graphics_pipeline(
+              device, 0, 0, (openagc_vk_image *)(void *)&dummy, &created_pipeline) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(created_pipeline == 0);
+    CHECK(openagc_vk_create_command_pool(0, 0, 0) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_allocate_command_buffer(0, 0) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_create_image(device, 0, 0) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_create_image_view(0, 0, 0, 0) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_cmd_clear_color(0, 0, (openagc_color){ 0u, 0u, 0u, 0u }) ==
+          OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_create_swapchain(device) == OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_vk_create_fence(device, &created_fence) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(created_fence == 0);
+    CHECK(openagc_vk_queue_submit(device, fence) == OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_vk_fence_poll(fence, 1u, &info) == OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_vk_buffer_upload(0, 0u, bytes, sizeof(bytes)) ==
+          OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_instance_destroy(instance) == OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    return 0;
+}
+
 int main(void)
 {
     if (test_policy() != 0 || test_gpu_policy() != 0 ||
-        test_graphics_policy() != 0 || test_shader_policy() != 0) {
+        test_graphics_policy() != 0 || test_shader_policy() != 0 ||
+        test_frontend_policy() != 0 || test_vulkan_policy() != 0 ||
+        openagc_gl_draw_arrays(0, 0u, 3u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gl_create_graphics_program(0, 0, 0, 0, 0) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_frontend_graphics_pipeline_create(0, 0, 0, 0, 0) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gl_context_create(0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT) {
         return 1;
     }
     puts("OpenAGC PS5 policy tests passed");
