@@ -372,6 +372,51 @@ openagc_result openagc_gpu_host_graphics_register_eop(openagc_gpu_device *device
     return device == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
+openagc_result openagc_cb_capture_verify(const openagc_cb_capture_manifest *manifest,
+                                         const uint32_t *words)
+{
+    (void)words;
+    return manifest == 0 || words == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                       : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+uint32_t openagc_cb_capture_evidence_qualified(const openagc_cb_capture_manifest *manifest)
+{
+    (void)manifest;
+    return 0u;
+}
+
+openagc_result openagc_cb_capture_encode_invent(openagc_cb_capture_kind kind,
+                                                uint32_t *words, uint32_t max_words,
+                                                uint32_t *out_count)
+{
+    (void)kind;
+    (void)words;
+    (void)max_words;
+    if (out_count != 0) {
+        *out_count = 0u;
+    }
+    return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+}
+
+openagc_result openagc_gpu_host_cb_bind_from_capture(
+    openagc_gpu_device *device, const openagc_cb_capture_manifest *manifest,
+    const uint32_t *words)
+{
+    (void)manifest;
+    (void)words;
+    return device == 0 || manifest == 0 || words == 0
+               ? OPENAGC_ERROR_INVALID_ARGUMENT
+               : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gpu_device_get_cb_capture_info(const openagc_gpu_device *device,
+                                                     openagc_cb_capture_info *info)
+{
+    return device == 0 || info == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                    : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
 openagc_result openagc_gpu_device_reserve_synthetic_va(openagc_gpu_device *device,
                                                        uint64_t size_bytes,
                                                        uint64_t *out_va)
@@ -2971,6 +3016,24 @@ openagc_result openagc_frontend_render_pass_bind_vertex(openagc_frontend_render_
     (void)offset;
     return pass == 0 || buffer == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
                                     : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_render_pass_bind_cb_capture(
+    openagc_frontend_render_pass *pass, const openagc_cb_capture_manifest *manifest,
+    const uint32_t *words)
+{
+    (void)manifest;
+    (void)words;
+    return pass == 0 || manifest == 0 || words == 0
+               ? OPENAGC_ERROR_INVALID_ARGUMENT
+               : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_device_get_cb_capture_info(
+    const openagc_frontend_device *frontend, openagc_cb_capture_info *info)
+{
+    return frontend == 0 || info == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                      : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
 openagc_result openagc_frontend_render_pass_set_scissor(openagc_frontend_render_pass *pass,

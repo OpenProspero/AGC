@@ -498,6 +498,14 @@ int main(void)
         openagc_gpu_host_dma_write_data(0, 0, 0u, 0, 0u, 64u, 0u, 1u) !=
             OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gpu_host_graphics_register_eop(0, 0, 1u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_cb_capture_verify(0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_cb_capture_encode_invent(OPENAGC_CB_CAPTURE_KIND_CB_BIND, 0, 0u, 0) !=
+            OPENAGC_ERROR_UNSUPPORTED_OPERATION ||
+        openagc_gpu_host_cb_bind_from_capture(0, 0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_device_get_cb_capture_info(0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_frontend_render_pass_bind_cb_capture(0, 0, 0) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_frontend_device_get_cb_capture_info(0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gpu_device_reserve_synthetic_va(0, 256u, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_frontend_pipeline_patch_psbc_pgm_vas(0, 0u, 0u) !=
             OPENAGC_ERROR_INVALID_ARGUMENT ||
