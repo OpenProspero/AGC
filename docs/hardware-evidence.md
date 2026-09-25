@@ -1020,7 +1020,71 @@ program. It does **not** unlock CB/DB, DRAW, tiling, VideoOut, or host
 `gpu_execution`. `hardware_qualified` stays **false**;
 `OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**.
 
-### Stage 6/7 refuse contracts (fail-closed scaffold)
+### PSBC smoke → gfx10 register map (owned SPI/PA/DB_SHADER/CB_SHADER_MASK)
+
+**Question.** Do the smoke.vert / smoke.frag `context_registers` (+ linkage)
+offsets map to public Mesa/amdgpu gfx10 `CB_*` / `DB_*` / `PA_*` / `SPI_*`
+names, and does that subset already constitute owned CB *bind* evidence?
+
+**Mapping** (SET_CONTEXT_REG dword index = Linux `mmNAME` when
+`NAME_BASE_IDX=1`; cite `gc_10_1_0_offset.h` + Mesa SET_CONTEXT_REG).
+Host atlas: `include/openagc/pm4_context_regs_gfx10.h`.
+
+| Source | offset | Public name | Notes |
+| --- | --- | --- | --- |
+| vert ctx | 433 | `SPI_VS_OUT_CONFIG` | console Steps P–U |
+| vert ctx | 451 | `SPI_SHADER_POS_FORMAT` | |
+| vert ctx | 519 | `PA_CL_VS_OUT_CNTL` | |
+| vert linkage | 603 | `GE_CNTL` | Linux `mmGE_CNTL=0x225B` (low12=`0x25B`); PSBC `ge_cntl` |
+| vert linkage | 725 | `VGT_SHADER_STAGES_EN` | PSBC `stages_en` |
+| vert linkage | 610 | `GE_USER_VGPR_EN` | Linux `mm=0x2262` (low12=`0x262`); PSBC `user_vgpr_en` |
+| frag ctx | 452 | `SPI_SHADER_Z_FORMAT` | console Step T/U |
+| frag ctx | 453 | `SPI_SHADER_COL_FORMAT` | |
+| frag ctx | 435 | `SPI_PS_INPUT_ENA` | |
+| frag ctx | 436 | `SPI_PS_INPUT_ADDR` | |
+| frag ctx | 438 | `SPI_PS_IN_CONTROL` | |
+| frag ctx | 440 | `SPI_BARYC_CNTL` | |
+| frag ctx | 515 | `DB_SHADER_CONTROL` | shader DB control — **not** `DB_*_BASE` |
+| frag ctx | 143 | `CB_SHADER_MASK` | **only** smoke-owned `CB_*` |
+| frag ctx | 784 | `PA_SC_SHADER_CONTROL` | |
+| vert SH | 72–75 | `SPI_SHADER_PGM_{LO,HI,RSRC1,RSRC2}_VS` | SET_SH; PGM patched |
+| frag SH | 8–11 | `SPI_SHADER_PGM_{LO,HI,RSRC1,RSRC2}_PS` | SET_SH; PGM patched |
+
+**Absent from smoke (Stage 5 gap):** `CB_COLOR0_BASE` (792), `PITCH` (793),
+`SLICE` (794), `VIEW` (795), `INFO` (796), `ATTRIB` (797),
+`CB_TARGET_MASK` (142). Public *offsets* only — no owned *values*.
+
+**Assessment.** PSBC-owned metadata + console-proven SET_CONTEXT is
+owned evidence for the SPI/PA/GE/VGT/`DB_SHADER_CONTROL`/`CB_SHADER_MASK`
+subset above. It is **not** owned CB *bind* (COLOR_BASE/pitch/tiling)
+evidence. Do **not** pin a `CB_BIND` capture from smoke digests;
+`OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays 0.
+
+## Bounded experiment: CB context-register readback (Step W)
+
+**Question.** Can a console payload use public-cite `PACKET3_COPY_DATA`
+(register→memory, gfx_v10 `emit_rreg` layout) to read the eight
+COLOR_BASE-class offsets into a CPU-visible buffer and dump them as
+`tag=ctxreg-cb`, without SETting CB binds or inventing values?
+
+**Design.** `tools/payload/ctxreg_cb_dump_eop.c` encodes
+`openagc_pm4_encode_copy_data_cb_probe_eop` (host-locked from Mesa sid.h
++ drm/amdgpu `gfx_v10_0_ring_emit_rreg`), submits once, polls EOP, writes
+`/data/prosperoai/openagc-ib-dump-ctxreg-cb.log`. Host
+`openagc_ib_dump_parse` accepts `tag=ctxreg-cb` as `CTXREG_CB` with
+`evidence_qualified=0`. Probe order is fixed in
+`openagc_gfx10_cb_probe_offsets`. One push, no retries. No invent CB
+SET values; pin table stays empty until a real bind IB is owned.
+
+**Why it matters.** Stage 5 is blocked on COLOR_BASE-class *values*, not
+on opcode knowledge. Reading whatever the live FW9.40 context holds
+(compositor residue or zeros) is the fail-closed path to own those
+dwords without invention.
+
+**Status.** Host encode + dump parse + atlas landed; console result
+recorded below when pushed.
+
+
 
 **Status.** `include/openagc/presentation_refuse_fw940.h` documents
 `OPENAGC_NATIVE_TILING_SUPPORTED=0`, `OPENAGC_SCANOUT_USAGE_SUPPORTED=0`,

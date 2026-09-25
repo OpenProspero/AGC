@@ -276,7 +276,14 @@ Blocked by two independent gates:
    invent encode is refused; evidence pin count is 0; `gpu_executable`
    stays 0. Step V proves a console IB dump vehicle for the Step-U
    register IB (`pm4_ib_dump_fw940.h` + `openagc_ib_dump_parse`); dumps
-   never qualify CB pins.
+   never qualify CB pins. PSBC smoke context/SH offsets map to public
+   gfx10 `SPI_*`/`PA_*`/`GE_*`/`VGT_*`/`DB_SHADER_CONTROL`/
+   `CB_SHADER_MASK` (`pm4_context_regs_gfx10.h`); smoke does **not** own
+   `CB_COLOR0_BASE`/pitch/tiling — do not pin CB_BIND from smoke. Step W
+   scaffolds public-cite `COPY_DATA` register→memory probe +
+   `tag=ctxreg-cb` dump intake (`pm4_copy_data_fw940.h`) to obtain
+   COLOR_BASE-class values without inventing; pin count stays 0 until a
+   real capture is owned.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
