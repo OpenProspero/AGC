@@ -503,6 +503,7 @@ int main(void)
             OPENAGC_ERROR_UNSUPPORTED_OPERATION ||
         openagc_gpu_host_cb_bind_from_capture(0, 0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gpu_device_get_cb_capture_info(0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_ib_dump_parse(0, 0, 0u, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_frontend_render_pass_bind_cb_capture(0, 0, 0) !=
             OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_frontend_device_get_cb_capture_info(0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||

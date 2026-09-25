@@ -417,6 +417,16 @@ openagc_result openagc_gpu_device_get_cb_capture_info(const openagc_gpu_device *
                                     : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
+openagc_result openagc_ib_dump_parse(const char *text, uint32_t *words,
+                                     uint32_t max_words, openagc_ib_dump_info *info)
+{
+    (void)text;
+    (void)words;
+    (void)max_words;
+    return text == 0 || words == 0 || info == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                               : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
 openagc_result openagc_gpu_device_reserve_synthetic_va(openagc_gpu_device *device,
                                                        uint64_t size_bytes,
                                                        uint64_t *out_va)

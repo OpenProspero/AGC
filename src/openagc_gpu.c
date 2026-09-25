@@ -5,6 +5,8 @@
 #include "openagc_shader_internal.h"
 #include "openagc/pm4_fw940.h"
 #include "openagc/pm4_cb_capture_fw940.h"
+#include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/presentation_refuse_fw940.h"
 #include "openagc/pm4_compute_fw940.h"
 #include "openagc/pm4_write_fw940.h"
 #include "openagc/store_const_code.h"
@@ -14,6 +16,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #define OPENAGC_GPU_MAX_BUDGET_BYTES 67108864u
 #define OPENAGC_GPU_MAX_ALLOCATIONS 64u
@@ -1179,6 +1182,195 @@ openagc_result openagc_gpu_device_get_cb_capture_info(const openagc_gpu_device *
     info->capture_verified = device->cb_capture_verified;
     info->evidence_qualified = device->cb_capture_evidence_qualified;
     info->gpu_submitted = 0u;
+    return OPENAGC_OK;
+}
+
+static int openagc_ib_dump_hex_nibble(char c, uint32_t *out)
+{
+    if (c >= '0' && c <= '9') {
+        *out = (uint32_t)(c - '0');
+        return 0;
+    }
+    if (c >= 'a' && c <= 'f') {
+        *out = (uint32_t)(c - 'a') + 10u;
+        return 0;
+    }
+    if (c >= 'A' && c <= 'F') {
+        *out = (uint32_t)(c - 'A') + 10u;
+        return 0;
+    }
+    return -1;
+}
+
+static int openagc_ib_dump_parse_u32_hex(const char *text, size_t len, uint32_t *out)
+{
+    uint32_t value = 0u;
+    size_t i;
+
+    if (len == 0u || len > 8u) {
+        return -1;
+    }
+    for (i = 0u; i < len; ++i) {
+        uint32_t nibble;
+
+        if (openagc_ib_dump_hex_nibble(text[i], &nibble) != 0) {
+            return -1;
+        }
+        value = (value << 4) | nibble;
+    }
+    *out = value;
+    return 0;
+}
+
+static const char *openagc_ib_dump_skip_ws(const char *p)
+{
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+        ++p;
+    }
+    return p;
+}
+
+static const char *openagc_ib_dump_skip_sp(const char *p)
+{
+    while (*p == ' ' || *p == '\t') {
+        ++p;
+    }
+    return p;
+}
+
+openagc_result openagc_ib_dump_parse(const char *text, uint32_t *words,
+                                     uint32_t max_words, openagc_ib_dump_info *info)
+{
+    const char *p;
+    const char *tag;
+    uint32_t expected_words = 0u;
+    uint32_t completed = 0u;
+    uint32_t firmware_id = 0u;
+    uint32_t count = 0u;
+    openagc_ib_dump_kind kind = OPENAGC_IB_DUMP_KIND_NONE;
+
+    if (text == NULL || words == NULL || info == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (info->struct_size != sizeof(*info) ||
+        info->api_version != OPENAGC_IB_DUMP_API_VERSION) {
+        return OPENAGC_ERROR_INCOMPATIBLE_VERSION;
+    }
+    if (max_words == 0u || max_words > OPENAGC_IB_DUMP_MAX_WORDS) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+
+    p = openagc_ib_dump_skip_ws(text);
+    if (strncmp(p, "openagc-ib-dump:", 16) != 0) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    p = openagc_ib_dump_skip_sp(p + 16);
+
+    tag = NULL;
+    while (*p != '\0' && *p != '\n' && *p != '\r') {
+        if (strncmp(p, "tag=", 4) == 0) {
+            p += 4;
+            tag = p;
+            while (*p != '\0' && *p != ' ' && *p != '\t' && *p != '\n' && *p != '\r') {
+                ++p;
+            }
+            if (tag != NULL && (size_t)(p - tag) == strlen(OPENAGC_IB_DUMP_TAG_STEP_U) &&
+                strncmp(tag, OPENAGC_IB_DUMP_TAG_STEP_U,
+                        strlen(OPENAGC_IB_DUMP_TAG_STEP_U)) == 0) {
+                kind = OPENAGC_IB_DUMP_KIND_REGISTER_EOP;
+            } else {
+                return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+            }
+        } else if (strncmp(p, "fw=", 3) == 0) {
+            const char *start;
+            size_t len;
+
+            p += 3;
+            if (strncmp(p, "0x", 2) == 0 || strncmp(p, "0X", 2) == 0) {
+                p += 2;
+            }
+            start = p;
+            while (isxdigit((unsigned char)*p) != 0) {
+                ++p;
+            }
+            len = (size_t)(p - start);
+            if (openagc_ib_dump_parse_u32_hex(start, len, &firmware_id) != 0) {
+                return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+            }
+        } else if (strncmp(p, "completed=", 10) == 0) {
+            p += 10;
+            if (*p != '0' && *p != '1') {
+                return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+            }
+            completed = (uint32_t)(*p - '0');
+            ++p;
+        } else if (strncmp(p, "words=", 6) == 0) {
+            char *end = NULL;
+            unsigned long parsed;
+
+            p += 6;
+            parsed = strtoul(p, &end, 10);
+            if (end == p || parsed == 0ul || parsed > (unsigned long)OPENAGC_IB_DUMP_MAX_WORDS) {
+                return OPENAGC_ERROR_OUT_OF_RANGE;
+            }
+            expected_words = (uint32_t)parsed;
+            p = end;
+        } else {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+        p = openagc_ib_dump_skip_sp(p);
+    }
+
+    if (kind == OPENAGC_IB_DUMP_KIND_NONE || expected_words == 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (firmware_id != OPENAGC_IB_DUMP_FW940_ID) {
+        return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+    }
+    if (expected_words > max_words) {
+        return OPENAGC_ERROR_CAPACITY;
+    }
+
+    p = openagc_ib_dump_skip_ws(p);
+    if (strncmp(p, "ib", 2) != 0 || (p[2] != ' ' && p[2] != '\t' && p[2] != '\n' &&
+                                       p[2] != '\r' && p[2] != '\0')) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    p = openagc_ib_dump_skip_ws(p + 2);
+
+    while (*p != '\0') {
+        const char *start;
+        size_t len;
+        uint32_t value;
+
+        p = openagc_ib_dump_skip_ws(p);
+        if (*p == '\0') {
+            break;
+        }
+        start = p;
+        while (isxdigit((unsigned char)*p) != 0) {
+            ++p;
+        }
+        len = (size_t)(p - start);
+        if (len == 0u || openagc_ib_dump_parse_u32_hex(start, len, &value) != 0) {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+        if (count >= expected_words) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+        words[count++] = value;
+    }
+
+    if (count != expected_words) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+
+    info->kind = kind;
+    info->firmware_id = firmware_id;
+    info->word_count = count;
+    info->completed = completed;
+    info->dump_parsed = 1u;
+    info->evidence_qualified = 0u;
     return OPENAGC_OK;
 }
 

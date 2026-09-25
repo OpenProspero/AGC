@@ -5,6 +5,8 @@
 
 #include "openagc/openagc.h"
 #include "openagc/pm4_cb_capture_fw940.h"
+#include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/presentation_refuse_fw940.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -290,6 +292,13 @@ openagc_result openagc_gpu_host_cb_bind_from_capture(
     const uint32_t *words);
 openagc_result openagc_gpu_device_get_cb_capture_info(const openagc_gpu_device *device,
                                                      openagc_cb_capture_info *info);
+/*
+ * Host-only: parse a console IB dump log (openagc-ib-dump: ...) into words.
+ * Accepts tag=step-u as REGISTER_EOP. Never sets evidence_qualified.
+ * Does not invent CB/DB/DRAW packets and does not submit.
+ */
+openagc_result openagc_ib_dump_parse(const char *text, uint32_t *words,
+                                     uint32_t max_words, openagc_ib_dump_info *info);
 /* Reserve a synthetic host VA span (page-aligned). Never maps console memory. */
 openagc_result openagc_gpu_device_reserve_synthetic_va(openagc_gpu_device *device,
                                                        uint64_t size_bytes,

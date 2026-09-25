@@ -1063,6 +1063,42 @@ static int test_cb_capture_refuse_and_accept(void)
     return 0;
 }
 
+static int test_ib_dump_parse_and_refuse_contracts(void)
+{
+    openagc_ib_dump_info info = OPENAGC_IB_DUMP_INFO_INIT;
+    uint32_t words[8];
+    static const char dump_text[] =
+        "openagc-ib-dump: tag=step-u fw=0x9400008 completed=1 words=4\n"
+        "ib c0001000 00000000 c0001000 00000000\n";
+    static const char bad_tag[] =
+        "openagc-ib-dump: tag=cb-invent fw=0x9400008 completed=1 words=1\n"
+        "ib deadbeef\n";
+
+    CHECK(OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT == 0u);
+    CHECK(OPENAGC_NATIVE_TILING_SUPPORTED == 0u);
+    CHECK(OPENAGC_SCANOUT_USAGE_SUPPORTED == 0u);
+    CHECK(OPENAGC_PRESENTATION_SUPPORTED == 0u);
+    CHECK(OPENAGC_VIDEOOUT_EVIDENCE_PIN_COUNT == 0u);
+
+    EXPECT(openagc_ib_dump_parse(NULL, words, 8u, &info), OPENAGC_ERROR_INVALID_ARGUMENT);
+    EXPECT(openagc_ib_dump_parse(dump_text, words, 8u, &info), OPENAGC_OK);
+    CHECK(info.dump_parsed == 1u);
+    CHECK(info.evidence_qualified == 0u);
+    CHECK(info.kind == OPENAGC_IB_DUMP_KIND_REGISTER_EOP);
+    CHECK(info.firmware_id == OPENAGC_IB_DUMP_FW940_ID);
+    CHECK(info.completed == 1u);
+    CHECK(info.word_count == 4u);
+    CHECK(words[0] == 0xc0001000u && words[1] == 0u);
+    CHECK(words[2] == 0xc0001000u && words[3] == 0u);
+
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(bad_tag, words, 8u, &info),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    CHECK(info.dump_parsed == 0u);
+    CHECK(info.evidence_qualified == 0u);
+    return 0;
+}
+
 int main(void)
 {
     if (test_device_and_memory() != 0 ||
@@ -1076,7 +1112,8 @@ int main(void)
         test_host_write_data_apply() != 0 ||
         test_host_dma_write_data_apply() != 0 ||
         test_host_graphics_register_eop() != 0 ||
-        test_cb_capture_refuse_and_accept() != 0) {
+        test_cb_capture_refuse_and_accept() != 0 ||
+        test_ib_dump_parse_and_refuse_contracts() != 0) {
         return 1;
     }
     puts("OpenAGC GPU foundation tests passed");
