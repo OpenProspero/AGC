@@ -262,9 +262,8 @@ Blocked by two independent gates:
    linkage). Step Q proved SET_CONTEXT ×3 + graphics SET_SH ×4 + EOP
    in one IB (host snapshot order, no linkage). Step R proved linkage
    SET_CONTEXT ×3 + EOP (`ge_cntl` / `stages_en` / `user_vgpr_en` from
-   smoke.vert metadata). The host full register snapshot (context +
-   shader + linkage) is encoded for host record; Step S (one IB of that
-   full program + EOP) is the next console proof. Draw/render packets
+   smoke.vert metadata). Step S proved the full host-aligned register
+   program (context + SH + linkage) + EOP in one IB. Draw/render packets
    remain unavailable.
 
 Until both close, stages 3 and 4 must refuse draws and general
