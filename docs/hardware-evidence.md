@@ -908,3 +908,40 @@ gate is a bounded vert+frag combined register IB (Step U: Step S shape
 out of scope. Host plans may treat both vertex and fragment register
 snapshots as console-proven for encode/record only; draws stay
 `NOT_READY`.
+
+## Bounded experiment: vert + frag register program + EOP (Step U)
+
+**Question.** Does one FW9.40 IB that concatenates the Step S vertex
+register program (SET_CONTEXT ×3 + graphics SET_SH ×4 + linkage
+SET_CONTEXT ×3, PGM patched to uploaded smoke.vert) with the Step T
+fragment register program (SET_CONTEXT ×9 + graphics SET_SH ×4, PGM
+patched to uploaded smoke.frag) — host snapshot order, **without**
+DRAW or CB/DB — plus a single shared EOP+NOP trailer, complete with a
+fired marker and no GPU fault?
+
+**Why it matters.** Host graphics plans already concatenate
+smoke.vert + smoke.frag register snapshots
+(`openagc_frontend_pipeline_*` /
+`openagc_psbc_reflection_encode_register_program` twice). Steps S and T
+proved each half alone. Owning the combined vehicle on console is the
+smallest proof that the full Stage-5 host register snapshot is a safe
+single-submit shape on this firmware, without inventing CB/DB or DRAW.
+
+**Why not DRAW / CB yet.** DRAW and CB/DB still lack an independently
+owned FW9.40 capture. Step U deliberately omits both; it only submits
+the verified vert+frag register programs the host already encodes.
+
+**Entry conditions.** Steps A–T proven on `fw=0x9400008`; host encoding
+locked in `pm4_graphics_fw940.h`
+(`openagc_pm4_encode_graphics_vert_frag_eop`); payload ELF-validated;
+one push, no retries. IB size
+`OPENAGC_PM4_GRAPHICS_VERT_FRAG_EOP_WORDS(3,4,9,4)` (=93) dwords —
+under the arena IB window used by Steps S/T (0x2000..0x2800).
+
+**Payload (`tools/payload/set_context_sh_vert_frag_eop.c`).** One IB of
+93 dwords. Vert pairs + code from Step S; frag pairs + code from
+Step T (distinct 256-byte-aligned code VAs). No DRAW, no CB/DB.
+
+**Status before push.** Host encoding locked in CTest
+(`test_openagc_psbc_adapter`); Step U encoder byte-identical to
+`encode_register_program(vert) + encode_register_program(frag) + EOP`.
