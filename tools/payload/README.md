@@ -127,6 +127,11 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     `openagc_pm4_encode_graphics_context_sh_eop` is locked for the
     smoke.frag (9+4) pairs. One push, no retries. No linkage, no DRAW,
     no CB/DB.
+21. `set_context_sh_vert_frag_eop.c` (Step U, vert Step S + frag Step T
+    + EOP) only after Steps S–T and host
+    `openagc_pm4_encode_graphics_vert_frag_eop` is locked. One push, no
+    retries. Full host-aligned vert+frag register program; no DRAW, no
+    CB/DB.
 
 ## Toolchain result (2026-09-25)
 
