@@ -284,7 +284,9 @@ Blocked by two independent gates:
    poison). Step X scaffolds the distinct absolute aperture form
    (`CONTEXT_REG_START+offset`, `tag=ctxreg-abs`) from
    `PACKET3_SET_CONTEXT_REG_START` + `emit_rreg`; pin count stays 0 until
-   a real capture is owned. Do not retry Step W.
+   a real capture is owned. Do not retry Step W. Step X absolute
+   COPY_DATA completed once (`completed=1`) with COLOR_BASE-class
+   zeros and mask `ffffffff` — owned readback, still not a CB_BIND pin.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the

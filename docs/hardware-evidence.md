@@ -1128,10 +1128,25 @@ zeros without inventing binds. If it also times out, COPY_DATA
 register→memory on this graphics submit path remains unproven and needs
 a different public-cite path (not another offset tweak without review).
 
-**Status.** Host encode + dump parse locked. Console push recorded below
-when executed.
+**Status.** Host encode + dump parse locked. Console push recorded below.
 
-**Artifact.** *(pending one validated push)*
+**Artifact.** `ctxreg_abs_dump_eop.elf`
+(`d9cb3076acb9d0376329d0b75ef70229113221d355599c71c28e734f7ceb56ca`,
+110,152 bytes): one push wrote
+`/data/prosperoai/openagc-ib-dump-ctxreg-abs.log` with
+`tag=ctxreg-abs fw=0x9400008 completed=1 words=8` and
+`ib 00000000 00000000 00000000 00000000 00000000 00000000 ffffffff ffffffff`
+(probe order: COLOR0_BASE/PITCH/SLICE/VIEW/INFO/ATTRIB = 0;
+TARGET_MASK/SHADER_MASK = `0xffffffff`). Host `openagc_ib_dump_parse`
+accepts the log as `CTXREG_ABS` with `evidence_qualified=0`. Loader still
+accepted connections on 9021 afterward.
+This proves absolute-aperture `COPY_DATA` register→memory on the FW9.40
+graphics submit path and owns the eight readback dwords above. It does
+**not** unlock CB/DB binds or DRAW: COLOR_BASE-class values are zero (no
+usable bind to pin), and mask dwords alone are not a CB_BIND capture.
+`hardware_qualified` stays **false**;
+`OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**. Do not invent non-zero
+COLOR_BASE values from this dump.
 
 ### Stage 6/7 refuse contracts (fail-closed scaffold)
 
