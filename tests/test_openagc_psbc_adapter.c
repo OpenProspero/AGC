@@ -366,6 +366,42 @@ static int test_psbc_pgm_patch_and_eop(void)
         CHECK(link_words[link_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] ==
               OPENAGC_PM4_EOP_HEADER);
     }
+    /* Full host snapshot + EOP (Step S: ctx + SH + linkage, no DRAW). */
+    {
+        static const uint32_t ctx_offsets[] = { 433u, 451u, 519u };
+        static const uint32_t ctx_values[] = { 128u, 4u, 0u };
+        static const uint32_t sh_offsets[] = { 72u, 73u, 74u, 75u };
+        uint32_t sh_values[4];
+        uint32_t full_words[OPENAGC_PM4_GRAPHICS_CONTEXT_SH_LINKAGE_EOP_WORDS(3u, 4u)];
+        uint32_t full_count;
+        uint32_t host_count;
+
+        sh_values[0] = reflection.shader_values[0];
+        sh_values[1] = reflection.shader_values[1];
+        sh_values[2] = reflection.shader_values[2];
+        sh_values[3] = reflection.shader_values[3];
+        CHECK(reflection.has_linkage == 1u);
+        full_count = openagc_pm4_encode_graphics_context_sh_linkage_eop(
+            ctx_offsets, ctx_values, 3u, sh_offsets, sh_values, 4u,
+            reflection.linkage_ge_cntl_offset, reflection.linkage_ge_cntl_value,
+            reflection.linkage_stages_en_offset, reflection.linkage_stages_en_value,
+            reflection.linkage_user_vgpr_en_offset, reflection.linkage_user_vgpr_en_value,
+            1u, UINT64_C(0x3000), full_words);
+        CHECK(full_count == OPENAGC_PM4_GRAPHICS_CONTEXT_SH_LINKAGE_EOP_WORDS(3u, 4u));
+        CHECK(full_count == 54u);
+        host_count = openagc_psbc_reflection_encode_register_program_eop(
+            &reflection, 1u, UINT64_C(0x3000), words);
+        CHECK(full_count == host_count);
+        CHECK(memcmp(full_words, words, (size_t)full_count * sizeof(uint32_t)) == 0);
+        CHECK(full_words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(full_words[1] == 433u && full_words[2] == 128u);
+        CHECK(full_words[9] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_SH_REG, 3u, 0u));
+        CHECK(full_words[10] == 72u && full_words[11] == sh_values[0]);
+        CHECK(full_words[21] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(full_words[22] == 603u && full_words[23] == 131200u);
+        CHECK(full_words[full_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] ==
+              OPENAGC_PM4_EOP_HEADER);
+    }
     free(json);
     return 0;
 }
