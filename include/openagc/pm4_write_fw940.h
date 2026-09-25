@@ -23,6 +23,10 @@
  * Step D (2026-09-25): one-dword WRITE_DATA+EOP console-proven on FW9.40.
  * Step E: same control with N data dwords (clear tile); addr increments.
  * Step F: multiple WRITE_DATA packets (one per image row) + one EOP.
+ * Step G: full-width (16-dword) multi-row WRITE_DATA + one EOP.
+ * Step H: IT_DMA_DATA + WRITE_DATA + one EOP in a single IB.
+ * Step M: MAX_ROWS (=8) full-width WRITE_DATA + one EOP (host clear window).
+ * Step N: MAX_COLS (=2) × MAX_ROWS grid WRITE_DATA + one EOP (32×8 window).
  * Do not claim hardware_qualified or gpu_execution from this header alone.
  */
 
@@ -66,6 +70,48 @@
 #define OPENAGC_PM4_WRITE_DATA_STEP_F_EOP_WORDS                               \
     OPENAGC_PM4_WRITE_DATA_ROWS_EOP_WORDS(OPENAGC_PM4_WRITE_DATA_STEP_F_ROWS, \
                                           OPENAGC_PM4_WRITE_DATA_STEP_F_ROW_DWORDS)
+
+/* Console Step G sample: two full-width (16-dword) rows, pitch 128. */
+#define OPENAGC_PM4_WRITE_DATA_STEP_G_ROW_DWORDS \
+    OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS
+#define OPENAGC_PM4_WRITE_DATA_STEP_G_ROWS 2u
+#define OPENAGC_PM4_WRITE_DATA_STEP_G_EOP_WORDS                               \
+    OPENAGC_PM4_WRITE_DATA_ROWS_EOP_WORDS(OPENAGC_PM4_WRITE_DATA_STEP_G_ROWS, \
+                                          OPENAGC_PM4_WRITE_DATA_STEP_G_ROW_DWORDS)
+
+/* Step M: host clear-window ceiling — MAX_ROWS full-width rows + EOP. */
+#define OPENAGC_PM4_WRITE_DATA_STEP_M_ROW_DWORDS \
+    OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS
+#define OPENAGC_PM4_WRITE_DATA_STEP_M_ROWS OPENAGC_PM4_WRITE_DATA_MAX_ROWS
+#define OPENAGC_PM4_WRITE_DATA_STEP_M_EOP_WORDS \
+    OPENAGC_PM4_WRITE_DATA_MAX_ROWS_EOP_WORDS
+
+/*
+ * Step N: multi-column grid — column_count packets per row (each ≤16
+ * dwords), then one EOP. Host clear tiling for width ≤16*MAX_COLS uses
+ * this when height ≤ MAX_ROWS.
+ */
+#define OPENAGC_PM4_WRITE_DATA_MAX_COLS 2u
+#define OPENAGC_PM4_WRITE_DATA_GRID_EOP_WORDS(row_count, column_count, dwords_per_column) \
+    ((row_count) * (column_count) * OPENAGC_PM4_WRITE_DATA_WORDS(dwords_per_column) +    \
+     OPENAGC_PM4_EOP_WITH_NOP_WORDS)
+#define OPENAGC_PM4_WRITE_DATA_MAX_GRID_EOP_WORDS                                      \
+    OPENAGC_PM4_WRITE_DATA_GRID_EOP_WORDS(OPENAGC_PM4_WRITE_DATA_MAX_ROWS,             \
+                                          OPENAGC_PM4_WRITE_DATA_MAX_COLS,             \
+                                          OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS)
+#define OPENAGC_PM4_WRITE_DATA_STEP_N_COLS OPENAGC_PM4_WRITE_DATA_MAX_COLS
+#define OPENAGC_PM4_WRITE_DATA_STEP_N_ROWS OPENAGC_PM4_WRITE_DATA_MAX_ROWS
+#define OPENAGC_PM4_WRITE_DATA_STEP_N_COL_DWORDS \
+    OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS
+#define OPENAGC_PM4_WRITE_DATA_STEP_N_EOP_WORDS OPENAGC_PM4_WRITE_DATA_MAX_GRID_EOP_WORDS
+
+/* Step H: DMA + N-dword WRITE_DATA + shared EOP (one IB). */
+#define OPENAGC_PM4_DMA_WRITE_EOP_WORDS(data_count) \
+    (OPENAGC_PM4_DMA_WORDS + OPENAGC_PM4_WRITE_DATA_WORDS(data_count) + \
+     OPENAGC_PM4_EOP_WITH_NOP_WORDS)
+#define OPENAGC_PM4_WRITE_DATA_STEP_H_DWORDS 4u
+#define OPENAGC_PM4_DMA_WRITE_STEP_H_EOP_WORDS \
+    OPENAGC_PM4_DMA_WRITE_EOP_WORDS(OPENAGC_PM4_WRITE_DATA_STEP_H_DWORDS)
 
 static inline void openagc_pm4_encode_write_data(uint64_t destination,
                                                 const uint32_t *data,
@@ -164,6 +210,72 @@ static inline void openagc_pm4_encode_write_data_rows_eop(uint64_t base_va,
         cursor += packet_words;
     }
     openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
+}
+
+/*
+ * column_count WRITE_DATA packets per row (identical fill width), then one
+ * EOP. Column k starts at base + row*pitch + k*dwords_per_column*4.
+ * words must hold OPENAGC_PM4_WRITE_DATA_GRID_EOP_WORDS(...).
+ */
+static inline void openagc_pm4_encode_write_data_grid_eop(uint64_t base_va,
+                                                         uint32_t pitch_bytes,
+                                                         uint32_t value,
+                                                         uint32_t dwords_per_column,
+                                                         uint32_t column_count,
+                                                         uint32_t row_count,
+                                                         uint32_t sequence,
+                                                         uint64_t marker_va,
+                                                         uint32_t *words)
+{
+    uint32_t data[OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS];
+    uint32_t row;
+    uint32_t column;
+    uint32_t i;
+    uint32_t cursor = 0u;
+    uint32_t packet_words = OPENAGC_PM4_WRITE_DATA_WORDS(dwords_per_column);
+    uint32_t column_bytes = dwords_per_column * 4u;
+
+    for (i = 0u; i < dwords_per_column; ++i) {
+        data[i] = value;
+    }
+    for (row = 0u; row < row_count; ++row) {
+        for (column = 0u; column < column_count; ++column) {
+            uint64_t cell_va = base_va + (uint64_t)row * (uint64_t)pitch_bytes +
+                               (uint64_t)column * (uint64_t)column_bytes;
+
+            openagc_pm4_encode_write_data(cell_va, data, dwords_per_column, words + cursor);
+            cursor += packet_words;
+        }
+    }
+    openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
+}
+
+/*
+ * One IT_DMA_DATA, then one WRITE_DATA fill (identical dwords), then the
+ * shared EOP+NOP trailer. words must hold
+ * OPENAGC_PM4_DMA_WRITE_EOP_WORDS(dword_count).
+ */
+static inline void openagc_pm4_encode_dma_write_data_eop(uint64_t source_va,
+                                                        uint64_t destination_va,
+                                                        uint32_t dma_bytes,
+                                                        uint32_t value,
+                                                        uint32_t dword_count,
+                                                        uint32_t sequence,
+                                                        uint64_t marker_va,
+                                                        uint32_t *words)
+{
+    uint32_t data[OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS];
+    uint32_t i;
+    uint32_t packet_words;
+
+    openagc_pm4_encode_dma(source_va, destination_va, dma_bytes, words);
+    for (i = 0u; i < dword_count; ++i) {
+        data[i] = value;
+    }
+    openagc_pm4_encode_write_data(destination_va, data, dword_count,
+                                  words + OPENAGC_PM4_DMA_WORDS);
+    packet_words = OPENAGC_PM4_DMA_WORDS + OPENAGC_PM4_WRITE_DATA_WORDS(dword_count);
+    openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + packet_words);
 }
 
 #endif /* OPENAGC_PM4_WRITE_FW940_H */

@@ -173,6 +173,19 @@ openagc_result openagc_gpu_buffer_write(openagc_gpu_buffer *buffer, uint64_t off
 openagc_result openagc_gpu_host_store_const(openagc_gpu_device *device,
                                             openagc_gpu_buffer *destination,
                                             uint64_t destination_offset);
+/* Console Step I: 8-lane flat_store span (32 bytes) at destination. */
+openagc_result openagc_gpu_host_store_span(openagc_gpu_device *device,
+                                           openagc_gpu_buffer *destination,
+                                           uint64_t destination_offset);
+/* Console Step J: two store_span dispatches (64 bytes) in one IB. */
+openagc_result openagc_gpu_host_store_span2(openagc_gpu_device *device,
+                                            openagc_gpu_buffer *destination,
+                                            uint64_t destination_offset);
+/* Steps I–K: 1..8 store_span dispatches (32..256 bytes) in one IB. */
+openagc_result openagc_gpu_host_store_span_n(openagc_gpu_device *device,
+                                             openagc_gpu_buffer *destination,
+                                             uint64_t destination_offset,
+                                             uint32_t span_count);
 openagc_result openagc_gpu_device_get_last_compute(const openagc_gpu_device *device,
                                                    openagc_gpu_submission_view *view);
 
@@ -197,13 +210,60 @@ openagc_result openagc_gpu_host_write_data_rows(openagc_gpu_device *device,
                                                 uint32_t value,
                                                 uint32_t dwords_per_row,
                                                 uint32_t row_count);
+/* Buffer form of host_write_data_rows; requires COPY_DESTINATION usage. */
+openagc_result openagc_gpu_host_write_data_buffer_rows(openagc_gpu_device *device,
+                                                       openagc_gpu_buffer *destination,
+                                                       uint64_t destination_offset,
+                                                       uint32_t pitch_bytes,
+                                                       uint32_t value,
+                                                       uint32_t dwords_per_row,
+                                                       uint32_t row_count);
+/*
+ * Host-only multi-column WRITE_DATA grid + one EOP (console Step N):
+ * column_count packets per row, each ≤16 dwords. Requires memory span
+ * covering the grid. Does not set gpu_execution.
+ */
+openagc_result openagc_gpu_host_write_data_grid(openagc_gpu_device *device,
+                                                openagc_gpu_memory *memory,
+                                                uint64_t memory_offset,
+                                                uint32_t pitch_bytes,
+                                                uint32_t value,
+                                                uint32_t dwords_per_column,
+                                                uint32_t column_count,
+                                                uint32_t row_count);
 openagc_result openagc_gpu_host_write_data(openagc_gpu_device *device,
                                            openagc_gpu_buffer *destination,
                                            uint64_t destination_offset,
                                            uint32_t value,
                                            uint32_t dword_count);
+/*
+ * Host-only DMA + WRITE_DATA + EOP (console Step H): copy then fill the
+ * start of the destination in one PM4 snapshot. Requires copy-source and
+ * copy-destination. Does not set gpu_execution.
+ */
+openagc_result openagc_gpu_host_dma_write_data(openagc_gpu_device *device,
+                                               openagc_gpu_buffer *source,
+                                               uint64_t source_offset,
+                                               openagc_gpu_buffer *destination,
+                                               uint64_t destination_offset,
+                                               uint32_t dma_bytes,
+                                               uint32_t value,
+                                               uint32_t dword_count);
 openagc_result openagc_gpu_device_get_last_write(const openagc_gpu_device *device,
                                                  openagc_gpu_submission_view *view);
+/*
+ * Host-only: copy a graphics SET_CONTEXT/SET_SH register program and append
+ * the shared FW9.40 EOP+NOP trailer into the write-data snapshot slot.
+ * Does not submit, does not emit DRAW, and does not set gpu_execution.
+ * register_dword_count must leave room for OPENAGC_PM4_EOP_WITH_NOP_WORDS.
+ */
+openagc_result openagc_gpu_host_graphics_register_eop(openagc_gpu_device *device,
+                                                      const uint32_t *register_words,
+                                                      uint32_t register_dword_count);
+/* Reserve a synthetic host VA span (page-aligned). Never maps console memory. */
+openagc_result openagc_gpu_device_reserve_synthetic_va(openagc_gpu_device *device,
+                                                       uint64_t size_bytes,
+                                                       uint64_t *out_va);
 
 openagc_result openagc_gpu_buffer_create(openagc_gpu_device *device,
                                          const openagc_gpu_buffer_desc *desc,

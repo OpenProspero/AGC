@@ -7,6 +7,7 @@
 #include "openagc/pm4_compute_fw940.h"
 #include "openagc/pm4_write_fw940.h"
 #include "openagc/store_const_code.h"
+#include "openagc/store_span_code.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -24,9 +25,11 @@
 #define OPENAGC_GPU_DMA_WORDS OPENAGC_PM4_DMA_WORDS
 #define OPENAGC_GPU_EOP_WORDS OPENAGC_PM4_EOP_WITH_NOP_WORDS
 #define OPENAGC_GPU_COMPUTE_STORE_WORDS OPENAGC_PM4_COMPUTE_STORE_WORDS
-#define OPENAGC_GPU_WRITE_DATA_EOP_WORDS OPENAGC_PM4_WRITE_DATA_MAX_ROWS_EOP_WORDS
+#define OPENAGC_GPU_COMPUTE_WORDS OPENAGC_PM4_COMPUTE_STORE_SPAN_MAX_WORDS
+#define OPENAGC_GPU_WRITE_DATA_EOP_WORDS OPENAGC_PM4_WRITE_DATA_MAX_GRID_EOP_WORDS
 #define OPENAGC_GPU_WRITE_DATA_MAX_DWORDS OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS
 #define OPENAGC_GPU_WRITE_DATA_MAX_ROWS OPENAGC_PM4_WRITE_DATA_MAX_ROWS
+#define OPENAGC_GPU_WRITE_DATA_MAX_COLS OPENAGC_PM4_WRITE_DATA_MAX_COLS
 #define OPENAGC_GPU_VA_PAGE UINT64_C(4096)
 #define OPENAGC_GPU_VA_LIMIT (UINT64_C(1) << 48)
 #define OPENAGC_GPU_VA_START (UINT64_C(1) << 32)
@@ -185,7 +188,7 @@ openagc_result openagc_gpu_device_create(openagc_context *context,
         return OPENAGC_ERROR_OUT_OF_MEMORY;
     }
     device->last_compute_words =
-        (uint32_t *)calloc(OPENAGC_GPU_COMPUTE_STORE_WORDS, sizeof(uint32_t));
+        (uint32_t *)calloc(OPENAGC_GPU_COMPUTE_WORDS, sizeof(uint32_t));
     if (device->last_compute_words == NULL) {
         free(device);
         return OPENAGC_ERROR_OUT_OF_MEMORY;
@@ -454,6 +457,144 @@ openagc_result openagc_gpu_host_store_const(openagc_gpu_device *device,
     return OPENAGC_OK;
 }
 
+openagc_result openagc_gpu_host_store_span(openagc_gpu_device *device,
+                                           openagc_gpu_buffer *destination,
+                                           uint64_t destination_offset)
+{
+    uint64_t destination_va;
+    uint64_t next_address;
+    uint32_t values[OPENAGC_STORE_SPAN_LANES];
+    uint32_t i;
+    uint32_t sequence;
+    openagc_result result;
+
+    if (device == NULL || destination == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (destination->device != device) {
+        return OPENAGC_ERROR_OWNERSHIP;
+    }
+    if (destination->memory == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if ((destination->usage & OPENAGC_GPU_BUFFER_SHADER_READ_BIT) == 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if ((destination_offset & 3u) != 0u || destination_offset > destination->size_bytes ||
+        OPENAGC_STORE_SPAN_BYTES > destination->size_bytes - destination_offset) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if (device->compute_sequence == UINT32_MAX || device->last_compute_words == NULL) {
+        return OPENAGC_ERROR_OVERFLOW;
+    }
+    if (device->store_const_code_va == 0u) {
+        result = openagc_gpu_reserve_va(device, 256u, &device->store_const_code_va, &next_address);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+        device->next_synthetic_va = next_address;
+    }
+    if (device->store_const_marker_va == 0u) {
+        result = openagc_gpu_reserve_va(device, 4u, &device->store_const_marker_va, &next_address);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+        device->next_synthetic_va = next_address;
+    }
+    sequence = device->compute_sequence + 1u;
+    destination_va =
+        destination->memory->synthetic_va + destination->memory_offset + destination_offset;
+    openagc_pm4_encode_compute_store_span(device->store_const_code_va, destination_va, sequence,
+                                          device->store_const_marker_va,
+                                          device->last_compute_words);
+    for (i = 0u; i < OPENAGC_STORE_SPAN_LANES; ++i) {
+        values[i] = OPENAGC_STORE_SPAN_VALUE;
+    }
+    result = openagc_gpu_buffer_write(destination, destination_offset, values,
+                                      OPENAGC_STORE_SPAN_BYTES);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    device->last_compute_word_count = OPENAGC_GPU_COMPUTE_STORE_WORDS;
+    device->compute_sequence = sequence;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_gpu_host_store_span2(openagc_gpu_device *device,
+                                            openagc_gpu_buffer *destination,
+                                            uint64_t destination_offset)
+{
+    return openagc_gpu_host_store_span_n(device, destination, destination_offset, 2u);
+}
+
+openagc_result openagc_gpu_host_store_span_n(openagc_gpu_device *device,
+                                             openagc_gpu_buffer *destination,
+                                             uint64_t destination_offset,
+                                             uint32_t span_count)
+{
+    uint64_t destination_va;
+    uint64_t next_address;
+    uint32_t values[OPENAGC_PM4_COMPUTE_SPAN_MAX * OPENAGC_STORE_SPAN_LANES];
+    uint32_t i;
+    uint32_t sequence;
+    uint32_t byte_count;
+    openagc_result result;
+
+    if (device == NULL || destination == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (destination->device != device) {
+        return OPENAGC_ERROR_OWNERSHIP;
+    }
+    if (destination->memory == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if ((destination->usage & OPENAGC_GPU_BUFFER_SHADER_READ_BIT) == 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (span_count == 0u || span_count > OPENAGC_PM4_COMPUTE_SPAN_MAX) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    byte_count = span_count * OPENAGC_STORE_SPAN_BYTES;
+    if ((destination_offset & 3u) != 0u || destination_offset > destination->size_bytes ||
+        byte_count > destination->size_bytes - destination_offset) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if (device->compute_sequence == UINT32_MAX || device->last_compute_words == NULL) {
+        return OPENAGC_ERROR_OVERFLOW;
+    }
+    if (device->store_const_code_va == 0u) {
+        result = openagc_gpu_reserve_va(device, 256u, &device->store_const_code_va, &next_address);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+        device->next_synthetic_va = next_address;
+    }
+    if (device->store_const_marker_va == 0u) {
+        result = openagc_gpu_reserve_va(device, 4u, &device->store_const_marker_va, &next_address);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+        device->next_synthetic_va = next_address;
+    }
+    sequence = device->compute_sequence + 1u;
+    destination_va =
+        destination->memory->synthetic_va + destination->memory_offset + destination_offset;
+    openagc_pm4_encode_compute_store_span_n(device->store_const_code_va, destination_va,
+                                            span_count, sequence, device->store_const_marker_va,
+                                            device->last_compute_words);
+    for (i = 0u; i < span_count * OPENAGC_STORE_SPAN_LANES; ++i) {
+        values[i] = OPENAGC_STORE_SPAN_VALUE;
+    }
+    result = openagc_gpu_buffer_write(destination, destination_offset, values, byte_count);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    device->last_compute_word_count = OPENAGC_PM4_COMPUTE_STORE_SPAN_N_WORDS(span_count);
+    device->compute_sequence = sequence;
+    return OPENAGC_OK;
+}
+
 openagc_result openagc_gpu_device_get_last_compute(const openagc_gpu_device *device,
                                                    openagc_gpu_submission_view *view)
 {
@@ -604,6 +745,87 @@ openagc_result openagc_gpu_host_write_data_rows(openagc_gpu_device *device,
     return OPENAGC_OK;
 }
 
+openagc_result openagc_gpu_host_write_data_grid(openagc_gpu_device *device,
+                                                openagc_gpu_memory *memory,
+                                                uint64_t memory_offset,
+                                                uint32_t pitch_bytes,
+                                                uint32_t value,
+                                                uint32_t dwords_per_column,
+                                                uint32_t column_count,
+                                                uint32_t row_count)
+{
+    uint64_t base_va;
+    uint64_t next_address;
+    uint64_t span_bytes;
+    uint32_t sequence;
+    uint32_t packet_words;
+    uint32_t row;
+    uint32_t column;
+    uint32_t i;
+    uint32_t data[OPENAGC_GPU_WRITE_DATA_MAX_DWORDS];
+    uint32_t column_bytes;
+    openagc_result result;
+
+    if (device == NULL || memory == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (memory->device != device) {
+        return OPENAGC_ERROR_OWNERSHIP;
+    }
+    if (dwords_per_column == 0u || dwords_per_column > OPENAGC_GPU_WRITE_DATA_MAX_DWORDS ||
+        column_count == 0u || column_count > OPENAGC_GPU_WRITE_DATA_MAX_COLS ||
+        row_count == 0u || row_count > OPENAGC_GPU_WRITE_DATA_MAX_ROWS) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    column_bytes = dwords_per_column * 4u;
+    if ((pitch_bytes & 3u) != 0u || pitch_bytes < column_count * column_bytes) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if ((memory_offset & 3u) != 0u) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    span_bytes = (uint64_t)(row_count - 1u) * (uint64_t)pitch_bytes +
+                 (uint64_t)column_count * (uint64_t)column_bytes;
+    if (memory_offset > memory->size_bytes || span_bytes > memory->size_bytes - memory_offset) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if (device->write_sequence == UINT32_MAX || device->last_write_words == NULL) {
+        return OPENAGC_ERROR_OVERFLOW;
+    }
+    if (device->write_data_marker_va == 0u) {
+        result = openagc_gpu_reserve_va(device, 4u, &device->write_data_marker_va, &next_address);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+        device->next_synthetic_va = next_address;
+    }
+    sequence = device->write_sequence + 1u;
+    base_va = memory->synthetic_va + memory_offset;
+    openagc_pm4_encode_write_data_grid_eop(base_va, pitch_bytes, value, dwords_per_column,
+                                           column_count, row_count, sequence,
+                                           device->write_data_marker_va,
+                                           device->last_write_words);
+    for (i = 0u; i < dwords_per_column; ++i) {
+        data[i] = value;
+    }
+    for (row = 0u; row < row_count; ++row) {
+        for (column = 0u; column < column_count; ++column) {
+            uint64_t cell_offset = memory_offset + (uint64_t)row * (uint64_t)pitch_bytes +
+                                   (uint64_t)column * (uint64_t)column_bytes;
+
+            result = openagc_gpu_memory_write(memory, cell_offset, data, column_bytes);
+            if (result != OPENAGC_OK) {
+                return result;
+            }
+        }
+    }
+    packet_words =
+        OPENAGC_PM4_WRITE_DATA_GRID_EOP_WORDS(row_count, column_count, dwords_per_column);
+    device->last_write_word_count = packet_words;
+    device->write_sequence = sequence;
+    return OPENAGC_OK;
+}
+
 openagc_result openagc_gpu_host_write_data(openagc_gpu_device *device,
                                            openagc_gpu_buffer *destination,
                                            uint64_t destination_offset,
@@ -633,6 +855,126 @@ openagc_result openagc_gpu_host_write_data(openagc_gpu_device *device,
                                               value, dword_count);
 }
 
+openagc_result openagc_gpu_host_write_data_buffer_rows(openagc_gpu_device *device,
+                                                       openagc_gpu_buffer *destination,
+                                                       uint64_t destination_offset,
+                                                       uint32_t pitch_bytes,
+                                                       uint32_t value,
+                                                       uint32_t dwords_per_row,
+                                                       uint32_t row_count)
+{
+    uint64_t span_bytes;
+
+    if (device == NULL || destination == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (destination->device != device) {
+        return OPENAGC_ERROR_OWNERSHIP;
+    }
+    if (destination->memory == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if ((destination->usage & OPENAGC_GPU_BUFFER_COPY_DESTINATION_BIT) == 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (dwords_per_row == 0u || row_count == 0u) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    span_bytes = (uint64_t)(row_count - 1u) * (uint64_t)pitch_bytes +
+                 (uint64_t)dwords_per_row * 4u;
+    if (destination_offset > destination->size_bytes ||
+        span_bytes > destination->size_bytes - destination_offset) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    return openagc_gpu_host_write_data_rows(device, destination->memory,
+                                            destination->memory_offset + destination_offset,
+                                            pitch_bytes, value, dwords_per_row, row_count);
+}
+
+openagc_result openagc_gpu_host_dma_write_data(openagc_gpu_device *device,
+                                               openagc_gpu_buffer *source,
+                                               uint64_t source_offset,
+                                               openagc_gpu_buffer *destination,
+                                               uint64_t destination_offset,
+                                               uint32_t dma_bytes,
+                                               uint32_t value,
+                                               uint32_t dword_count)
+{
+    uint64_t source_va;
+    uint64_t destination_va;
+    uint64_t next_address;
+    uint32_t sequence;
+    uint32_t packet_words;
+    uint32_t data[OPENAGC_GPU_WRITE_DATA_MAX_DWORDS];
+    uint32_t i;
+    openagc_result result;
+
+    if (device == NULL || source == NULL || destination == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (source->device != device || destination->device != device) {
+        return OPENAGC_ERROR_OWNERSHIP;
+    }
+    if (source->memory == NULL || destination->memory == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if ((source->usage & OPENAGC_GPU_BUFFER_COPY_SOURCE_BIT) == 0u ||
+        (destination->usage & OPENAGC_GPU_BUFFER_COPY_DESTINATION_BIT) == 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (dma_bytes == 0u || dword_count == 0u ||
+        dword_count > OPENAGC_GPU_WRITE_DATA_MAX_DWORDS ||
+        (uint64_t)dword_count * 4u > (uint64_t)dma_bytes) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if ((source_offset & 3u) != 0u || (destination_offset & 3u) != 0u ||
+        (dma_bytes & 3u) != 0u) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if (source_offset > source->size_bytes ||
+        dma_bytes > source->size_bytes - source_offset ||
+        destination_offset > destination->size_bytes ||
+        dma_bytes > destination->size_bytes - destination_offset) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if (device->write_sequence == UINT32_MAX || device->last_write_words == NULL) {
+        return OPENAGC_ERROR_OVERFLOW;
+    }
+    if (device->write_data_marker_va == 0u) {
+        result = openagc_gpu_reserve_va(device, 4u, &device->write_data_marker_va, &next_address);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+        device->next_synthetic_va = next_address;
+    }
+    sequence = device->write_sequence + 1u;
+    source_va = source->memory->synthetic_va + source->memory_offset + source_offset;
+    destination_va =
+        destination->memory->synthetic_va + destination->memory_offset + destination_offset;
+    openagc_pm4_encode_dma_write_data_eop(source_va, destination_va, dma_bytes, value, dword_count,
+                                          sequence, device->write_data_marker_va,
+                                          device->last_write_words);
+    result = openagc_gpu_memory_write(
+        destination->memory, destination->memory_offset + destination_offset,
+        source->memory->bytes + (size_t)(source->memory_offset + source_offset), dma_bytes);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    for (i = 0u; i < dword_count; ++i) {
+        data[i] = value;
+    }
+    result = openagc_gpu_memory_write(destination->memory,
+                                      destination->memory_offset + destination_offset, data,
+                                      (uint64_t)dword_count * 4u);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    packet_words = OPENAGC_PM4_DMA_WRITE_EOP_WORDS(dword_count);
+    device->last_write_word_count = packet_words;
+    device->write_sequence = sequence;
+    return OPENAGC_OK;
+}
+
 openagc_result openagc_gpu_device_get_last_write(const openagc_gpu_device *device,
                                                  openagc_gpu_submission_view *view)
 {
@@ -649,6 +991,62 @@ openagc_result openagc_gpu_device_get_last_write(const openagc_gpu_device *devic
     view->submission_id = device->write_sequence;
     view->gpu_submitted = 0u;
     view->words = device->last_write_words;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_gpu_device_reserve_synthetic_va(openagc_gpu_device *device,
+                                                       uint64_t size_bytes,
+                                                       uint64_t *out_va)
+{
+    uint64_t next_address;
+    openagc_result result;
+
+    if (device == NULL || out_va == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *out_va = 0u;
+    result = openagc_gpu_reserve_va(device, size_bytes, out_va, &next_address);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    device->next_synthetic_va = next_address;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_gpu_host_graphics_register_eop(openagc_gpu_device *device,
+                                                      const uint32_t *register_words,
+                                                      uint32_t register_dword_count)
+{
+    uint64_t next_address;
+    uint32_t sequence;
+    uint32_t packet_words;
+    openagc_result result;
+
+    if (device == NULL || register_words == NULL || register_dword_count == 0u) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (register_dword_count >
+        OPENAGC_GPU_WRITE_DATA_EOP_WORDS - OPENAGC_PM4_EOP_WITH_NOP_WORDS) {
+        return OPENAGC_ERROR_CAPACITY;
+    }
+    if (device->write_sequence == UINT32_MAX || device->last_write_words == NULL) {
+        return OPENAGC_ERROR_OVERFLOW;
+    }
+    if (device->write_data_marker_va == 0u) {
+        result = openagc_gpu_reserve_va(device, 4u, &device->write_data_marker_va, &next_address);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+        device->next_synthetic_va = next_address;
+    }
+    sequence = device->write_sequence + 1u;
+    memcpy(device->last_write_words, register_words,
+           (size_t)register_dword_count * sizeof(uint32_t));
+    openagc_pm4_encode_eop_with_nops(device->write_data_marker_va, sequence,
+                                     device->last_write_words + register_dword_count);
+    packet_words = register_dword_count + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+    device->last_write_word_count = packet_words;
+    device->write_sequence = sequence;
     return OPENAGC_OK;
 }
 
