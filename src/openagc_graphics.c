@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/graphics.h"
+#include "openagc/pm4_write_fw940.h"
 #include "openagc_gpu_internal.h"
 #include "openagc_graphics_internal.h"
 #include "openagc_shader_internal.h"
@@ -203,6 +204,95 @@ static void openagc_graphics_fill_scissor(openagc_graphics_image *image,
             pixel += OPENAGC_GRAPHICS_PIXEL_BYTES;
         }
     }
+}
+
+/*
+ * Width ≤16 and height ≤8: console-proven WRITE_DATA (Steps D–F).
+ * Contiguous span uses one packet; pitched rows use one packet per row.
+ */
+static int openagc_graphics_scissor_fits_write_data(
+    const openagc_graphics_scissor *scissor)
+{
+    if (scissor->width == 0u || scissor->height == 0u) {
+        return 0;
+    }
+    if (scissor->width > OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS ||
+        scissor->height > OPENAGC_PM4_WRITE_DATA_MAX_ROWS) {
+        return 0;
+    }
+    return 1;
+}
+
+static openagc_result openagc_graphics_clear_scissor_write_data_value(
+    openagc_graphics_image *image, const openagc_graphics_scissor *scissor, uint32_t value)
+{
+    uint64_t offset;
+    uint32_t dwords;
+    uint64_t pixels;
+
+    offset = image->memory_offset +
+             (uint64_t)scissor->y * (uint64_t)image->row_pitch_bytes +
+             (uint64_t)scissor->x * OPENAGC_GRAPHICS_PIXEL_BYTES;
+    dwords = scissor->width;
+    pixels = (uint64_t)scissor->width * (uint64_t)scissor->height;
+    if (scissor->height == 1u ||
+        (scissor->x == 0u &&
+         scissor->width * OPENAGC_GRAPHICS_PIXEL_BYTES == image->row_pitch_bytes &&
+         pixels <= OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS)) {
+        return openagc_gpu_host_write_data_memory(image->device, image->memory, offset, value,
+                                                  (uint32_t)pixels);
+    }
+    return openagc_gpu_host_write_data_rows(image->device, image->memory, offset,
+                                            image->row_pitch_bytes, value, dwords,
+                                            scissor->height);
+}
+
+static int openagc_graphics_clear_uses_write_data(const openagc_graphics_image *image,
+                                                  const openagc_graphics_scissor *scissor)
+{
+    if (image->format != OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM &&
+        image->format != OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM) {
+        return 0;
+    }
+    return openagc_graphics_scissor_fits_write_data(scissor);
+}
+
+static openagc_result openagc_graphics_clear_scissor_write_data(
+    openagc_graphics_image *image, const openagc_graphics_scissor *scissor, openagc_color color)
+{
+    uint8_t texel[OPENAGC_GRAPHICS_PIXEL_BYTES];
+    uint32_t value;
+
+    texel[0] = image->format == OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM ? color.b : color.r;
+    texel[1] = color.g;
+    texel[2] = image->format == OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM ? color.r : color.b;
+    texel[3] = color.a;
+    memcpy(&value, texel, sizeof(value));
+    return openagc_graphics_clear_scissor_write_data_value(image, scissor, value);
+}
+
+static int openagc_graphics_depth_clear_uses_write_data(
+    const openagc_graphics_image *image, const openagc_graphics_scissor *scissor)
+{
+    if (image->format != OPENAGC_GRAPHICS_FORMAT_D24_UNORM_S8_UINT) {
+        return 0;
+    }
+    return openagc_graphics_scissor_fits_write_data(scissor);
+}
+
+static openagc_result openagc_graphics_clear_depth_scissor_write_data(
+    openagc_graphics_image *image, const openagc_graphics_scissor *scissor, uint32_t depth24,
+    uint32_t stencil)
+{
+    uint8_t texel[OPENAGC_GRAPHICS_PIXEL_BYTES];
+    uint32_t value;
+
+    texel[0] = (uint8_t)depth24;
+    texel[1] = (uint8_t)(depth24 >> 8);
+    texel[2] = (uint8_t)(depth24 >> 16);
+    texel[3] = (uint8_t)stencil;
+    memcpy(&value, texel, sizeof(value));
+    return openagc_graphics_clear_scissor_write_data_value(image, scissor, value);
 }
 
 static void openagc_graphics_fill_depth_scissor(openagc_graphics_image *image,
@@ -844,13 +934,33 @@ openagc_result openagc_graphics_command_buffer_execute_host(
         if (command->type == OPENAGC_GRAPHICS_COMMAND_SET_SCISSOR) {
             scissor = command->data.scissor;
         } else if (command->type == OPENAGC_GRAPHICS_COMMAND_CLEAR_COLOR) {
-            openagc_graphics_fill_scissor(command_buffer->target, &scissor,
-                                          command->data.clear);
+            if (openagc_graphics_clear_uses_write_data(command_buffer->target, &scissor) != 0) {
+                openagc_result clear_result = openagc_graphics_clear_scissor_write_data(
+                    command_buffer->target, &scissor, command->data.clear);
+
+                if (clear_result != OPENAGC_OK) {
+                    return clear_result;
+                }
+            } else {
+                openagc_graphics_fill_scissor(command_buffer->target, &scissor,
+                                              command->data.clear);
+            }
             cleared_pixels += (uint64_t)scissor.width * scissor.height;
         } else if (command->type == OPENAGC_GRAPHICS_COMMAND_CLEAR_DEPTH) {
-            openagc_graphics_fill_depth_scissor(command_buffer->depth_target, &scissor,
-                                                command->data.depth.depth24,
-                                                command->data.depth.stencil);
+            if (openagc_graphics_depth_clear_uses_write_data(command_buffer->depth_target,
+                                                             &scissor) != 0) {
+                openagc_result clear_result = openagc_graphics_clear_depth_scissor_write_data(
+                    command_buffer->depth_target, &scissor, command->data.depth.depth24,
+                    command->data.depth.stencil);
+
+                if (clear_result != OPENAGC_OK) {
+                    return clear_result;
+                }
+            } else {
+                openagc_graphics_fill_depth_scissor(command_buffer->depth_target, &scissor,
+                                                    command->data.depth.depth24,
+                                                    command->data.depth.stencil);
+            }
             cleared_pixels += (uint64_t)scissor.width * scissor.height;
         }
     }

@@ -108,6 +108,7 @@ static int test_intake_and_integrity(void)
     CHECK(capabilities.target == OPENAGC_SHADER_TARGET_GFX1013);
     CHECK(capabilities.structural_intake == 1u);
     CHECK(capabilities.compiler_available == 0u && capabilities.gpu_execution == 0u);
+    CHECK(capabilities.host_compute_simulation == 1u);
     CHECK(capabilities.max_code_bytes == 65536u && capabilities.max_bindings == 8u);
     desc.bindings = &binding;
     desc.binding_count = 1u;
@@ -122,6 +123,7 @@ static int test_intake_and_integrity(void)
           info.target == OPENAGC_SHADER_TARGET_GFX1013);
     CHECK(info.code_size == 4u && info.binding_count == 1u);
     CHECK(info.compiler_verified == 0u && info.gpu_executable == 0u);
+    CHECK(info.host_store_const == 0u);
     CHECK(memcmp(info.code_sha256, test_hash, sizeof(test_hash)) == 0);
 
     code[0] = 'X';

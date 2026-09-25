@@ -162,6 +162,48 @@ openagc_result openagc_gpu_memory_read(const openagc_gpu_memory *memory,
 openagc_result openagc_gpu_buffer_read(const openagc_gpu_buffer *buffer,
                                        uint64_t offset, void *data,
                                        uint64_t size_bytes);
+openagc_result openagc_gpu_buffer_write(openagc_gpu_buffer *buffer, uint64_t offset,
+                                        const void *data, uint64_t size_bytes);
+
+/*
+ * Host-only store-const: encode the FW9.40 compute PM4 packet (51 dwords) and
+ * write 0xA5A5A5A5 into destination. Does not open a compute queue or set
+ * gpu_execution. Inspect with openagc_gpu_device_get_last_compute.
+ */
+openagc_result openagc_gpu_host_store_const(openagc_gpu_device *device,
+                                            openagc_gpu_buffer *destination,
+                                            uint64_t destination_offset);
+openagc_result openagc_gpu_device_get_last_compute(const openagc_gpu_device *device,
+                                                   openagc_gpu_submission_view *view);
+
+/*
+ * Host-only WRITE_DATA fill: encode the FW9.40 CP WRITE_DATA+EOP packet
+ * (console-proven Step D for one dword; Step E extends to N dwords up to
+ * a 4x4 RGBA8 tile) and write the pattern. Does not set gpu_execution.
+ * Inspect with openagc_gpu_device_get_last_write.
+ * Memory form is used by graphics color clears of contiguous tiles;
+ * buffer form requires COPY_DESTINATION usage.
+ */
+openagc_result openagc_gpu_host_write_data_memory(openagc_gpu_device *device,
+                                                  openagc_gpu_memory *memory,
+                                                  uint64_t memory_offset,
+                                                  uint32_t value,
+                                                  uint32_t dword_count);
+/* One WRITE_DATA per row (pitch stride) then one EOP; ≤ MAX_ROWS × ≤16 dwords. */
+openagc_result openagc_gpu_host_write_data_rows(openagc_gpu_device *device,
+                                                openagc_gpu_memory *memory,
+                                                uint64_t memory_offset,
+                                                uint32_t pitch_bytes,
+                                                uint32_t value,
+                                                uint32_t dwords_per_row,
+                                                uint32_t row_count);
+openagc_result openagc_gpu_host_write_data(openagc_gpu_device *device,
+                                           openagc_gpu_buffer *destination,
+                                           uint64_t destination_offset,
+                                           uint32_t value,
+                                           uint32_t dword_count);
+openagc_result openagc_gpu_device_get_last_write(const openagc_gpu_device *device,
+                                                 openagc_gpu_submission_view *view);
 
 openagc_result openagc_gpu_buffer_create(openagc_gpu_device *device,
                                          const openagc_gpu_buffer_desc *desc,

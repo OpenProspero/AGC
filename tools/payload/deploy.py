@@ -19,6 +19,7 @@ import socket
 import sys
 import time
 import urllib.request
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -26,21 +27,13 @@ from validate_elf import validate  # noqa: E402 - local module by design
 
 
 def push(path: str, host: str, port: int) -> int:
+    # Same contract as prospero-deploy / netcat: write the ELF bytes and close.
     with open(path, "rb") as handle:
         payload = handle.read()
     print(f"push: {len(payload)} bytes to {host}:{port}")
-    with socket.create_connection((host, port), timeout=10) as sock:
+    with socket.create_connection((host, port), timeout=30) as sock:
         sock.sendall(payload)
-        try:
-            sock.shutdown(socket.SHUT_WR)
-        except OSError:
-            pass
-        sock.settimeout(5)
-        try:
-            response = sock.recv(4096)
-        except (socket.timeout, OSError):
-            response = b""
-    print(f"push: loader response {response!r}")
+    print("push: closed")
     return 0
 
 
@@ -60,7 +53,7 @@ def fetch_log(host: str, port: int, remote: str) -> bytes:
         return b""
 
 
-def read_klog(host: str, port: int, seconds: float, sock: socket.socket | None = None) -> bytes:
+def read_klog(host: str, port: int, seconds: float, sock: Optional[socket.socket] = None) -> bytes:
     """Drain the live klog stream, optionally on an already-open socket."""
     if sock is None:
         print(f"klog: connecting to {host}:{port}")

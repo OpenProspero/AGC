@@ -2,6 +2,7 @@
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/opengl.h"
 #include "openagc/vulkan.h"
+#include "openagc/store_const_code.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -1224,10 +1225,9 @@ static int test_same_backend_state(void)
 
                 EXPECT(openagc_vk_cmd_clear_attachments(commands, pixel_clear), OPENAGC_OK);
                 EXPECT(openagc_vk_cmd_end_render_pass(commands), OPENAGC_OK);
+                /* Load/clear pixel writes wait for queue submit. */
                 EXPECT(openagc_vk_image_readback(target, 0u, pixel, sizeof(pixel)), OPENAGC_OK);
-                EXPECT(openagc_vk_image_readback(target, 4u, neighbor, sizeof(neighbor)),
-                       OPENAGC_OK);
-                CHECK(pixel[0] == 0xaau && neighbor[0] == 0x55u);
+                CHECK(pixel[0] == 0x11u && pixel[3] == 0x44u);
             }
             EXPECT(openagc_vk_cmd_begin_render_pass(commands, vk_pass), OPENAGC_OK);
         }
@@ -1238,6 +1238,16 @@ static int test_same_backend_state(void)
         EXPECT(openagc_vk_get_query(occlusion, 0u, &available), OPENAGC_ERROR_NOT_READY);
         EXPECT(openagc_vk_cmd_end_render_pass(commands), OPENAGC_OK);
         EXPECT(openagc_vk_command_buffer_end(commands), OPENAGC_OK);
+        EXPECT(openagc_vk_queue_submit_commands(device, commands, NULL), OPENAGC_OK);
+        {
+            uint8_t pixel[4] = { 0u, 0u, 0u, 0u };
+            uint8_t neighbor[4] = { 0u, 0u, 0u, 0u };
+
+            EXPECT(openagc_vk_image_readback(target, 0u, pixel, sizeof(pixel)), OPENAGC_OK);
+            EXPECT(openagc_vk_image_readback(target, 4u, neighbor, sizeof(neighbor)),
+                   OPENAGC_OK);
+            CHECK(pixel[0] == 0xaau && neighbor[0] == 0x55u);
+        }
         EXPECT(openagc_vk_create_query_pool(device, OPENAGC_FRONTEND_QUERY_TIMESTAMP, 1u,
                                             &timestamps),
                OPENAGC_OK);
@@ -1328,25 +1338,35 @@ static int test_same_backend_state(void)
 
             EXPECT(openagc_vk_image_readback(target, 0u, color_before, sizeof(color_before)),
                    OPENAGC_OK);
-            EXPECT(openagc_vk_command_buffer_begin(commands), OPENAGC_OK);
-            EXPECT(openagc_vk_cmd_begin_render_pass_with_depth(
-                       commands, vk_pass, OPENAGC_FRONTEND_LOAD_OP_LOAD, keep,
-                       OPENAGC_FRONTEND_LOAD_OP_CLEAR, 1.f, 0x5au),
-                   OPENAGC_OK);
             EXPECT(openagc_vk_image_readback(depth, 0u, packed, sizeof(packed)), OPENAGC_OK);
-            CHECK(packed[0] == 0xffu && packed[1] == 0xffu && packed[2] == 0xffu &&
-                  packed[3] == 0x5au);
-            CHECK(packed[4] == 0xffu && packed[7] == 0x5au);
-            EXPECT(openagc_vk_cmd_set_scissor(commands, 0u, 0u, 1u, 1u), OPENAGC_OK);
-            EXPECT(openagc_vk_cmd_clear_depth(commands, 0.f, 0u), OPENAGC_OK);
-            EXPECT(openagc_vk_image_readback(depth, 0u, packed, sizeof(packed)), OPENAGC_OK);
-            CHECK(packed[0] == 0u && packed[1] == 0u && packed[2] == 0u && packed[3] == 0u);
-            CHECK(packed[4] == 0xffu && packed[7] == 0x5au);
-            EXPECT(openagc_vk_image_readback(target, 0u, color_after, sizeof(color_after)),
-                   OPENAGC_OK);
-            CHECK(memcmp(color_before, color_after, sizeof(color_before)) == 0);
-            EXPECT(openagc_vk_cmd_end_render_pass(commands), OPENAGC_OK);
-            EXPECT(openagc_vk_command_buffer_end(commands), OPENAGC_OK);
+            {
+                uint8_t depth_before[8];
+
+                memcpy(depth_before, packed, sizeof(depth_before));
+                EXPECT(openagc_vk_command_buffer_begin(commands), OPENAGC_OK);
+                EXPECT(openagc_vk_cmd_begin_render_pass_with_depth(
+                           commands, vk_pass, OPENAGC_FRONTEND_LOAD_OP_LOAD, keep,
+                           OPENAGC_FRONTEND_LOAD_OP_CLEAR, 1.f, 0x5au),
+                       OPENAGC_OK);
+                EXPECT(openagc_vk_image_readback(depth, 0u, packed, sizeof(packed)), OPENAGC_OK);
+                CHECK(memcmp(packed, depth_before, sizeof(packed)) == 0);
+                EXPECT(openagc_vk_cmd_set_scissor(commands, 0u, 0u, 1u, 1u), OPENAGC_OK);
+                EXPECT(openagc_vk_cmd_clear_depth(commands, 0.f, 0u), OPENAGC_OK);
+                EXPECT(openagc_vk_image_readback(depth, 0u, packed, sizeof(packed)), OPENAGC_OK);
+                CHECK(memcmp(packed, depth_before, sizeof(packed)) == 0);
+                EXPECT(openagc_vk_image_readback(target, 0u, color_after, sizeof(color_after)),
+                       OPENAGC_OK);
+                CHECK(memcmp(color_before, color_after, sizeof(color_before)) == 0);
+                EXPECT(openagc_vk_cmd_end_render_pass(commands), OPENAGC_OK);
+                EXPECT(openagc_vk_command_buffer_end(commands), OPENAGC_OK);
+                EXPECT(openagc_vk_queue_submit_commands(device, commands, NULL), OPENAGC_OK);
+                EXPECT(openagc_vk_image_readback(depth, 0u, packed, sizeof(packed)), OPENAGC_OK);
+                CHECK(packed[0] == 0u && packed[1] == 0u && packed[2] == 0u && packed[3] == 0u);
+                CHECK(packed[4] == 0xffu && packed[7] == 0x5au);
+                EXPECT(openagc_vk_image_readback(target, 0u, color_after, sizeof(color_after)),
+                       OPENAGC_OK);
+                CHECK(memcmp(color_before, color_after, sizeof(color_before)) == 0);
+            }
         }
         EXPECT(openagc_vk_destroy_image(depth), OPENAGC_ERROR_BUSY);
         EXPECT(openagc_vk_render_pass_attach_depth(vk_pass, NULL), OPENAGC_OK);
@@ -1403,9 +1423,279 @@ static int test_same_backend_state(void)
     return 0;
 }
 
+static int test_copy_and_fill_equivalence(void)
+{
+    openagc_vk_instance_desc instance_desc = OPENAGC_VK_INSTANCE_DESC_INIT;
+    openagc_vk_device_desc device_desc = OPENAGC_VK_DEVICE_DESC_INIT;
+    openagc_vk_command_pool_desc pool_desc = OPENAGC_VK_COMMAND_POOL_DESC_INIT;
+    openagc_gl_context_desc gl_desc = OPENAGC_GL_CONTEXT_DESC_INIT;
+    openagc_gl_image_desc gl_image_desc = OPENAGC_GL_IMAGE_DESC_INIT(OPENAGC_GL_RGBA8, 4u, 4u);
+    openagc_vk_buffer_desc vk_buffer_desc = OPENAGC_VK_BUFFER_DESC_INIT(
+        OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+            OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        64u);
+    openagc_vk_image_desc vk_image_desc = OPENAGC_VK_IMAGE_DESC_INIT(
+        OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+        OPENAGC_FRONTEND_VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        OPENAGC_FRONTEND_VK_IMAGE_LAYOUT_UNDEFINED, 4u, 4u);
+    openagc_vk_instance *instance = NULL;
+    openagc_vk_device *device = NULL;
+    openagc_vk_command_pool *pool = NULL;
+    openagc_vk_command_buffer *commands = NULL;
+    openagc_vk_buffer *input = NULL;
+    openagc_vk_buffer *scratch = NULL;
+    openagc_vk_image *source = NULL;
+    openagc_vk_image *destination = NULL;
+    openagc_gl_context *gl = NULL;
+    openagc_gl_texture *source_texture = NULL;
+    openagc_gl_texture *destination_texture = NULL;
+    openagc_gl_framebuffer *framebuffer = NULL;
+    openagc_gl_buffer *pack = NULL;
+    uint8_t pattern[64];
+    uint8_t vk_pixels[64];
+    uint8_t gl_pixels[64];
+    uint8_t vk_words[16];
+    uint8_t gl_words[16];
+    uint32_t value = 0x11223344u;
+    uint32_t index;
+    uint32_t observed;
+
+    for (index = 0u; index < sizeof(pattern); ++index) {
+        pattern[index] = (uint8_t)(index + 1u);
+    }
+    EXPECT(openagc_vk_instance_create(&instance_desc, &instance), OPENAGC_OK);
+    EXPECT(openagc_vk_device_create(instance, &device_desc, &device), OPENAGC_OK);
+    EXPECT(openagc_vk_create_command_pool(device, &pool_desc, &pool), OPENAGC_OK);
+    EXPECT(openagc_vk_create_buffer(device, &vk_buffer_desc, &input), OPENAGC_OK);
+    EXPECT(openagc_vk_create_buffer(device, &vk_buffer_desc, &scratch), OPENAGC_OK);
+    EXPECT(openagc_vk_buffer_upload(input, 0u, pattern, sizeof(pattern)), OPENAGC_OK);
+    EXPECT(openagc_vk_create_image(device, &vk_image_desc, &source), OPENAGC_OK);
+    EXPECT(openagc_vk_create_image(device, &vk_image_desc, &destination), OPENAGC_OK);
+    EXPECT(openagc_vk_allocate_command_buffer(pool, &commands), OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_begin(commands), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_copy_buffer_to_image(commands, input, 0u, source, 0u, sizeof(pattern)),
+           OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_copy_image(commands, source, 0u, 0u, destination, 1u, 1u, 2u, 2u),
+           OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_fill_buffer(commands, scratch, 0u, sizeof(vk_words), value), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_copy_buffer(commands, input, 0u, scratch, 16u, 16u), OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_end(commands), OPENAGC_OK);
+    EXPECT(openagc_vk_queue_submit_commands(device, commands, NULL), OPENAGC_OK);
+
+    EXPECT(openagc_gl_context_create(&gl_desc, &gl), OPENAGC_OK);
+    EXPECT(openagc_gl_create_texture(gl, &gl_image_desc, &source_texture), OPENAGC_OK);
+    EXPECT(openagc_gl_create_texture(gl, &gl_image_desc, &destination_texture), OPENAGC_OK);
+    EXPECT(openagc_gl_tex_sub_image(source_texture, 0u, pattern, sizeof(pattern)), OPENAGC_OK);
+    EXPECT(openagc_gl_create_framebuffer(gl, &framebuffer), OPENAGC_OK);
+    EXPECT(openagc_gl_framebuffer_texture(framebuffer, source_texture), OPENAGC_OK);
+    EXPECT(openagc_gl_copy_tex_sub_image(framebuffer, destination_texture, 1u, 1u, 0u, 0u, 2u, 2u),
+           OPENAGC_OK);
+    EXPECT(openagc_gl_create_buffer(gl, OPENAGC_GL_PIXEL_PACK_BUFFER, 64u, &pack), OPENAGC_OK);
+    EXPECT(openagc_gl_clear_buffer_sub_data(pack, 0u, sizeof(gl_words), value), OPENAGC_OK);
+    {
+        openagc_gl_buffer *gl_src = NULL;
+        openagc_gl_buffer *gl_dst = NULL;
+        uint8_t vk_copy[16];
+        uint8_t gl_copy[16];
+
+        EXPECT(openagc_gl_create_buffer(gl, OPENAGC_GL_PIXEL_UNPACK_BUFFER, 64u, &gl_src),
+               OPENAGC_OK);
+        EXPECT(openagc_gl_create_buffer(gl, OPENAGC_GL_PIXEL_PACK_BUFFER, 64u, &gl_dst),
+               OPENAGC_OK);
+        EXPECT(openagc_gl_buffer_data(gl_src, 0u, pattern, sizeof(pattern)), OPENAGC_OK);
+        EXPECT(openagc_gl_copy_buffer_sub_data(gl_src, 0u, gl_dst, 0u, 16u), OPENAGC_OK);
+        memset(vk_copy, 0, sizeof(vk_copy));
+        memset(gl_copy, 0, sizeof(gl_copy));
+        EXPECT(openagc_vk_buffer_readback(scratch, 16u, vk_copy, sizeof(vk_copy)), OPENAGC_OK);
+        EXPECT(openagc_gl_get_buffer_sub_data(gl_dst, 0u, gl_copy, sizeof(gl_copy)), OPENAGC_OK);
+        CHECK(memcmp(vk_copy, gl_copy, sizeof(vk_copy)) == 0);
+        CHECK(memcmp(vk_copy, pattern, sizeof(vk_copy)) == 0);
+        EXPECT(openagc_gl_destroy_buffer(gl_src), OPENAGC_OK);
+        EXPECT(openagc_gl_destroy_buffer(gl_dst), OPENAGC_OK);
+    }
+
+    memset(vk_words, 0, sizeof(vk_words));
+    memset(gl_words, 0, sizeof(gl_words));
+    EXPECT(openagc_vk_buffer_readback(scratch, 0u, vk_words, sizeof(vk_words)), OPENAGC_OK);
+    EXPECT(openagc_gl_get_buffer_sub_data(pack, 0u, gl_words, sizeof(gl_words)), OPENAGC_OK);
+    CHECK(memcmp(vk_words, gl_words, sizeof(vk_words)) == 0);
+    for (index = 0u; index < 4u; ++index) {
+        memcpy(&observed, vk_words + index * 4u, 4u);
+        CHECK(observed == value);
+    }
+
+    {
+        uint8_t inline_bytes[16];
+        uint8_t before[16];
+        uint8_t vk_inline[16];
+        uint8_t gl_inline[16];
+        openagc_gl_buffer *gl_uniform = NULL;
+        uint32_t byte;
+
+        for (byte = 0u; byte < sizeof(inline_bytes); ++byte) {
+            inline_bytes[byte] = (uint8_t)(0xc0u + byte);
+        }
+        EXPECT(openagc_vk_buffer_readback(scratch, 32u, before, sizeof(before)), OPENAGC_OK);
+        EXPECT(openagc_vk_command_buffer_begin(commands), OPENAGC_OK);
+        EXPECT(openagc_vk_cmd_update_buffer(commands, scratch, 32u, inline_bytes,
+                                            sizeof(inline_bytes)),
+               OPENAGC_OK);
+        EXPECT(openagc_vk_command_buffer_end(commands), OPENAGC_OK);
+        memset(vk_inline, 0, sizeof(vk_inline));
+        EXPECT(openagc_vk_buffer_readback(scratch, 32u, vk_inline, sizeof(vk_inline)),
+               OPENAGC_OK);
+        /* UpdateBuffer is deferred like copies; bytes stay unchanged until submit. */
+        CHECK(memcmp(vk_inline, before, sizeof(before)) == 0);
+        EXPECT(openagc_vk_queue_submit_commands(device, commands, NULL), OPENAGC_OK);
+        EXPECT(openagc_gl_create_buffer(gl, OPENAGC_GL_UNIFORM_BUFFER, 64u, &gl_uniform),
+               OPENAGC_OK);
+        EXPECT(openagc_gl_buffer_sub_data(gl_uniform, 0u, inline_bytes, sizeof(inline_bytes)),
+               OPENAGC_OK);
+        memset(vk_inline, 0, sizeof(vk_inline));
+        memset(gl_inline, 0, sizeof(gl_inline));
+        EXPECT(openagc_vk_buffer_readback(scratch, 32u, vk_inline, sizeof(vk_inline)),
+               OPENAGC_OK);
+        EXPECT(openagc_gl_get_buffer_sub_data(gl_uniform, 0u, gl_inline, sizeof(gl_inline)),
+               OPENAGC_OK);
+        CHECK(memcmp(vk_inline, inline_bytes, sizeof(inline_bytes)) == 0);
+        CHECK(memcmp(gl_inline, inline_bytes, sizeof(inline_bytes)) == 0);
+        EXPECT(openagc_gl_destroy_buffer(gl_uniform), OPENAGC_OK);
+    }
+
+    memset(vk_pixels, 0, sizeof(vk_pixels));
+    memset(gl_pixels, 0, sizeof(gl_pixels));
+    EXPECT(openagc_vk_image_readback(destination, 0u, vk_pixels, sizeof(vk_pixels)), OPENAGC_OK);
+    EXPECT(openagc_gl_get_tex_image(destination_texture, 0u, gl_pixels, sizeof(gl_pixels)),
+           OPENAGC_OK);
+    CHECK(memcmp(vk_pixels, gl_pixels, sizeof(vk_pixels)) == 0);
+    CHECK(vk_pixels[20] == 1u && vk_pixels[27] == 8u);
+    CHECK(vk_pixels[36] == 17u && vk_pixels[43] == 24u);
+    CHECK(vk_pixels[19] == 0u && vk_pixels[28] == 0u);
+
+    EXPECT(openagc_gl_destroy_buffer(pack), OPENAGC_OK);
+    EXPECT(openagc_gl_destroy_framebuffer(framebuffer), OPENAGC_OK);
+    EXPECT(openagc_gl_destroy_texture(destination_texture), OPENAGC_OK);
+    EXPECT(openagc_gl_destroy_texture(source_texture), OPENAGC_OK);
+    EXPECT(openagc_gl_context_destroy(gl), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_command_buffer(commands), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_command_pool(pool), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_image(destination), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_image(source), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_buffer(scratch), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_buffer(input), OPENAGC_OK);
+    EXPECT(openagc_vk_device_destroy(device), OPENAGC_OK);
+    EXPECT(openagc_vk_instance_destroy(instance), OPENAGC_OK);
+    return 0;
+}
+
+static int test_store_const_dispatch_equivalence(void)
+{
+    openagc_vk_instance_desc instance_desc = OPENAGC_VK_INSTANCE_DESC_INIT;
+    openagc_vk_device_desc device_desc = OPENAGC_VK_DEVICE_DESC_INIT;
+    openagc_vk_command_pool_desc pool_desc = OPENAGC_VK_COMMAND_POOL_DESC_INIT;
+    openagc_gl_context_desc gl_desc = OPENAGC_GL_CONTEXT_DESC_INIT;
+    openagc_shader_artifact_desc artifact = OPENAGC_SHADER_ARTIFACT_DESC_INIT;
+    openagc_shader_binding_decl binding = {
+        0u, 0u, OPENAGC_SHADER_BINDING_UNIFORM_BUFFER, 4u
+    };
+    openagc_vk_buffer_desc buffer_desc = OPENAGC_VK_BUFFER_DESC_INIT(
+        OPENAGC_FRONTEND_VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+            OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+            OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        16u);
+    uint8_t code_hash[32] = {
+        0x48, 0x47, 0x46, 0xd3, 0x32, 0x1b, 0x61, 0x85, 0x50, 0xe2, 0x6e, 0x5a, 0xb5, 0xa2,
+        0xde, 0x56, 0x4d, 0x76, 0xf8, 0x6a, 0x61, 0x15, 0x72, 0x0b, 0x20, 0x1a, 0x39, 0x05,
+        0xe8, 0x27, 0xd2, 0xe5
+    };
+    openagc_vk_instance *instance = NULL;
+    openagc_vk_device *device = NULL;
+    openagc_vk_command_pool *pool = NULL;
+    openagc_vk_command_buffer *commands = NULL;
+    openagc_vk_buffer *vk_buffer = NULL;
+    openagc_vk_pipeline *vk_pipeline = NULL;
+    openagc_vk_descriptor_set *descriptors = NULL;
+    openagc_gl_context *gl = NULL;
+    openagc_gl_buffer *gl_buffer = NULL;
+    openagc_gl_program *gl_program = NULL;
+    uint32_t vk_word = 0u;
+    uint32_t gl_word = 0u;
+    uint8_t zeros[16];
+
+    memset(zeros, 0, sizeof(zeros));
+    artifact.stage = OPENAGC_SHADER_STAGE_COMPUTE;
+    artifact.code = openagc_store_const_code;
+    artifact.code_size = OPENAGC_STORE_CONST_CODE_SIZE;
+    artifact.bindings = &binding;
+    artifact.binding_count = 1u;
+    artifact.workgroup_x = 1u;
+    artifact.workgroup_y = 1u;
+    artifact.workgroup_z = 1u;
+    memcpy(artifact.code_sha256, code_hash, sizeof(code_hash));
+
+    EXPECT(openagc_vk_instance_create(&instance_desc, &instance), OPENAGC_OK);
+    EXPECT(openagc_vk_device_create(instance, &device_desc, &device), OPENAGC_OK);
+    EXPECT(openagc_vk_create_command_pool(device, &pool_desc, &pool), OPENAGC_OK);
+    EXPECT(openagc_vk_allocate_command_buffer(pool, &commands), OPENAGC_OK);
+    EXPECT(openagc_gl_context_create(&gl_desc, &gl), OPENAGC_OK);
+
+    EXPECT(openagc_vk_create_buffer(device, &buffer_desc, &vk_buffer), OPENAGC_OK);
+    EXPECT(openagc_gl_create_buffer(gl, OPENAGC_GL_UNIFORM_BUFFER, 16u, &gl_buffer), OPENAGC_OK);
+    EXPECT(openagc_vk_buffer_upload(vk_buffer, 0u, zeros, sizeof(zeros)), OPENAGC_OK);
+    EXPECT(openagc_gl_buffer_data(gl_buffer, 0u, zeros, sizeof(zeros)), OPENAGC_OK);
+
+    EXPECT(openagc_vk_create_compute_pipeline_with_bindings(
+               device, &artifact, vk_buffer, 0u, 16u, 0u, NULL, 0u, &vk_pipeline),
+           OPENAGC_OK);
+    EXPECT(openagc_gl_create_program_with_bindings(gl, &artifact, gl_buffer, 0u, 16u, 0u, NULL, 0u,
+                                                   &gl_program),
+           OPENAGC_OK);
+
+    EXPECT(openagc_vk_create_descriptor_set_for_pipeline(device, vk_pipeline, &descriptors),
+           OPENAGC_OK);
+    EXPECT(openagc_vk_update_descriptor_buffer_range(descriptors, vk_buffer, 0u, 0u, 16u),
+           OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_begin(commands), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_bind_compute_pipeline(commands, vk_pipeline), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_bind_descriptor_set(commands, descriptors), OPENAGC_OK);
+    EXPECT(openagc_vk_cmd_dispatch(commands, 2u, 1u, 1u), OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_vk_cmd_dispatch(commands, 1u, 1u, 1u), OPENAGC_OK);
+    EXPECT(openagc_vk_command_buffer_end(commands), OPENAGC_OK);
+    EXPECT(openagc_vk_buffer_readback(vk_buffer, 0u, &vk_word, sizeof(vk_word)), OPENAGC_OK);
+    CHECK(vk_word == 0u);
+    EXPECT(openagc_vk_queue_submit_commands(device, commands, NULL), OPENAGC_OK);
+
+    EXPECT(openagc_gl_use_program(gl, gl_program), OPENAGC_OK);
+    EXPECT(openagc_gl_bind_uniform_range(gl, 0u, gl_buffer, 0u, 16u), OPENAGC_OK);
+    EXPECT(openagc_gl_dispatch_compute(gl, 2u, 1u, 1u), OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_gl_dispatch_compute(gl, 1u, 1u, 1u), OPENAGC_OK);
+    EXPECT(openagc_gl_bind_uniform_base(gl, 0u, NULL), OPENAGC_OK);
+    EXPECT(openagc_gl_use_program(gl, NULL), OPENAGC_OK);
+
+    EXPECT(openagc_vk_buffer_readback(vk_buffer, 0u, &vk_word, sizeof(vk_word)), OPENAGC_OK);
+    EXPECT(openagc_gl_get_buffer_sub_data(gl_buffer, 0u, &gl_word, sizeof(gl_word)), OPENAGC_OK);
+    CHECK(vk_word == OPENAGC_STORE_CONST_VALUE);
+    CHECK(gl_word == OPENAGC_STORE_CONST_VALUE);
+    CHECK(vk_word == gl_word);
+
+    EXPECT(openagc_vk_destroy_descriptor_set(descriptors), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_pipeline(vk_pipeline), OPENAGC_OK);
+    EXPECT(openagc_gl_destroy_program(gl_program), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_buffer(vk_buffer), OPENAGC_OK);
+    EXPECT(openagc_gl_destroy_buffer(gl_buffer), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_command_buffer(commands), OPENAGC_OK);
+    EXPECT(openagc_vk_destroy_command_pool(pool), OPENAGC_OK);
+    EXPECT(openagc_gl_context_destroy(gl), OPENAGC_OK);
+    EXPECT(openagc_vk_device_destroy(device), OPENAGC_OK);
+    EXPECT(openagc_vk_instance_destroy(instance), OPENAGC_OK);
+    return 0;
+}
+
 int main(void)
 {
-    if (test_same_backend_state() != 0) {
+    if (test_same_backend_state() != 0 ||
+        test_copy_and_fill_equivalence() != 0 ||
+        test_store_const_dispatch_equivalence() != 0) {
         return 1;
     }
     puts("OpenAGC Vulkan and OpenGL share one backend");

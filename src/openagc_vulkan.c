@@ -61,7 +61,7 @@ struct openagc_vk_image_view {
     uint32_t descriptor_count;
 };
 
-#define OPENAGC_VK_MAX_COMMANDS 8u
+#define OPENAGC_VK_MAX_COMMANDS 16u
 
 typedef enum openagc_vk_command_kind {
     OPENAGC_VK_COMMAND_COPY = 1u,
@@ -71,7 +71,11 @@ typedef enum openagc_vk_command_kind {
     OPENAGC_VK_COMMAND_COPY_FROM_IMAGE = 5u,
     OPENAGC_VK_COMMAND_COPY_IMAGE = 6u,
     OPENAGC_VK_COMMAND_FILL_BUFFER = 7u,
-    OPENAGC_VK_COMMAND_UPDATE_BUFFER = 8u
+    OPENAGC_VK_COMMAND_UPDATE_BUFFER = 8u,
+    OPENAGC_VK_COMMAND_DISPATCH = 9u,
+    OPENAGC_VK_COMMAND_BEGIN_RENDER_PASS = 10u,
+    OPENAGC_VK_COMMAND_CLEAR_ATTACHMENTS = 11u,
+    OPENAGC_VK_COMMAND_CLEAR_DEPTH = 12u
 } openagc_vk_command_kind;
 
 typedef struct openagc_vk_command {
@@ -80,6 +84,8 @@ typedef struct openagc_vk_command {
     openagc_vk_buffer *destination;
     openagc_vk_image *image;
     openagc_vk_image *destination_image;
+    openagc_vk_pipeline *compute;
+    openagc_vk_render_pass *render_pass;
     uint64_t source_offset;
     uint64_t destination_offset;
     uint64_t size_bytes;
@@ -92,6 +98,13 @@ typedef struct openagc_vk_command {
     uint32_t width;
     uint32_t height;
     uint32_t fill_value;
+    uint32_t groups_x;
+    uint32_t groups_y;
+    uint32_t groups_z;
+    openagc_frontend_load_op color_op;
+    openagc_frontend_load_op depth_op;
+    float depth;
+    uint32_t stencil;
     uint32_t inline_size;
     uint8_t inline_bytes[OPENAGC_VK_MAX_UPDATE_BYTES];
 } openagc_vk_command;
@@ -1535,6 +1548,38 @@ openagc_result openagc_vk_queue_submit_commands(openagc_vk_device *device,
                                                     command->destination_offset,
                                                     command->inline_bytes,
                                                     command->inline_size);
+        } else if (command->kind == OPENAGC_VK_COMMAND_DISPATCH) {
+            if (command->compute == NULL || command->compute->pipeline == NULL) {
+                result = OPENAGC_ERROR_BAD_STATE;
+            } else {
+                result = openagc_frontend_dispatch(command->compute->pipeline, command->groups_x,
+                                                   command->groups_y, command->groups_z);
+            }
+        } else if (command->kind == OPENAGC_VK_COMMAND_BEGIN_RENDER_PASS) {
+            if (command->render_pass == NULL || command->render_pass->pass == NULL) {
+                result = OPENAGC_ERROR_BAD_STATE;
+            } else {
+                result = openagc_frontend_render_pass_apply_loads(
+                    command->render_pass->pass, command->color_op, command->color,
+                    command->depth_op, command->depth, command->stencil);
+            }
+        } else if (command->kind == OPENAGC_VK_COMMAND_CLEAR_ATTACHMENTS) {
+            if (command->render_pass == NULL || command->render_pass->pass == NULL) {
+                result = OPENAGC_ERROR_BAD_STATE;
+            } else {
+                result = openagc_frontend_render_pass_clear_rect(
+                    command->render_pass->pass, command->color, command->destination_x,
+                    command->destination_y, command->width, command->height);
+            }
+        } else if (command->kind == OPENAGC_VK_COMMAND_CLEAR_DEPTH) {
+            if (command->render_pass == NULL || command->render_pass->pass == NULL) {
+                result = OPENAGC_ERROR_BAD_STATE;
+            } else {
+                result = openagc_frontend_render_pass_clear_depth_rect(
+                    command->render_pass->pass, command->depth, command->stencil,
+                    command->destination_x, command->destination_y, command->width,
+                    command->height);
+            }
         } else {
             openagc_graphics_image_state state;
             openagc_graphics_owner owner;
@@ -2216,6 +2261,9 @@ openagc_result openagc_vk_cmd_dispatch(openagc_vk_command_buffer *command_buffer
                                        uint32_t groups_x, uint32_t groups_y,
                                        uint32_t groups_z)
 {
+    openagc_vk_command command;
+    openagc_result result;
+
     if (command_buffer == NULL) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
@@ -2241,8 +2289,21 @@ openagc_result openagc_vk_cmd_dispatch(openagc_vk_command_buffer *command_buffer
             return OPENAGC_ERROR_BAD_STATE;
         }
     }
-    return openagc_frontend_dispatch(command_buffer->compute->pipeline, groups_x, groups_y,
-                                    groups_z);
+    result = openagc_frontend_dispatch_validate(command_buffer->compute->pipeline, groups_x,
+                                                groups_y, groups_z);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (groups_x == 0u || groups_y == 0u || groups_z == 0u) {
+        return OPENAGC_OK;
+    }
+    memset(&command, 0, sizeof(command));
+    command.kind = OPENAGC_VK_COMMAND_DISPATCH;
+    command.compute = command_buffer->compute;
+    command.groups_x = groups_x;
+    command.groups_y = groups_y;
+    command.groups_z = groups_z;
+    return openagc_vk_push(command_buffer, &command);
 }
 
 openagc_result openagc_vk_create_render_pass(openagc_vk_device *device,
@@ -2310,23 +2371,8 @@ openagc_result openagc_vk_cmd_begin_render_pass_with_load(
     openagc_vk_command_buffer *command_buffer, openagc_vk_render_pass *pass,
     openagc_frontend_load_op load_op, openagc_color color)
 {
-    openagc_result result;
-
-    if (command_buffer == NULL || pass == NULL) {
-        return OPENAGC_ERROR_INVALID_ARGUMENT;
-    }
-    if (command_buffer->recording == 0u || command_buffer->pass != NULL) {
-        return OPENAGC_ERROR_BAD_STATE;
-    }
-    if (pass->device != command_buffer->pool->device) {
-        return OPENAGC_ERROR_OWNERSHIP;
-    }
-    result = openagc_frontend_render_pass_begin_with_load(pass->pass, load_op, color);
-    if (result != OPENAGC_OK) {
-        return result;
-    }
-    command_buffer->pass = pass;
-    return OPENAGC_OK;
+    return openagc_vk_cmd_begin_render_pass_with_depth(
+        command_buffer, pass, load_op, color, OPENAGC_FRONTEND_LOAD_OP_LOAD, 0.f, 0u);
 }
 
 openagc_result openagc_vk_cmd_begin_render_pass_with_depth(
@@ -2334,6 +2380,7 @@ openagc_result openagc_vk_cmd_begin_render_pass_with_depth(
     openagc_frontend_load_op color_op, openagc_color color, openagc_frontend_load_op depth_op,
     float depth, uint32_t stencil)
 {
+    openagc_vk_command command;
     openagc_result result;
 
     if (command_buffer == NULL || pass == NULL) {
@@ -2345,9 +2392,22 @@ openagc_result openagc_vk_cmd_begin_render_pass_with_depth(
     if (pass->device != command_buffer->pool->device) {
         return OPENAGC_ERROR_OWNERSHIP;
     }
-    result = openagc_frontend_render_pass_begin_with_depth(pass->pass, color_op, color, depth_op,
-                                                           depth, stencil);
+    result = openagc_frontend_render_pass_begin_validate_with_depth(pass->pass, color_op, depth_op,
+                                                                    depth, stencil);
     if (result != OPENAGC_OK) {
+        return result;
+    }
+    memset(&command, 0, sizeof(command));
+    command.kind = OPENAGC_VK_COMMAND_BEGIN_RENDER_PASS;
+    command.render_pass = pass;
+    command.color_op = color_op;
+    command.color = color;
+    command.depth_op = depth_op;
+    command.depth = depth;
+    command.stencil = stencil;
+    result = openagc_vk_push(command_buffer, &command);
+    if (result != OPENAGC_OK) {
+        (void)openagc_frontend_render_pass_end(pass->pass);
         return result;
     }
     command_buffer->pass = pass;
@@ -2357,51 +2417,79 @@ openagc_result openagc_vk_cmd_begin_render_pass_with_depth(
 openagc_result openagc_vk_cmd_begin_render_pass(openagc_vk_command_buffer *command_buffer,
                                                 openagc_vk_render_pass *pass)
 {
-    openagc_result result;
-
-    if (command_buffer == NULL || pass == NULL) {
-        return OPENAGC_ERROR_INVALID_ARGUMENT;
-    }
-    if (command_buffer->recording == 0u) {
-        return OPENAGC_ERROR_BAD_STATE;
-    }
-    if (pass->device != command_buffer->pool->device) {
-        return OPENAGC_ERROR_OWNERSHIP;
-    }
-    if (command_buffer->pass != NULL) {
-        return OPENAGC_ERROR_BAD_STATE;
-    }
-    result = openagc_frontend_render_pass_begin_with_load(pass->pass, OPENAGC_FRONTEND_LOAD_OP_LOAD,
-                                                         (openagc_color){ 0u, 0u, 0u, 0u });
-    if (result != OPENAGC_OK) {
-        return result;
-    }
-    command_buffer->pass = pass;
-    return OPENAGC_OK;
+    return openagc_vk_cmd_begin_render_pass_with_load(command_buffer, pass,
+                                                      OPENAGC_FRONTEND_LOAD_OP_LOAD,
+                                                      (openagc_color){ 0u, 0u, 0u, 0u });
 }
 
 openagc_result openagc_vk_cmd_clear_attachments(openagc_vk_command_buffer *command_buffer,
                                                openagc_color color)
 {
+    openagc_vk_command command;
+    uint32_t x = 0u;
+    uint32_t y = 0u;
+    uint32_t width = 0u;
+    uint32_t height = 0u;
+    openagc_result result;
+
     if (command_buffer == NULL) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
-    if (command_buffer->recording == 0u || command_buffer->pass == NULL) {
+    if (command_buffer->recording == 0u || command_buffer->pass == NULL ||
+        command_buffer->pass->pass == NULL) {
         return OPENAGC_ERROR_BAD_STATE;
     }
-    return openagc_frontend_render_pass_clear(command_buffer->pass->pass, color);
+    result = openagc_frontend_render_pass_clear_bounds(command_buffer->pass->pass, 0u, &x, &y,
+                                                       &width, &height);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    memset(&command, 0, sizeof(command));
+    command.kind = OPENAGC_VK_COMMAND_CLEAR_ATTACHMENTS;
+    command.render_pass = command_buffer->pass;
+    command.color = color;
+    command.destination_x = x;
+    command.destination_y = y;
+    command.width = width;
+    command.height = height;
+    return openagc_vk_push(command_buffer, &command);
 }
 
 openagc_result openagc_vk_cmd_clear_depth(openagc_vk_command_buffer *command_buffer, float depth,
                                          uint32_t stencil)
 {
+    openagc_vk_command command;
+    uint32_t x = 0u;
+    uint32_t y = 0u;
+    uint32_t width = 0u;
+    uint32_t height = 0u;
+    openagc_result result;
+
     if (command_buffer == NULL) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
-    if (command_buffer->recording == 0u || command_buffer->pass == NULL) {
+    if (command_buffer->recording == 0u || command_buffer->pass == NULL ||
+        command_buffer->pass->pass == NULL) {
         return OPENAGC_ERROR_BAD_STATE;
     }
-    return openagc_frontend_render_pass_clear_depth(command_buffer->pass->pass, depth, stencil);
+    if (depth != depth || depth < 0.f || depth > 1.f || stencil > 255u) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    result = openagc_frontend_render_pass_clear_bounds(command_buffer->pass->pass, 1u, &x, &y,
+                                                       &width, &height);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    memset(&command, 0, sizeof(command));
+    command.kind = OPENAGC_VK_COMMAND_CLEAR_DEPTH;
+    command.render_pass = command_buffer->pass;
+    command.depth = depth;
+    command.stencil = stencil;
+    command.destination_x = x;
+    command.destination_y = y;
+    command.width = width;
+    command.height = height;
+    return openagc_vk_push(command_buffer, &command);
 }
 
 openagc_result openagc_vk_cmd_set_viewport(openagc_vk_command_buffer *command_buffer,

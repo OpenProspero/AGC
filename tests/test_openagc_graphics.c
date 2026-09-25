@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/graphics.h"
+#include "openagc/pm4_fw940.h"
+#include "openagc/pm4_write_fw940.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -980,7 +982,7 @@ static int test_copy_ownership_handoff(void)
     CHECK(copy_view.command_count == 1u);
     EXPECT(openagc_gpu_queue_submit(queue, upload, fence), OPENAGC_OK);
     EXPECT(openagc_gpu_queue_get_last_submission(queue, &submission), OPENAGC_OK);
-    CHECK(submission.word_count == 17u && submission.gpu_submitted == 0u);
+    CHECK(submission.word_count == 31u && submission.gpu_submitted == 0u);
     EXPECT(openagc_gpu_fence_poll(fence, &fence_info), OPENAGC_OK);
     EXPECT(openagc_gpu_memory_read(memory, 0u, compare, sizeof(compare)), OPENAGC_OK);
     CHECK(memcmp(compare, staging, 16u) == 0);
@@ -1143,6 +1145,15 @@ static int test_depth_target_state(void)
         EXPECT(openagc_graphics_command_buffer_apply_host_state(command), OPENAGC_OK);
         EXPECT(openagc_graphics_command_buffer_execute_host(command, &exec), OPENAGC_OK);
         CHECK(exec.gpu_submitted == 0u && exec.cleared_pixels == 16u);
+        {
+            openagc_gpu_submission_view write_view = OPENAGC_GPU_SUBMISSION_VIEW_INIT;
+
+            EXPECT(openagc_gpu_device_get_last_write(device, &write_view), OPENAGC_OK);
+            CHECK(write_view.word_count == OPENAGC_PM4_WRITE_DATA_CLEAR_EOP_WORDS);
+            CHECK(write_view.words[0] == 0xc0123700u);
+            CHECK(write_view.words[4] == 0x5affffffu);
+            CHECK(write_view.words[20] == OPENAGC_PM4_EOP_HEADER);
+        }
         EXPECT(openagc_gpu_memory_read(memory, 0u, packed, sizeof(packed)), OPENAGC_OK);
         CHECK(packed[0] == 0xffu && packed[1] == 0xffu && packed[2] == 0xffu &&
               packed[3] == 0x5au);
@@ -1168,6 +1179,61 @@ static int test_depth_target_state(void)
     return 0;
 }
 
+static int test_host_clear_write_data_tile(void)
+{
+    openagc_context *context = NULL;
+    openagc_gpu_device *device = NULL;
+    openagc_gpu_memory_desc memory_desc = OPENAGC_GPU_MEMORY_DESC_INIT(64u);
+    openagc_graphics_image_desc image_desc = OPENAGC_GRAPHICS_IMAGE_DESC_INIT(
+        4u, 4u, 16u, OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM);
+    openagc_graphics_command_buffer_desc command_desc =
+        OPENAGC_GRAPHICS_COMMAND_BUFFER_DESC_INIT(4u);
+    openagc_graphics_transition_desc acquire = OPENAGC_GRAPHICS_TRANSITION_DESC_INIT(
+        OPENAGC_GRAPHICS_STATE_UNDEFINED, OPENAGC_GRAPHICS_OWNER_HOST,
+        OPENAGC_GRAPHICS_STATE_COLOR_TARGET, OPENAGC_GRAPHICS_OWNER_GRAPHICS);
+    openagc_graphics_scissor scissor = { 0u, 0u, 4u, 4u };
+    openagc_color color = { 0xa5u, 0xa5u, 0xa5u, 0xa5u };
+    openagc_graphics_execution_info info = OPENAGC_GRAPHICS_EXECUTION_INFO_INIT;
+    openagc_gpu_submission_view write_view = OPENAGC_GPU_SUBMISSION_VIEW_INIT;
+    openagc_gpu_memory *memory = NULL;
+    openagc_graphics_image *image = NULL;
+    openagc_graphics_command_buffer *command_buffer = NULL;
+    uint32_t words[16];
+    uint32_t i;
+
+    CHECK(make_device(4096u, &context, &device) == 0);
+    EXPECT(openagc_gpu_memory_allocate(device, &memory_desc, &memory), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_create(device, &image_desc, &image), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_bind_memory(image, memory, 0u), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_buffer_create(device, &command_desc, &command_buffer),
+           OPENAGC_OK);
+    EXPECT(openagc_graphics_command_buffer_begin(command_buffer), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_transition(command_buffer, image, &acquire), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_bind_color_target(command_buffer, image), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_set_scissor(command_buffer, &scissor), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_clear_color(command_buffer, color), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_buffer_end(command_buffer), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_buffer_apply_host_state(command_buffer), OPENAGC_OK);
+    EXPECT(openagc_graphics_command_buffer_execute_host(command_buffer, &info), OPENAGC_OK);
+    CHECK(info.cleared_pixels == 16u && info.gpu_submitted == 0u);
+    EXPECT(openagc_gpu_device_get_last_write(device, &write_view), OPENAGC_OK);
+    CHECK(write_view.word_count == OPENAGC_PM4_WRITE_DATA_CLEAR_EOP_WORDS);
+    CHECK(write_view.words[0] == 0xc0123700u);
+    CHECK(write_view.words[4] == 0xa5a5a5a5u);
+    CHECK(write_view.words[19] == 0xa5a5a5a5u);
+    CHECK(write_view.words[20] == OPENAGC_PM4_EOP_HEADER);
+    EXPECT(openagc_gpu_memory_read(memory, 0u, words, sizeof(words)), OPENAGC_OK);
+    for (i = 0u; i < 16u; ++i) {
+        CHECK(words[i] == 0xa5a5a5a5u);
+    }
+    EXPECT(openagc_graphics_command_buffer_destroy(command_buffer), OPENAGC_OK);
+    EXPECT(openagc_graphics_image_destroy(image), OPENAGC_OK);
+    EXPECT(openagc_gpu_memory_destroy(memory), OPENAGC_OK);
+    EXPECT(openagc_gpu_device_destroy(device), OPENAGC_OK);
+    EXPECT(openagc_context_destroy(context), OPENAGC_OK);
+    return 0;
+}
+
 int main(void)
 {
     if (test_formats_footprint_and_binding() != 0 ||
@@ -1177,7 +1243,8 @@ int main(void)
         test_usage_mask_and_sampled_state() != 0 ||
         test_host_clear_execution() != 0 ||
         test_host_clear_order_and_staleness() != 0 ||
-        test_copy_ownership_handoff() != 0) {
+        test_copy_ownership_handoff() != 0 ||
+        test_host_clear_write_data_tile() != 0) {
         return 1;
     }
     puts("OpenAGC graphics validation tests passed");

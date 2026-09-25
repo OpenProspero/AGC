@@ -350,6 +350,13 @@ static int test_frontend_policy(void)
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_frontend_buffer_copy(0, 0u, buffer, 0u, sizeof(bytes)) ==
           OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_frontend_buffer_fill(buffer, 0u, 4u, 0u) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_buffer_fill(0, 0u, 4u, 0u) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_frontend_image_copy_rect(image, 0u, 0u, image, 0u, 0u, 1u, 1u) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_image_copy_rect(0, 0u, 0u, image, 0u, 0u, 1u, 1u) ==
+          OPENAGC_ERROR_INVALID_ARGUMENT);
     CHECK(openagc_frontend_buffer_destroy(buffer) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_frontend_timeline_create(0, &created_timeline) ==
@@ -433,6 +440,21 @@ static int test_vulkan_policy(void)
     CHECK(openagc_vk_fence_poll(fence, 1u, &info) == OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_vk_buffer_upload(0, 0u, bytes, sizeof(bytes)) ==
           OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_cmd_copy_image((openagc_vk_command_buffer *)(void *)&dummy,
+                                    (openagc_vk_image *)(void *)&dummy, 0u, 0u,
+                                    (openagc_vk_image *)(void *)&dummy, 0u, 0u, 1u, 1u) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_vk_cmd_copy_image(0, 0, 0u, 0u, 0, 0u, 0u, 1u, 1u) ==
+          OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_cmd_fill_buffer((openagc_vk_command_buffer *)(void *)&dummy,
+                                     (openagc_vk_buffer *)(void *)&dummy, 0u, 4u, 0u) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_vk_cmd_fill_buffer(0, 0, 0u, 4u, 0u) == OPENAGC_ERROR_INVALID_ARGUMENT);
+    CHECK(openagc_vk_cmd_update_buffer((openagc_vk_command_buffer *)(void *)&dummy,
+                                       (openagc_vk_buffer *)(void *)&dummy, 0u, bytes,
+                                       sizeof(bytes)) == OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_vk_cmd_update_buffer(0, 0, 0u, bytes, sizeof(bytes)) ==
+          OPENAGC_ERROR_INVALID_ARGUMENT);
     CHECK(openagc_vk_instance_destroy(instance) == OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     return 0;
 }
@@ -444,6 +466,16 @@ int main(void)
         test_frontend_policy() != 0 || test_vulkan_policy() != 0 ||
         openagc_gl_draw_arrays(0, 0u, 3u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gl_create_graphics_program(0, 0, 0, 0, 0) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gl_clear_buffer_sub_data(0, 0u, 4u, 0u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gl_copy_buffer_sub_data(0, 0u, 0, 0u, 4u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gl_buffer_sub_data(0, 0u, 0, 4u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_store_const(0, 0, 0u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_write_data(0, 0, 0u, 0u, 1u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_write_data_memory(0, 0, 0u, 0u, 1u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gpu_host_write_data_rows(0, 0, 0u, 16u, 0u, 1u, 1u) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gl_copy_tex_sub_image(0, 0, 0u, 0u, 0u, 0u, 1u, 1u) !=
             OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_frontend_graphics_pipeline_create(0, 0, 0, 0, 0) !=
             OPENAGC_ERROR_INVALID_ARGUMENT ||

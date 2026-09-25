@@ -425,6 +425,21 @@ openagc_result openagc_frontend_render_pass_begin_with_load(openagc_frontend_ren
 openagc_result openagc_frontend_render_pass_begin_with_depth(
     openagc_frontend_render_pass *pass, openagc_frontend_load_op color_op, openagc_color color,
     openagc_frontend_load_op depth_op, float depth, uint32_t stencil);
+/* Marks the pass begun without load-op pixel writes. Vulkan records loads for submit. */
+openagc_result openagc_frontend_render_pass_begin_validate_with_depth(
+    openagc_frontend_render_pass *pass, openagc_frontend_load_op color_op,
+    openagc_frontend_load_op depth_op, float depth, uint32_t stencil);
+/* Applies recorded load ops. Used on Vulkan queue submit; does not require begun. */
+openagc_result openagc_frontend_render_pass_apply_loads(
+    openagc_frontend_render_pass *pass, openagc_frontend_load_op color_op, openagc_color color,
+    openagc_frontend_load_op depth_op, float depth, uint32_t stencil);
+/* Scissor-bounded clears for deferred Vulkan submit (begun not required). */
+openagc_result openagc_frontend_render_pass_clear_rect(openagc_frontend_render_pass *pass,
+                                                       openagc_color color, uint32_t x, uint32_t y,
+                                                       uint32_t width, uint32_t height);
+openagc_result openagc_frontend_render_pass_clear_depth_rect(
+    openagc_frontend_render_pass *pass, float depth, uint32_t stencil, uint32_t x, uint32_t y,
+    uint32_t width, uint32_t height);
 openagc_result openagc_frontend_render_pass_set_viewport(openagc_frontend_render_pass *pass,
                                                          uint32_t x, uint32_t y,
                                                          uint32_t width, uint32_t height);
@@ -451,6 +466,11 @@ openagc_result openagc_frontend_render_pass_clear(openagc_frontend_render_pass *
 /* Same scissor rule as the color clear. depth is 0..1 and stencil is 0..255. */
 openagc_result openagc_frontend_render_pass_clear_depth(openagc_frontend_render_pass *pass,
                                                        float depth, uint32_t stencil);
+/* Snapshot the clear rectangle (scissor or full color target). Requires begun.
+   require_depth nonzero also needs a depth attachment. */
+openagc_result openagc_frontend_render_pass_clear_bounds(
+    const openagc_frontend_render_pass *pass, uint32_t require_depth, uint32_t *out_x,
+    uint32_t *out_y, uint32_t *out_width, uint32_t *out_height);
 
 typedef uint32_t openagc_frontend_query_kind;
 enum {
@@ -597,11 +617,17 @@ openagc_result openagc_frontend_pipeline_set_vertex_formats(
 openagc_result openagc_frontend_pipeline_get_vertex_format(
     const openagc_frontend_pipeline *pipeline, uint32_t index, uint32_t *offset,
     openagc_frontend_vertex_format *format, uint32_t *bytes);
-/* Does not run a workgroup. Zero groups complete with no launch. A positive
-   count on a plan that is not executable is NOT_READY. */
+/* Does not run a workgroup unless the compute artifact is the console-proven
+   store-const blob (host CPU write of 0xA5A5A5A5 into plan slot 0). Zero groups
+   complete with no launch. Any other positive dispatch is NOT_READY. */
 openagc_result openagc_frontend_dispatch(const openagc_frontend_pipeline *pipeline,
                                          uint32_t groups_x, uint32_t groups_y,
                                          uint32_t groups_z);
+/* Same gates as dispatch without writing. Used to record a Vulkan dispatch
+   command that runs on queue submit. */
+openagc_result openagc_frontend_dispatch_validate(const openagc_frontend_pipeline *pipeline,
+                                                  uint32_t groups_x, uint32_t groups_y,
+                                                  uint32_t groups_z);
 /* A resource group with no buffer, image, or sampler is not a descriptor set. */
 openagc_result openagc_frontend_resources_present(uint32_t has_buffer, uint32_t has_image,
                                                   uint32_t has_sampler);

@@ -152,9 +152,134 @@ static int test_gl_derives_the_shared_backend(void)
     return 0;
 }
 
+static int test_gl_copy_and_clear_derivations(void)
+{
+    openagc_gl_context_desc context_desc = OPENAGC_GL_CONTEXT_DESC_INIT;
+    openagc_gl_image_desc image_desc = OPENAGC_GL_IMAGE_DESC_INIT(OPENAGC_GL_RGBA8, 4u, 4u);
+    openagc_gl_context *context = NULL;
+    openagc_gl_context *other_context = NULL;
+    openagc_gl_framebuffer *framebuffer = NULL;
+    openagc_gl_framebuffer *empty = NULL;
+    openagc_gl_renderbuffer *renderbuffer = NULL;
+    openagc_gl_texture *texture = NULL;
+    openagc_gl_texture *foreign = NULL;
+    openagc_gl_buffer *pack = NULL;
+    openagc_gl_buffer *uniform = NULL;
+    openagc_color clear = { 0x07u, 0x08u, 0x09u, 0x0au };
+    uint8_t pixels[64];
+    uint8_t readback[64];
+    uint32_t value = 0x01020304u;
+    uint32_t index;
+    uint32_t observed;
+
+    EXPECT(openagc_gl_context_create(&context_desc, &context), OPENAGC_OK);
+    EXPECT(openagc_gl_create_framebuffer(context, &empty), OPENAGC_OK);
+    EXPECT(openagc_gl_create_texture(context, &image_desc, &texture), OPENAGC_OK);
+    EXPECT(openagc_gl_create_framebuffer(context, &framebuffer), OPENAGC_OK);
+    EXPECT(openagc_gl_create_renderbuffer(context, &image_desc, &renderbuffer), OPENAGC_OK);
+    EXPECT(openagc_gl_framebuffer_renderbuffer(framebuffer, renderbuffer), OPENAGC_OK);
+    EXPECT(openagc_gl_clear(framebuffer, clear), OPENAGC_OK);
+    EXPECT(openagc_gl_copy_tex_sub_image(NULL, texture, 0u, 0u, 0u, 0u, 2u, 2u),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    EXPECT(openagc_gl_copy_tex_sub_image(empty, texture, 0u, 0u, 0u, 0u, 2u, 2u),
+           OPENAGC_ERROR_BAD_STATE);
+    EXPECT(openagc_gl_copy_tex_sub_image(framebuffer, NULL, 0u, 0u, 0u, 0u, 2u, 2u),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    EXPECT(openagc_gl_copy_tex_sub_image(framebuffer, texture, 0u, 0u, 3u, 0u, 2u, 2u),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_gl_copy_tex_sub_image(framebuffer, texture, 0u, 0u, 0u, 0u, 2u, 2u),
+           OPENAGC_OK);
+    memset(pixels, 0, sizeof(pixels));
+    EXPECT(openagc_gl_get_tex_image(texture, 0u, pixels, sizeof(pixels)), OPENAGC_OK);
+    for (index = 0u; index < 2u; ++index) {
+        CHECK(pixels[index * 4u] == clear.r && pixels[index * 4u + 1u] == clear.g);
+        CHECK(pixels[16u + index * 4u] == clear.r);
+    }
+    CHECK(pixels[8u] == 0u && pixels[32u] == 0u && pixels[63u] == 0u);
+
+    EXPECT(openagc_gl_context_create(&context_desc, &other_context), OPENAGC_OK);
+    EXPECT(openagc_gl_create_texture(other_context, &image_desc, &foreign), OPENAGC_OK);
+    EXPECT(openagc_gl_copy_tex_sub_image(framebuffer, foreign, 0u, 0u, 0u, 0u, 2u, 2u),
+           OPENAGC_ERROR_OWNERSHIP);
+    EXPECT(openagc_gl_destroy_texture(foreign), OPENAGC_OK);
+    EXPECT(openagc_gl_context_destroy(other_context), OPENAGC_OK);
+
+    EXPECT(openagc_gl_create_buffer(context, OPENAGC_GL_UNIFORM_BUFFER, 64u, &uniform),
+           OPENAGC_OK);
+    EXPECT(openagc_gl_clear_buffer_sub_data(NULL, 0u, 4u, value), OPENAGC_ERROR_INVALID_ARGUMENT);
+    EXPECT(openagc_gl_clear_buffer_sub_data(uniform, 0u, 4u, value),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    {
+        uint32_t seed = 0x11223344u;
+        uint32_t observed = 0u;
+
+        EXPECT(openagc_gl_buffer_data(uniform, 0u, &seed, sizeof(seed)), OPENAGC_OK);
+        EXPECT(openagc_gl_get_buffer_sub_data(uniform, 0u, &observed, sizeof(observed)),
+               OPENAGC_OK);
+        CHECK(observed == seed);
+        seed = 0xa5a5a5a5u;
+        EXPECT(openagc_gl_buffer_sub_data(uniform, 0u, &seed, sizeof(seed)), OPENAGC_OK);
+        EXPECT(openagc_gl_get_buffer_sub_data(uniform, 0u, &observed, sizeof(observed)),
+               OPENAGC_OK);
+        CHECK(observed == seed);
+        EXPECT(openagc_gl_buffer_sub_data(NULL, 0u, &seed, sizeof(seed)),
+               OPENAGC_ERROR_INVALID_ARGUMENT);
+    }
+    EXPECT(openagc_gl_create_buffer(context, OPENAGC_GL_PIXEL_PACK_BUFFER, 64u, &pack),
+           OPENAGC_OK);
+    {
+        uint32_t seed = 0u;
+
+        EXPECT(openagc_gl_buffer_sub_data(pack, 0u, &seed, sizeof(seed)),
+               OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    }
+    EXPECT(openagc_gl_clear_buffer_sub_data(pack, 2u, 4u, value), OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_gl_clear_buffer_sub_data(pack, 0u, 0u, value), OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_gl_clear_buffer_sub_data(pack, 0u, 12u, value), OPENAGC_OK);
+    memset(readback, 0, sizeof(readback));
+    EXPECT(openagc_gl_get_buffer_sub_data(pack, 0u, readback, sizeof(readback)), OPENAGC_OK);
+    for (index = 0u; index < 3u; ++index) {
+        memcpy(&observed, readback + index * 4u, 4u);
+        CHECK(observed == value);
+    }
+    CHECK(readback[12] == 0u && readback[63] == 0u);
+
+    {
+        openagc_gl_buffer *dst = NULL;
+        uint8_t copied[16];
+
+        EXPECT(openagc_gl_create_buffer(context, OPENAGC_GL_PIXEL_PACK_BUFFER, 64u, &dst),
+               OPENAGC_OK);
+        EXPECT(openagc_gl_copy_buffer_sub_data(NULL, 0u, dst, 0u, 16u),
+               OPENAGC_ERROR_INVALID_ARGUMENT);
+        EXPECT(openagc_gl_copy_buffer_sub_data(pack, 0u, NULL, 0u, 16u),
+               OPENAGC_ERROR_INVALID_ARGUMENT);
+        EXPECT(openagc_gl_copy_buffer_sub_data(uniform, 0u, dst, 0u, 4u),
+               OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+        EXPECT(openagc_gl_copy_buffer_sub_data(pack, 0u, dst, 0u, 16u), OPENAGC_OK);
+        memset(copied, 0, sizeof(copied));
+        EXPECT(openagc_gl_get_buffer_sub_data(dst, 0u, copied, sizeof(copied)), OPENAGC_OK);
+        CHECK(memcmp(copied, readback, sizeof(copied)) == 0);
+        EXPECT(openagc_gl_destroy_buffer(dst), OPENAGC_OK);
+    }
+
+    EXPECT(openagc_gl_destroy_buffer(pack), OPENAGC_OK);
+    EXPECT(openagc_gl_destroy_buffer(uniform), OPENAGC_OK);
+    EXPECT(openagc_gl_destroy_texture(texture), OPENAGC_OK);
+    EXPECT(openagc_gl_destroy_framebuffer(empty), OPENAGC_OK);
+    /* Deleting the bound target unbinds it; the context keeps no stale pointer. */
+    EXPECT(openagc_gl_bind_framebuffer(context, framebuffer), OPENAGC_OK);
+    EXPECT(openagc_gl_destroy_framebuffer(framebuffer), OPENAGC_OK);
+    EXPECT(openagc_gl_draw_arrays(context, 0u, 3u), OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    EXPECT(openagc_gl_destroy_renderbuffer(renderbuffer), OPENAGC_OK);
+    EXPECT(openagc_gl_context_destroy(context), OPENAGC_OK);
+    return 0;
+}
+
 int main(void)
 {
-    if (test_gl_derives_the_shared_backend() != 0) {
+    if (test_gl_derives_the_shared_backend() != 0 ||
+        test_gl_copy_and_clear_derivations() != 0) {
         return 1;
     }
     puts("OpenAGC OpenGL subset tests passed");

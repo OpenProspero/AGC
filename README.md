@@ -16,7 +16,7 @@ display driver.
 | Shader intake and pipelines | SHA-256-checked **unverified fixture** snapshots and host-only vertex/pixel/compute pipeline plans with exactly matched uniform-buffer and sampled-image descriptors; no compiler or executable shader | Unavailable |
 | Shared frontend core (Vulkan/OpenGL) | Versioned native-to-backend translation, one staging/copy/transition path per device, CPU image and buffer upload/readback that preserves logical state and owner, and per-usage copy direction | Unavailable |
 | Native tiling, executable shader pipelines, draws, rasterization, VideoOut | Not implemented | Not implemented |
-| Vulkan 1.0 and OpenGL frontends | Not implemented | Not implemented |
+| Vulkan 1.0 and OpenGL frontends | Host subsets over the shared core: enumeration, transfer, clears, render-pass and pipeline recording; draws refused; one host-simulated store-const compute dispatch | Unavailable |
 
 **Firmware 9.40 is not qualified.** Unknown firmware is not qualified either;
 in fact no PS5 firmware has been qualified. The PS5 policy target returns
@@ -102,26 +102,56 @@ private compiler artifact cannot unlock PS5 execution or runtime
 shader intake.
 
 `include/openagc/frontend.h` (include `<openagc/frontend.h>`) is the
-shared core a Vulkan 1.0 or OpenGL frontend is meant to reuse instead
-of talking to the driver directly. It translates published Vulkan and
-OpenGL enumerants onto this backend — format, image usage, image
-layout, buffer usage — and refuses everything the host core cannot
-represent: sRGB, depth, R8, `GL_RGB8`, transfer-only images, `GENERAL`,
-`PREINITIALIZED`, `PRESENT_SRC_KHR`, and storage or vertex/index
-buffer usage. `openagc_frontend_device_create` builds one staging
-allocation, one copy queue, and one transition recorder per backend
-device. `openagc_frontend_image_upload` and
+shared core a Vulkan 1.0 or OpenGL frontend reuses instead of talking
+to the driver directly. It translates published Vulkan and OpenGL
+enumerants onto this backend — format, image usage, image layout,
+buffer usage — and refuses everything the host core cannot represent:
+sRGB and R8 images, `GENERAL`, `PREINITIALIZED`, `PRESENT_SRC_KHR`, the
+depth read-only layout, storage or transfer-only images, and
+storage-buffer usage. `openagc_frontend_device_create` builds one
+staging allocation, one copy queue, and one transition recorder per
+backend device. `openagc_frontend_image_upload` and
 `openagc_frontend_image_readback` move bytes through that copy path
 with **CPU** copies and restore the image's logical state and owner
 afterwards, so neither frontend reimplements the ownership dance.
-`openagc_frontend_buffer_*` gives both frontends the same buffer object
-over that path, with the copy direction enforced by the translated
-usage, so a GL unpack buffer cannot be read and a pack buffer cannot be
-written.
-Capabilities report `host_translation=1` with `gpu_execution=0`,
-`rasterization=0`, and `presentation=0`. The staged plan for both
-frontends, including what stays refused, is
-[docs/roadmap.md](docs/roadmap.md).
+`openagc_frontend_image_copy_rect` copies a rectangle between two
+same-format images the same way, row by row, and leaves both images in
+the state and owner they had; a self copy and a format mismatch are
+refused. `openagc_frontend_buffer_*` gives both frontends the same
+buffer object over that path, with the copy direction enforced by the
+translated usage, so a GL unpack buffer cannot be read and a pack
+buffer cannot be written; `openagc_frontend_buffer_fill` writes a
+repeating four-byte pattern into a copy-destination range.
+Capabilities report `host_translation=1`, `host_image_copy=1`, and
+`host_buffer_fill=1` with `gpu_execution=0`, `rasterization=0`, and
+`presentation=0`. The staged plan for both frontends, including what
+stays refused, is [docs/roadmap.md](docs/roadmap.md).
+
+`include/openagc/vulkan.h` and `include/openagc/opengl.h` are the two
+host frontends over that core. The Vulkan subset enumerates one
+physical device whose only queue family is transfer, creates buffers,
+images, and views, and records buffer copies, `vkCmdCopyImage`,
+`vkCmdFillBuffer`, bounded `vkCmdUpdateBuffer` payloads, clears, and
+layout transitions; fences and semaphores share the stage-2 timeline.
+The OpenGL subset derives the same backend state from its own commands:
+`glTexSubImage2D`/`glGetTexImage` are the upload and readback pair,
+`glCopyTexSubImage2D` is the rect copy, an FBO attachment derives
+`COLOR_TARGET/GRAPHICS`, sampling derives `SHADER_READ/GRAPHICS`,
+`glClearBufferSubData` is the buffer fill, and
+`glFinish`/`glFenceSync` publish the timeline a Vulkan fence uses. Both
+record one color render pass, viewports, scissors, vertex and index
+bindings, descriptor sets, push constants, blend state, and queries.
+`vkCmdDraw`/`vkCmdDispatch` and `glDrawArrays`/`glDispatchCompute`
+return `NOT_READY` from the shader compiler gate and rasterize nothing,
+except the narrow host_store_const compute path (`1,1,1` →
+`0xA5A5A5A5`) proven on console and asserted by
+`test_openagc_equivalence`;
+swapchains, the default framebuffer, presentation, depth testing, sRGB,
+MSAA, and native tiling stay refused, and both frontends report
+`gpu_execution=0` and `presentation=0`.
+`tests/test_openagc_equivalence.c` asserts that equivalent Vulkan and
+OpenGL work lands on the same backend state, the same bytes, and the
+same pixels.
 
 The earlier host UI recorder remains available and ABI-compatible. Its
 header provides `OPENAGC_CONTEXT_DESC_INIT(backend)`,
@@ -146,17 +176,19 @@ context or its devices must be serialized by the caller.
 For the PS5 fail-closed object/library and a `-nostdinc` cross-build recipe,
 see [docs/architecture.md](docs/architecture.md). **Never link the host
 `openagc` target into a PS5 image**; use only `openagc_ps5_policy` there.
-The architecture document also lists the exact FW9.40 **field-derived**
-DMA/EOP vectors, their evidence limits, graphics frontend research, and a
-staged, opt-in qualification plan. No packet in this repo has been submitted
-to a PS5 by OpenAGC.
+The architecture document also lists the FW9.40 console-aligned
+DMA/EOP vectors (`pm4_fw940.h`, 31 dwords) and the compute store-const
+dispatch (`pm4_compute_fw940.h`, 51 dwords), their evidence limits,
+graphics frontend research, and a staged, opt-in qualification plan.
+The host library never submits packets; separate SDK payloads proved
+copy+EOP and one compute store. Draw/render packets remain unavailable.
 
 ## Status, direction, and provenance
 
 [The architecture and qualification status](docs/architecture.md) describe the
-separate backends, future Vulkan/OpenGL layers, and why no console capability
-is claimed. The staged plan for those two frontends on the shared host core is
-[docs/roadmap.md](docs/roadmap.md). Public PS5_Vulkan and ps5-opengl
+separate backends, how the Vulkan 1.0 and OpenGL subsets map onto the shared
+host core, and why no console capability is claimed. The staged plan for those
+two frontends is [docs/roadmap.md](docs/roadmap.md). Public PS5_Vulkan and ps5-opengl
 graphics architecture and public
 OpenAGC PM4 interface facts were consulted as **knowledge references**;
 FW9.40 empirical packet facts were read from the user's ProsperoAI notes.

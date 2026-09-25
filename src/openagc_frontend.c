@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/frontend.h"
+#include "openagc/pm4_write_fw940.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -1331,6 +1332,33 @@ openagc_result openagc_frontend_render_pass_clear_depth(openagc_frontend_render_
                                                    height);
 }
 
+openagc_result openagc_frontend_render_pass_clear_bounds(
+    const openagc_frontend_render_pass *pass, uint32_t require_depth, uint32_t *out_x,
+    uint32_t *out_y, uint32_t *out_width, uint32_t *out_height)
+{
+    if (pass == NULL || out_x == NULL || out_y == NULL || out_width == NULL || out_height == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (pass->begun == 0u || pass->color == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if (require_depth != 0u && pass->depth == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if (pass->scissor_width == 0u) {
+        *out_x = 0u;
+        *out_y = 0u;
+        *out_width = pass->color->width;
+        *out_height = pass->color->height;
+    } else {
+        *out_x = pass->scissor_x;
+        *out_y = pass->scissor_y;
+        *out_width = pass->scissor_width;
+        *out_height = pass->scissor_height;
+    }
+    return OPENAGC_OK;
+}
+
 openagc_result openagc_frontend_image_destroy(openagc_frontend_image *image)
 {
     openagc_result result;
@@ -1470,6 +1498,13 @@ openagc_result openagc_frontend_buffer_upload(openagc_frontend_buffer *buffer,
     if (!openagc_frontend_io_range(frontend, buffer->size_bytes, offset, size_bytes)) {
         return OPENAGC_ERROR_OUT_OF_RANGE;
     }
+    /* Shader-read uniforms have no copy bit; host BufferData writes memory directly. */
+    if ((buffer->usage & OPENAGC_GPU_BUFFER_COPY_DESTINATION_BIT) == 0u) {
+        if ((buffer->usage & OPENAGC_GPU_BUFFER_SHADER_READ_BIT) == 0u) {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+        return openagc_gpu_buffer_write(buffer->buffer, offset, bytes, size_bytes);
+    }
     result = openagc_gpu_memory_write(frontend->staging, 0u, bytes, size_bytes);
     if (result != OPENAGC_OK) {
         return result;
@@ -1494,6 +1529,13 @@ openagc_result openagc_frontend_buffer_readback(openagc_frontend_buffer *buffer,
     frontend = buffer->frontend;
     if (!openagc_frontend_io_range(frontend, buffer->size_bytes, offset, size_bytes)) {
         return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    /* Shader-read uniforms have no copy bit; host GetBufferSubData reads memory directly. */
+    if ((buffer->usage & OPENAGC_GPU_BUFFER_COPY_SOURCE_BIT) == 0u) {
+        if ((buffer->usage & OPENAGC_GPU_BUFFER_SHADER_READ_BIT) == 0u) {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+        return openagc_gpu_buffer_read(buffer->buffer, offset, bytes, size_bytes);
     }
     result = openagc_frontend_copy(frontend, buffer->buffer, offset,
                                    frontend->staging_buffer, 0u, size_bytes);
@@ -1554,6 +1596,13 @@ openagc_result openagc_frontend_buffer_fill(openagc_frontend_buffer *buffer, uin
     frontend = buffer->frontend;
     if (!openagc_frontend_io_range(frontend, buffer->size_bytes, offset, size_bytes)) {
         return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    /* Aligned fills up to a 4x4 RGBA8 tile use console WRITE_DATA (Steps D/E).
+     * Larger fills stay on the host staging + DMA copy vehicle. */
+    if ((offset & 3u) == 0u && (size_bytes & 3u) == 0u && size_bytes != 0u &&
+        size_bytes <= OPENAGC_PM4_WRITE_DATA_CLEAR_BYTES) {
+        return openagc_gpu_host_write_data(frontend->device, buffer->buffer, offset, value,
+                                           (uint32_t)(size_bytes / 4u));
     }
     for (index = 0u; index < (uint32_t)sizeof(pattern); index += 4u) {
         memcpy(pattern + index, &value, 4u);
@@ -2153,8 +2202,8 @@ static openagc_result openagc_frontend_image_clear_depth_rect(openagc_frontend_i
     return result;
 }
 
-openagc_result openagc_frontend_render_pass_begin_with_depth(
-    openagc_frontend_render_pass *pass, openagc_frontend_load_op color_op, openagc_color color,
+openagc_result openagc_frontend_render_pass_begin_validate_with_depth(
+    openagc_frontend_render_pass *pass, openagc_frontend_load_op color_op,
     openagc_frontend_load_op depth_op, float depth, uint32_t stencil)
 {
     openagc_graphics_image_state state;
@@ -2200,7 +2249,33 @@ openagc_result openagc_frontend_render_pass_begin_with_depth(
             return OPENAGC_ERROR_BAD_STATE;
         }
     }
+    pass->begun = 1u;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_frontend_render_pass_apply_loads(
+    openagc_frontend_render_pass *pass, openagc_frontend_load_op color_op, openagc_color color,
+    openagc_frontend_load_op depth_op, float depth, uint32_t stencil)
+{
+    uint32_t depth24 = 0u;
+    openagc_result result;
+
+    if (pass == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if ((color_op != OPENAGC_FRONTEND_LOAD_OP_LOAD &&
+         color_op != OPENAGC_FRONTEND_LOAD_OP_CLEAR) ||
+        (depth_op != OPENAGC_FRONTEND_LOAD_OP_LOAD &&
+         depth_op != OPENAGC_FRONTEND_LOAD_OP_CLEAR)) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
     if (depth_op == OPENAGC_FRONTEND_LOAD_OP_CLEAR) {
+        if (pass->depth == NULL) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        if (!openagc_frontend_pack_depth(depth, stencil, &depth24)) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
         result = openagc_frontend_image_clear_depth_rect(pass->depth, depth24, stencil, 0u, 0u,
                                                          pass->depth->width, pass->depth->height);
         if (result != OPENAGC_OK) {
@@ -2213,7 +2288,55 @@ openagc_result openagc_frontend_render_pass_begin_with_depth(
             return result;
         }
     }
-    pass->begun = 1u;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_frontend_render_pass_clear_rect(openagc_frontend_render_pass *pass,
+                                                       openagc_color color, uint32_t x, uint32_t y,
+                                                       uint32_t width, uint32_t height)
+{
+    if (pass == NULL || pass->color == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_image_clear_rect(pass->color, color, x, y, width, height);
+}
+
+openagc_result openagc_frontend_render_pass_clear_depth_rect(
+    openagc_frontend_render_pass *pass, float depth, uint32_t stencil, uint32_t x, uint32_t y,
+    uint32_t width, uint32_t height)
+{
+    uint32_t depth24 = 0u;
+
+    if (pass == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (pass->depth == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if (!openagc_frontend_pack_depth(depth, stencil, &depth24)) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    return openagc_frontend_image_clear_depth_rect(pass->depth, depth24, stencil, x, y, width,
+                                                   height);
+}
+
+openagc_result openagc_frontend_render_pass_begin_with_depth(
+    openagc_frontend_render_pass *pass, openagc_frontend_load_op color_op, openagc_color color,
+    openagc_frontend_load_op depth_op, float depth, uint32_t stencil)
+{
+    openagc_result result;
+
+    result = openagc_frontend_render_pass_begin_validate_with_depth(pass, color_op, depth_op, depth,
+                                                                    stencil);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_frontend_render_pass_apply_loads(pass, color_op, color, depth_op, depth,
+                                                      stencil);
+    if (result != OPENAGC_OK) {
+        pass->begun = 0u;
+        return result;
+    }
     return OPENAGC_OK;
 }
 
@@ -3841,11 +3964,12 @@ openagc_result openagc_frontend_pipeline_layout_release(openagc_frontend_pipelin
     return OPENAGC_OK;
 }
 
-openagc_result openagc_frontend_dispatch(const openagc_frontend_pipeline *pipeline,
-                                         uint32_t groups_x, uint32_t groups_y,
-                                         uint32_t groups_z)
+openagc_result openagc_frontend_dispatch_validate(const openagc_frontend_pipeline *pipeline,
+                                                  uint32_t groups_x, uint32_t groups_y,
+                                                  uint32_t groups_z)
 {
     openagc_frontend_pipeline_info info = OPENAGC_FRONTEND_PIPELINE_INFO_INIT;
+    openagc_shader_artifact_info artifact_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
     openagc_result result;
 
     if (pipeline == NULL) {
@@ -3868,12 +3992,66 @@ openagc_result openagc_frontend_dispatch(const openagc_frontend_pipeline *pipeli
     if (groups_x == 0u || groups_y == 0u || groups_z == 0u) {
         return OPENAGC_OK;
     }
+    result = openagc_shader_artifact_get_info(pipeline->compute, &artifact_info);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (artifact_info.host_store_const != 0u) {
+        openagc_gpu_buffer *buffer = NULL;
+        openagc_graphics_image *image = NULL;
+        uint64_t offset = 0u;
+        uint64_t size_bytes = 0u;
+
+        if (groups_x != 1u || groups_y != 1u || groups_z != 1u) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+        result = openagc_shader_pipeline_plan_slot(pipeline->plan, 0u, &buffer, &offset,
+                                                  &size_bytes, &image);
+        if (result != OPENAGC_OK || buffer == NULL || size_bytes < 4u) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        return OPENAGC_OK;
+    }
     result = openagc_shader_artifact_require_compiler(pipeline->compute);
     if (result != OPENAGC_OK) {
         return result;
     }
     if (info.gpu_executable == 0u || info.compiler_verified == 0u) {
         return OPENAGC_ERROR_NOT_READY;
+    }
+    return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+}
+
+openagc_result openagc_frontend_dispatch(const openagc_frontend_pipeline *pipeline,
+                                         uint32_t groups_x, uint32_t groups_y,
+                                         uint32_t groups_z)
+{
+    openagc_shader_artifact_info artifact_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+    openagc_result result;
+
+    result = openagc_frontend_dispatch_validate(pipeline, groups_x, groups_y, groups_z);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (pipeline == NULL || groups_x == 0u || groups_y == 0u || groups_z == 0u) {
+        return OPENAGC_OK;
+    }
+    result = openagc_shader_artifact_get_info(pipeline->compute, &artifact_info);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (artifact_info.host_store_const != 0u) {
+        openagc_gpu_buffer *buffer = NULL;
+        openagc_graphics_image *image = NULL;
+        uint64_t offset = 0u;
+        uint64_t size_bytes = 0u;
+
+        result = openagc_shader_pipeline_plan_slot(pipeline->plan, 0u, &buffer, &offset,
+                                                  &size_bytes, &image);
+        if (result != OPENAGC_OK || buffer == NULL || size_bytes < 4u) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        return openagc_gpu_host_store_const(pipeline->frontend->device, buffer, offset);
     }
     return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
 }

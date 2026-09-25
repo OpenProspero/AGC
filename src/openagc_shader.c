@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/shader.h"
+#include "openagc/store_const_code.h"
 #include "openagc_gpu_internal.h"
 #include "openagc_sha256.h"
 #include "openagc_shader_internal.h"
@@ -35,6 +36,7 @@ struct openagc_shader_artifact {
     uint32_t workgroup_x;
     uint32_t workgroup_y;
     uint32_t workgroup_z;
+    uint32_t host_store_const;
 };
 
 struct openagc_shader_pipeline_plan {
@@ -171,6 +173,7 @@ openagc_result openagc_shader_get_capabilities(
     capabilities->structural_intake = 1u;
     capabilities->compiler_available = 0u;
     capabilities->gpu_execution = 0u;
+    capabilities->host_compute_simulation = 1u;
     return OPENAGC_OK;
 }
 
@@ -406,6 +409,12 @@ openagc_result openagc_shader_artifact_intake_host(
     artifact->workgroup_x = snapshot.workgroup_x;
     artifact->workgroup_y = snapshot.workgroup_y;
     artifact->workgroup_z = snapshot.workgroup_z;
+    artifact->host_store_const = 0u;
+    if (snapshot.stage == OPENAGC_SHADER_STAGE_COMPUTE &&
+        openagc_store_const_code_matches(artifact->code, artifact->code_size) != 0 &&
+        snapshot.binding_count >= 1u && snapshot.bindings[0].min_bytes >= 4u) {
+        artifact->host_store_const = 1u;
+    }
     memcpy(artifact->code_sha256, actual_digest, sizeof(actual_digest));
     device->shader_artifact_count++;
     *out_artifact = artifact;
@@ -435,6 +444,7 @@ openagc_result openagc_shader_artifact_get_info(
     info->texture_count = artifact->texture_count;
     info->compiler_verified = 0u;
     info->gpu_executable = 0u;
+    info->host_store_const = artifact->host_store_const;
     memcpy(info->code_sha256, artifact->code_sha256, sizeof(info->code_sha256));
     return OPENAGC_OK;
 }

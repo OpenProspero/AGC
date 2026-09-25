@@ -204,6 +204,81 @@ openagc_result openagc_gpu_buffer_read(const openagc_gpu_buffer *buffer,
                                     : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
+openagc_result openagc_gpu_buffer_write(openagc_gpu_buffer *buffer, uint64_t offset,
+                                        const void *data, uint64_t size_bytes)
+{
+    (void)offset;
+    (void)size_bytes;
+    return buffer == 0 || data == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                    : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gpu_host_store_const(openagc_gpu_device *device,
+                                            openagc_gpu_buffer *destination,
+                                            uint64_t destination_offset)
+{
+    (void)destination_offset;
+    return device == 0 || destination == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                           : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gpu_device_get_last_compute(const openagc_gpu_device *device,
+                                                   openagc_gpu_submission_view *view)
+{
+    return device == 0 || view == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                    : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gpu_host_write_data_memory(openagc_gpu_device *device,
+                                                  openagc_gpu_memory *memory,
+                                                  uint64_t memory_offset,
+                                                  uint32_t value,
+                                                  uint32_t dword_count)
+{
+    (void)memory_offset;
+    (void)value;
+    (void)dword_count;
+    return device == 0 || memory == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                      : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gpu_host_write_data_rows(openagc_gpu_device *device,
+                                                openagc_gpu_memory *memory,
+                                                uint64_t memory_offset,
+                                                uint32_t pitch_bytes,
+                                                uint32_t value,
+                                                uint32_t dwords_per_row,
+                                                uint32_t row_count)
+{
+    (void)memory_offset;
+    (void)pitch_bytes;
+    (void)value;
+    (void)dwords_per_row;
+    (void)row_count;
+    return device == 0 || memory == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                      : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gpu_host_write_data(openagc_gpu_device *device,
+                                           openagc_gpu_buffer *destination,
+                                           uint64_t destination_offset,
+                                           uint32_t value,
+                                           uint32_t dword_count)
+{
+    (void)destination_offset;
+    (void)value;
+    (void)dword_count;
+    return device == 0 || destination == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                           : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gpu_device_get_last_write(const openagc_gpu_device *device,
+                                                 openagc_gpu_submission_view *view)
+{
+    return device == 0 || view == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                    : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
 openagc_result openagc_gpu_buffer_create(openagc_gpu_device *device,
                                          const openagc_gpu_buffer_desc *desc,
                                          openagc_gpu_buffer **out_buffer)
@@ -965,6 +1040,31 @@ openagc_result openagc_frontend_buffer_readback(openagc_frontend_buffer *buffer,
                                      : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
+openagc_result openagc_frontend_buffer_fill(openagc_frontend_buffer *buffer, uint64_t offset,
+                                            uint64_t size_bytes, uint32_t value)
+{
+    (void)offset;
+    (void)size_bytes;
+    (void)value;
+    return buffer == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_image_copy_rect(openagc_frontend_image *source, uint32_t source_x,
+                                                uint32_t source_y,
+                                                openagc_frontend_image *destination,
+                                                uint32_t destination_x, uint32_t destination_y,
+                                                uint32_t width, uint32_t height)
+{
+    (void)source_x;
+    (void)source_y;
+    (void)destination_x;
+    (void)destination_y;
+    (void)width;
+    (void)height;
+    return source == 0 || destination == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                           : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
 openagc_result openagc_frontend_copy_image_to_buffer(openagc_frontend_image *image,
                                                      uint64_t image_offset,
                                                      openagc_frontend_buffer *destination,
@@ -1275,6 +1375,16 @@ openagc_result openagc_frontend_render_pass_covers(const openagc_frontend_render
 openagc_result openagc_frontend_dispatch(const openagc_frontend_pipeline *pipeline,
                                          uint32_t groups_x, uint32_t groups_y,
                                          uint32_t groups_z)
+{
+    (void)groups_x;
+    (void)groups_y;
+    (void)groups_z;
+    return pipeline == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_dispatch_validate(const openagc_frontend_pipeline *pipeline,
+                                                  uint32_t groups_x, uint32_t groups_y,
+                                                  uint32_t groups_z)
 {
     (void)groups_x;
     (void)groups_y;
@@ -1906,6 +2016,44 @@ openagc_result openagc_vk_cmd_copy_buffer_to_image(openagc_vk_command_buffer *co
                                                             : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
+openagc_result openagc_vk_cmd_copy_image(openagc_vk_command_buffer *command_buffer,
+                                         openagc_vk_image *source, uint32_t source_x,
+                                         uint32_t source_y, openagc_vk_image *destination,
+                                         uint32_t destination_x, uint32_t destination_y,
+                                         uint32_t width, uint32_t height)
+{
+    (void)source_x;
+    (void)source_y;
+    (void)destination_x;
+    (void)destination_y;
+    (void)width;
+    (void)height;
+    return command_buffer == 0 || source == 0 || destination == 0
+               ? OPENAGC_ERROR_INVALID_ARGUMENT
+               : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_vk_cmd_fill_buffer(openagc_vk_command_buffer *command_buffer,
+                                          openagc_vk_buffer *buffer, uint64_t offset,
+                                          uint64_t size_bytes, uint32_t value)
+{
+    (void)offset;
+    (void)size_bytes;
+    (void)value;
+    return command_buffer == 0 || buffer == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                              : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_vk_cmd_update_buffer(openagc_vk_command_buffer *command_buffer,
+                                            openagc_vk_buffer *buffer, uint64_t offset,
+                                            const void *bytes, uint64_t size_bytes)
+{
+    (void)offset;
+    (void)size_bytes;
+    return command_buffer == 0 || buffer == 0 || bytes == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                                            : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
 openagc_result openagc_vk_cmd_clear_attachments(openagc_vk_command_buffer *command_buffer,
                                                openagc_color color)
 {
@@ -2389,6 +2537,74 @@ openagc_result openagc_frontend_render_pass_begin_with_depth(
     return pass == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
+openagc_result openagc_frontend_render_pass_begin_validate_with_depth(
+    openagc_frontend_render_pass *pass, openagc_frontend_load_op color_op,
+    openagc_frontend_load_op depth_op, float depth, uint32_t stencil)
+{
+    (void)color_op;
+    (void)depth_op;
+    (void)depth;
+    (void)stencil;
+    return pass == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_render_pass_apply_loads(
+    openagc_frontend_render_pass *pass, openagc_frontend_load_op color_op, openagc_color color,
+    openagc_frontend_load_op depth_op, float depth, uint32_t stencil)
+{
+    (void)color_op;
+    (void)color;
+    (void)depth_op;
+    (void)depth;
+    (void)stencil;
+    return pass == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_render_pass_clear_rect(openagc_frontend_render_pass *pass,
+                                                       openagc_color color, uint32_t x, uint32_t y,
+                                                       uint32_t width, uint32_t height)
+{
+    (void)color;
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    return pass == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_render_pass_clear_depth_rect(
+    openagc_frontend_render_pass *pass, float depth, uint32_t stencil, uint32_t x, uint32_t y,
+    uint32_t width, uint32_t height)
+{
+    (void)depth;
+    (void)stencil;
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    return pass == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_render_pass_clear_bounds(
+    const openagc_frontend_render_pass *pass, uint32_t require_depth, uint32_t *out_x,
+    uint32_t *out_y, uint32_t *out_width, uint32_t *out_height)
+{
+    (void)require_depth;
+    if (out_x != 0) {
+        *out_x = 0u;
+    }
+    if (out_y != 0) {
+        *out_y = 0u;
+    }
+    if (out_width != 0) {
+        *out_width = 0u;
+    }
+    if (out_height != 0) {
+        *out_height = 0u;
+    }
+    return pass == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
 openagc_result openagc_frontend_render_pass_begin_with_load(openagc_frontend_render_pass *pass,
                                                            openagc_frontend_load_op load_op,
                                                            openagc_color color)
@@ -2820,6 +3036,21 @@ openagc_result openagc_gl_get_tex_image_to_buffer(openagc_gl_texture *texture,
                                        : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
+openagc_result openagc_gl_copy_tex_sub_image(openagc_gl_framebuffer *framebuffer,
+                                             openagc_gl_texture *texture, uint32_t xoffset,
+                                             uint32_t yoffset, uint32_t x, uint32_t y,
+                                             uint32_t width, uint32_t height)
+{
+    (void)xoffset;
+    (void)yoffset;
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    return framebuffer == 0 || texture == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                            : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
 openagc_result openagc_gl_tex_sub_image_from_buffer(openagc_gl_texture *texture,
                                                     openagc_gl_buffer *buffer,
                                                     uint64_t buffer_offset,
@@ -3173,6 +3404,15 @@ openagc_result openagc_gl_buffer_data(openagc_gl_buffer *buffer, uint64_t offset
                                      : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
+openagc_result openagc_gl_buffer_sub_data(openagc_gl_buffer *buffer, uint64_t offset,
+                                          const void *bytes, uint64_t size_bytes)
+{
+    (void)offset;
+    (void)size_bytes;
+    return buffer == 0 || bytes == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                     : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
 openagc_result openagc_gl_get_buffer_sub_data(openagc_gl_buffer *buffer, uint64_t offset,
                                               void *bytes, uint64_t size_bytes)
 {
@@ -3180,6 +3420,26 @@ openagc_result openagc_gl_get_buffer_sub_data(openagc_gl_buffer *buffer, uint64_
     (void)size_bytes;
     return buffer == 0 || bytes == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
                                      : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gl_clear_buffer_sub_data(openagc_gl_buffer *buffer, uint64_t offset,
+                                                uint64_t size_bytes, uint32_t value)
+{
+    (void)offset;
+    (void)size_bytes;
+    (void)value;
+    return buffer == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gl_copy_buffer_sub_data(openagc_gl_buffer *source, uint64_t source_offset,
+                                               openagc_gl_buffer *destination,
+                                               uint64_t destination_offset, uint64_t size_bytes)
+{
+    (void)source_offset;
+    (void)destination_offset;
+    (void)size_bytes;
+    return source == 0 || destination == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                           : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
 openagc_result openagc_gl_buffer_get_info(const openagc_gl_buffer *buffer,

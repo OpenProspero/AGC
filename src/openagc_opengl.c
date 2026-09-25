@@ -831,6 +831,10 @@ openagc_result openagc_gl_destroy_framebuffer(openagc_gl_framebuffer *framebuffe
         framebuffer->depth->attachments--;
         framebuffer->depth = NULL;
     }
+    /* Deleting the bound target unbinds it; the context keeps no stale pointer. */
+    if (framebuffer->context->draw_target == framebuffer) {
+        framebuffer->context->draw_target = NULL;
+    }
     framebuffer->context->child_count--;
     free(framebuffer);
     return OPENAGC_OK;
@@ -1034,10 +1038,17 @@ openagc_result openagc_gl_bind_buffer(openagc_gl_context *context, uint32_t targ
 openagc_result openagc_gl_buffer_data(openagc_gl_buffer *buffer, uint64_t offset,
                                       const void *bytes, uint64_t size_bytes)
 {
+    return openagc_gl_buffer_sub_data(buffer, offset, bytes, size_bytes);
+}
+
+openagc_result openagc_gl_buffer_sub_data(openagc_gl_buffer *buffer, uint64_t offset,
+                                          const void *bytes, uint64_t size_bytes)
+{
     if (buffer == NULL) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
     if (buffer->target != OPENAGC_GL_PIXEL_UNPACK_BUFFER &&
+        buffer->target != OPENAGC_GL_UNIFORM_BUFFER &&
         buffer->target != OPENAGC_GL_ARRAY_BUFFER &&
         buffer->target != OPENAGC_GL_ELEMENT_ARRAY_BUFFER &&
         buffer->target != OPENAGC_GL_DRAW_INDIRECT_BUFFER) {
@@ -1067,6 +1078,20 @@ openagc_result openagc_gl_clear_buffer_sub_data(openagc_gl_buffer *buffer, uint6
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
     return openagc_frontend_buffer_fill(buffer->buffer, offset, size_bytes, value);
+}
+
+openagc_result openagc_gl_copy_buffer_sub_data(openagc_gl_buffer *source, uint64_t source_offset,
+                                               openagc_gl_buffer *destination,
+                                               uint64_t destination_offset, uint64_t size_bytes)
+{
+    if (source == NULL || destination == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (source->context != destination->context) {
+        return OPENAGC_ERROR_OWNERSHIP;
+    }
+    return openagc_frontend_buffer_copy(source->buffer, source_offset, destination->buffer,
+                                        destination_offset, size_bytes);
 }
 
 openagc_result openagc_gl_buffer_get_info(const openagc_gl_buffer *buffer,

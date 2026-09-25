@@ -179,14 +179,24 @@ openagc_result openagc_gl_bind_uniform_range(openagc_gl_context *context, uint32
                                             uint64_t size_bytes);
 openagc_result openagc_gl_bind_buffer(openagc_gl_context *context, uint32_t target,
                                       openagc_gl_buffer *buffer);
+/* Host write into unpack/uniform/array/element/indirect storage. */
 openagc_result openagc_gl_buffer_data(openagc_gl_buffer *buffer, uint64_t offset,
                                       const void *bytes, uint64_t size_bytes);
+/* Same upload path as buffer_data; named for glBufferSubData parity with
+   vkCmdUpdateBuffer (Vulkan defers the write to queue submit). */
+openagc_result openagc_gl_buffer_sub_data(openagc_gl_buffer *buffer, uint64_t offset,
+                                          const void *bytes, uint64_t size_bytes);
 openagc_result openagc_gl_get_buffer_sub_data(openagc_gl_buffer *buffer, uint64_t offset,
                                               void *bytes, uint64_t size_bytes);
 /* Repeating 32-bit pattern over a copy-destination range. A uniform buffer holds
    no copy-destination usage and is refused. */
 openagc_result openagc_gl_clear_buffer_sub_data(openagc_gl_buffer *buffer, uint64_t offset,
                                                 uint64_t size_bytes, uint32_t value);
+/* Same shared copy as vkCmdCopyBuffer. Both buffers must belong to one context
+   and carry copy-source / copy-destination usage (pixel pack/unpack). */
+openagc_result openagc_gl_copy_buffer_sub_data(openagc_gl_buffer *source, uint64_t source_offset,
+                                               openagc_gl_buffer *destination,
+                                               uint64_t destination_offset, uint64_t size_bytes);
 openagc_result openagc_gl_buffer_get_info(const openagc_gl_buffer *buffer,
                                           openagc_frontend_buffer_info *info);
 openagc_result openagc_gl_destroy_buffer(openagc_gl_buffer *buffer);

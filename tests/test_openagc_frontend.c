@@ -2,6 +2,9 @@
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/frontend.h"
 #include "openagc/shader.h"
+#include "openagc/store_const_code.h"
+#include "openagc/pm4_compute_fw940.h"
+#include "openagc/pm4_write_fw940.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -996,6 +999,232 @@ static int test_explicit_memory(void)
     return 0;
 }
 
+static int test_fill_and_image_copy(void)
+{
+    uint8_t source_pixels[64];
+    uint8_t destination_pixels[64];
+    uint8_t words[64];
+    openagc_context *context = NULL;
+    openagc_context *other_context = NULL;
+    openagc_gpu_device *device = NULL;
+    openagc_gpu_device *other_device = NULL;
+    openagc_frontend_device_desc desc = OPENAGC_FRONTEND_DEVICE_DESC_INIT;
+    openagc_frontend_capabilities capabilities = OPENAGC_FRONTEND_CAPABILITIES_INIT;
+    openagc_frontend_buffer_desc fillable_desc = OPENAGC_FRONTEND_BUFFER_DESC_INIT(
+        OPENAGC_FRONTEND_VULKAN,
+        OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+            OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        64u);
+    openagc_frontend_buffer_desc source_only_desc = OPENAGC_FRONTEND_BUFFER_DESC_INIT(
+        OPENAGC_FRONTEND_VULKAN, OPENAGC_FRONTEND_VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 64u);
+    openagc_frontend_image_desc image_desc = OPENAGC_FRONTEND_IMAGE_DESC_INIT(
+        OPENAGC_FRONTEND_VULKAN, OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+        OPENAGC_FRONTEND_VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        OPENAGC_FRONTEND_VK_IMAGE_LAYOUT_UNDEFINED, 4u, 4u, 0u);
+    openagc_frontend_image_desc other_format_desc = OPENAGC_FRONTEND_IMAGE_DESC_INIT(
+        OPENAGC_FRONTEND_VULKAN, OPENAGC_FRONTEND_VK_FORMAT_B8G8R8A8_UNORM,
+        OPENAGC_FRONTEND_VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        OPENAGC_FRONTEND_VK_IMAGE_LAYOUT_UNDEFINED, 4u, 4u, 0u);
+    openagc_frontend_image_info info = OPENAGC_FRONTEND_IMAGE_INFO_INIT;
+    openagc_frontend_device *frontend = NULL;
+    openagc_frontend_device *other_frontend = NULL;
+    openagc_frontend_buffer *fillable = NULL;
+    openagc_frontend_buffer *source_only = NULL;
+    openagc_frontend_buffer *unbound = NULL;
+    openagc_frontend_buffer *other_buffer = NULL;
+    openagc_frontend_image *source = NULL;
+    openagc_frontend_image *destination = NULL;
+    openagc_frontend_image *other_format = NULL;
+    openagc_frontend_image *unbound_image = NULL;
+    uint32_t value = 0x11223344u;
+    uint32_t index;
+
+    for (index = 0u; index < sizeof(source_pixels); ++index) {
+        source_pixels[index] = (uint8_t)(index + 1u);
+    }
+    memset(destination_pixels, 0, sizeof(destination_pixels));
+    CHECK(make_device(32u * 1024u * 1024u, &context, &device) == 0);
+    EXPECT(openagc_frontend_device_create(device, &desc, &frontend), OPENAGC_OK);
+    EXPECT(openagc_frontend_device_get_capabilities(frontend, &capabilities), OPENAGC_OK);
+    CHECK(capabilities.host_image_copy == 1u && capabilities.host_buffer_fill == 1u);
+    CHECK(capabilities.gpu_execution == 0u && capabilities.presentation == 0u);
+
+    EXPECT(openagc_frontend_buffer_create(frontend, &fillable_desc, &fillable), OPENAGC_OK);
+    EXPECT(openagc_frontend_buffer_create(frontend, &source_only_desc, &source_only), OPENAGC_OK);
+    EXPECT(openagc_frontend_buffer_create_unbound(frontend, &fillable_desc, &unbound), OPENAGC_OK);
+    EXPECT(openagc_frontend_buffer_fill(fillable, 2u, 4u, value), OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_frontend_buffer_fill(fillable, 0u, 0u, value), OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_frontend_buffer_fill(fillable, 60u, 8u, value), OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_frontend_buffer_fill(unbound, 0u, 4u, value), OPENAGC_ERROR_BAD_STATE);
+    EXPECT(openagc_frontend_buffer_fill(source_only, 0u, 4u, value),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    {
+        openagc_gpu_submission_view write_view = OPENAGC_GPU_SUBMISSION_VIEW_INIT;
+        uint32_t dword = 0u;
+
+        EXPECT(openagc_frontend_buffer_fill(fillable, 0u, 4u, value), OPENAGC_OK);
+        EXPECT(openagc_frontend_buffer_readback(fillable, 0u, &dword, sizeof(dword)),
+               OPENAGC_OK);
+        CHECK(dword == value);
+        EXPECT(openagc_gpu_device_get_last_write(device, &write_view), OPENAGC_OK);
+        CHECK(write_view.gpu_submitted == 0u);
+        CHECK(write_view.word_count == OPENAGC_PM4_WRITE_DATA_EOP_WORDS);
+        CHECK(write_view.words[0] == 0xc0033700u);
+        CHECK(write_view.words[4] == value);
+        CHECK(write_view.words[5] == OPENAGC_PM4_EOP_HEADER);
+    }
+    EXPECT(openagc_frontend_buffer_fill(fillable, 0u, sizeof(words), value), OPENAGC_OK);
+    EXPECT(openagc_frontend_buffer_readback(fillable, 0u, words, sizeof(words)), OPENAGC_OK);
+    for (index = 0u; index < (uint32_t)(sizeof(words) / 4u); ++index) {
+        uint32_t observed;
+
+        memcpy(&observed, words + index * 4u, 4u);
+        CHECK(observed == value);
+    }
+
+    EXPECT(openagc_frontend_image_create(frontend, &image_desc, &source), OPENAGC_OK);
+    EXPECT(openagc_frontend_image_create(frontend, &image_desc, &destination), OPENAGC_OK);
+    EXPECT(openagc_frontend_image_create(frontend, &other_format_desc, &other_format),
+           OPENAGC_OK);
+    EXPECT(openagc_frontend_image_create_unbound(frontend, &image_desc, &unbound_image),
+           OPENAGC_OK);
+    EXPECT(openagc_frontend_image_upload(source, 0u, source_pixels, sizeof(source_pixels)),
+           OPENAGC_OK);
+    EXPECT(openagc_frontend_image_copy_rect(source, 0u, 0u, source, 0u, 0u, 2u, 2u),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    EXPECT(openagc_frontend_image_copy_rect(source, 0u, 0u, other_format, 0u, 0u, 2u, 2u),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    EXPECT(openagc_frontend_image_copy_rect(unbound_image, 0u, 0u, destination, 0u, 0u, 2u, 2u),
+           OPENAGC_ERROR_BAD_STATE);
+    EXPECT(openagc_frontend_image_copy_rect(source, 3u, 0u, destination, 0u, 0u, 2u, 2u),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_frontend_image_copy_rect(source, 0u, 0u, destination, 3u, 0u, 2u, 1u),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_frontend_image_copy_rect(source, 0u, 0u, destination, 0u, 0u, 0u, 2u),
+           OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_frontend_image_copy_rect(source, 0u, 0u, destination, 1u, 1u, 2u, 2u),
+           OPENAGC_OK);
+    EXPECT(openagc_frontend_image_get_info(source, &info), OPENAGC_OK);
+    CHECK(info.state == OPENAGC_GRAPHICS_STATE_UNDEFINED &&
+          info.owner == OPENAGC_GRAPHICS_OWNER_HOST);
+    EXPECT(openagc_frontend_image_get_info(destination, &info), OPENAGC_OK);
+    CHECK(info.state == OPENAGC_GRAPHICS_STATE_UNDEFINED &&
+          info.owner == OPENAGC_GRAPHICS_OWNER_HOST);
+    EXPECT(openagc_frontend_image_readback(destination, 0u, destination_pixels,
+                                           sizeof(destination_pixels)),
+           OPENAGC_OK);
+    CHECK(destination_pixels[20] == 1u && destination_pixels[27] == 8u);
+    CHECK(destination_pixels[36] == 17u && destination_pixels[43] == 24u);
+    CHECK(destination_pixels[19] == 0u && destination_pixels[28] == 0u);
+    CHECK(destination_pixels[35] == 0u && destination_pixels[44] == 0u);
+
+    /* A second backend device is a second ownership domain, not a second copy. */
+    CHECK(make_device(32u * 1024u * 1024u, &other_context, &other_device) == 0);
+    EXPECT(openagc_frontend_device_create(other_device, &desc, &other_frontend), OPENAGC_OK);
+    EXPECT(openagc_frontend_buffer_create(other_frontend, &fillable_desc, &other_buffer),
+           OPENAGC_OK);
+    EXPECT(openagc_frontend_buffer_copy(fillable, 0u, other_buffer, 0u, 4u),
+           OPENAGC_ERROR_OWNERSHIP);
+    EXPECT(openagc_frontend_buffer_fill(other_buffer, 0u, 4u, value), OPENAGC_OK);
+    EXPECT(openagc_frontend_buffer_destroy(other_buffer), OPENAGC_OK);
+    EXPECT(openagc_frontend_device_destroy(other_frontend), OPENAGC_OK);
+    EXPECT(openagc_gpu_device_destroy(other_device), OPENAGC_OK);
+    EXPECT(openagc_context_destroy(other_context), OPENAGC_OK);
+
+    EXPECT(openagc_frontend_image_destroy(unbound_image), OPENAGC_OK);
+    EXPECT(openagc_frontend_image_destroy(other_format), OPENAGC_OK);
+    EXPECT(openagc_frontend_image_destroy(destination), OPENAGC_OK);
+    EXPECT(openagc_frontend_image_destroy(source), OPENAGC_OK);
+    EXPECT(openagc_frontend_buffer_destroy(source_only), OPENAGC_OK);
+    EXPECT(openagc_frontend_buffer_destroy(unbound), OPENAGC_OK);
+    EXPECT(openagc_frontend_buffer_destroy(fillable), OPENAGC_OK);
+    EXPECT(openagc_frontend_device_destroy(frontend), OPENAGC_OK);
+    EXPECT(openagc_gpu_device_destroy(device), OPENAGC_OK);
+    EXPECT(openagc_context_destroy(context), OPENAGC_OK);
+    return 0;
+}
+
+static int test_host_store_const_dispatch(void)
+{
+    openagc_context *context = NULL;
+    openagc_gpu_device *device = NULL;
+    openagc_frontend_device *frontend = NULL;
+    openagc_frontend_device_desc frontend_desc = OPENAGC_FRONTEND_DEVICE_DESC_INIT;
+    openagc_gpu_memory_desc memory_desc = OPENAGC_GPU_MEMORY_DESC_INIT(16u);
+    openagc_gpu_buffer_desc buffer_desc =
+        OPENAGC_GPU_BUFFER_DESC_INIT(16u, OPENAGC_GPU_BUFFER_SHADER_READ_BIT);
+    openagc_gpu_memory *memory = NULL;
+    openagc_gpu_buffer *buffer = NULL;
+    openagc_shader_artifact_desc artifact_desc = OPENAGC_SHADER_ARTIFACT_DESC_INIT;
+    openagc_shader_artifact_info artifact_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+    openagc_shader_binding_decl binding = { 0u, 0u, OPENAGC_SHADER_BINDING_UNIFORM_BUFFER, 4u };
+    openagc_shader_artifact *artifact = NULL;
+    openagc_shader_pipeline_desc plan_desc = OPENAGC_SHADER_PIPELINE_DESC_INIT;
+    openagc_shader_resource_binding resource;
+    openagc_frontend_pipeline *pipeline = NULL;
+    uint8_t code_hash[32] = {
+        0x48, 0x47, 0x46, 0xd3, 0x32, 0x1b, 0x61, 0x85, 0x50, 0xe2, 0x6e, 0x5a, 0xb5, 0xa2,
+        0xde, 0x56, 0x4d, 0x76, 0xf8, 0x6a, 0x61, 0x15, 0x72, 0x0b, 0x20, 0x1a, 0x39, 0x05,
+        0xe8, 0x27, 0xd2, 0xe5
+    };
+    uint32_t word = 0u;
+
+    CHECK(make_device(1048576u, &context, &device) == 0);
+    EXPECT(openagc_frontend_device_create(device, &frontend_desc, &frontend), OPENAGC_OK);
+    EXPECT(openagc_gpu_memory_allocate(device, &memory_desc, &memory), OPENAGC_OK);
+    EXPECT(openagc_gpu_buffer_create(device, &buffer_desc, &buffer), OPENAGC_OK);
+    EXPECT(openagc_gpu_buffer_bind_memory(buffer, memory, 0u), OPENAGC_OK);
+
+    artifact_desc.stage = OPENAGC_SHADER_STAGE_COMPUTE;
+    artifact_desc.code = openagc_store_const_code;
+    artifact_desc.code_size = OPENAGC_STORE_CONST_CODE_SIZE;
+    artifact_desc.bindings = &binding;
+    artifact_desc.binding_count = 1u;
+    artifact_desc.workgroup_x = 1u;
+    artifact_desc.workgroup_y = 1u;
+    artifact_desc.workgroup_z = 1u;
+    memcpy(artifact_desc.code_sha256, code_hash, sizeof(code_hash));
+    EXPECT(openagc_shader_artifact_intake_host(device, &artifact_desc, &artifact), OPENAGC_OK);
+    EXPECT(openagc_shader_artifact_get_info(artifact, &artifact_info), OPENAGC_OK);
+    CHECK(artifact_info.host_store_const == 1u);
+    CHECK(artifact_info.gpu_executable == 0u && artifact_info.compiler_verified == 0u);
+
+    memset(&resource, 0, sizeof(resource));
+    resource.binding = 0u;
+    resource.buffer = buffer;
+    resource.offset = 0u;
+    resource.size_bytes = 16u;
+    plan_desc.kind = OPENAGC_SHADER_PIPELINE_COMPUTE;
+    plan_desc.compute = artifact;
+    plan_desc.resources = &resource;
+    plan_desc.resource_count = 1u;
+    EXPECT(openagc_frontend_pipeline_create(frontend, &plan_desc, &pipeline), OPENAGC_OK);
+
+    EXPECT(openagc_frontend_dispatch(pipeline, 2u, 1u, 1u), OPENAGC_ERROR_OUT_OF_RANGE);
+    EXPECT(openagc_frontend_dispatch(pipeline, 1u, 1u, 1u), OPENAGC_OK);
+    EXPECT(openagc_gpu_buffer_read(buffer, 0u, &word, sizeof(word)), OPENAGC_OK);
+    CHECK(word == OPENAGC_STORE_CONST_VALUE);
+    {
+        openagc_gpu_submission_view compute = OPENAGC_GPU_SUBMISSION_VIEW_INIT;
+
+        EXPECT(openagc_gpu_device_get_last_compute(device, &compute), OPENAGC_OK);
+        CHECK(compute.gpu_submitted == 0u);
+        CHECK(compute.word_count == OPENAGC_PM4_COMPUTE_STORE_WORDS);
+        CHECK(compute.submission_id == 1u);
+        CHECK(compute.words != NULL);
+        CHECK(compute.words[26] == OPENAGC_PM4_DISPATCH_INITIATOR);
+    }
+
+    EXPECT(openagc_frontend_pipeline_destroy(pipeline), OPENAGC_OK);
+    EXPECT(openagc_shader_artifact_destroy(artifact), OPENAGC_OK);
+    EXPECT(openagc_gpu_buffer_destroy(buffer), OPENAGC_OK);
+    EXPECT(openagc_gpu_memory_destroy(memory), OPENAGC_OK);
+    EXPECT(openagc_frontend_device_destroy(frontend), OPENAGC_OK);
+    EXPECT(openagc_gpu_device_destroy(device), OPENAGC_OK);
+    EXPECT(openagc_context_destroy(context), OPENAGC_OK);
+    return 0;
+}
+
 int main(void)
 {
     if (test_translation_tables() != 0 ||
@@ -1005,7 +1234,9 @@ int main(void)
         test_buffer_objects() != 0 ||
         test_two_kinds_share_one_backend() != 0 ||
         test_shared_heap_timeline_and_plan() != 0 ||
-        test_explicit_memory() != 0) {
+        test_explicit_memory() != 0 ||
+        test_fill_and_image_copy() != 0 ||
+        test_host_store_const_dispatch() != 0) {
         return 1;
     }
     puts("OpenAGC shared frontend tests passed");

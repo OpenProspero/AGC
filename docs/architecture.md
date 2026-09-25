@@ -6,18 +6,20 @@
 `include/openagc/driver.h` adds a separate version-1 driver ABI with opaque
 GPU-device, memory, buffer, command-buffer, queue, and fence handles.
 `include/openagc/graphics.h` adds a version-1 graphics-resource ABI with
-opaque image and render-state command-buffer handles. All five APIs
-reject incorrect descriptor sizes and versions. `include/openagc/shader.h`
+opaque image and render-state command-buffer handles. All seven public
+headers reject incorrect descriptor sizes and versions. `include/openagc/shader.h`
 adds version-1 host-only gfx1013 artifact and pipeline-plan handles, and
-`include/openagc/frontend.h` adds the version-1 shared layer that a
-Vulkan or OpenGL frontend is meant to reuse.
+`include/openagc/frontend.h` adds the version-1 shared layer the two
+frontends reuse: `include/openagc/vulkan.h` (a Vulkan 1.0 subset) and
+`include/openagc/opengl.h` (an OpenGL subset), both host-only.
 `src/openagc.c`
 implements the host UI recorder; `src/openagc_gpu.c` implements the host
 copy driver core; `src/openagc_graphics.c` records host-only image state;
 `src/openagc_shader.c` deep-copies and validates unverified structural
 artifacts using OpenProspero's C99 SHA-256 implementation;
 `src/openagc_frontend.c` translates native frontend descriptors and owns
-one staging/copy/transition path per device.
+one staging/copy/transition path per device; `src/openagc_vulkan.c` and
+`src/openagc_opengl.c` are the two host frontends over it.
 The host components share context/device/memory lifetime through private
 headers, so live graphics resources prevent premature allocation, device,
 or context destruction.
@@ -42,8 +44,10 @@ simulation and reference packet encoding. Shader capabilities report
 `compiler_available=0` and `gpu_execution=0`. The version-1 capability,
 image-info, artifact-desc/info, and pipeline-desc/info structs all
 gained fields (clear simulation, image usage, and texture declarations
-or counts), so a caller built against an earlier struct is rejected by
-the `struct_size` check rather than misreading the following fields.
+or counts), and the shared frontend capability struct gained
+`host_image_copy` and `host_buffer_fill`, so a caller built against an
+earlier struct is rejected by the `struct_size` check rather than
+misreading the following fields.
 
 The host device checks bounded dimensions, pixel count, command capacity,
 finite rectangle fields, positive sizes, and in-bounds geometry before
@@ -256,13 +260,30 @@ allocates one backend buffer, translates its usage, and moves bytes
 through the same staging path, which is why a Vulkan transfer-destination
 buffer and a GL unpack buffer behave identically while a pack buffer
 refuses a write. `openagc_frontend_buffer_copy` is the copy a recorded
-Vulkan command executes: the source must be a copy source, the
+Vulkan `vkCmdCopyBuffer` and OpenGL `glCopyBufferSubData` both execute:
+the source must be a copy source, the
 destination a copy destination, and both must belong to one frontend
-device. `openagc_frontend_image_clear` fills a color target through the
-graphics host clear and leaves the logical state unchanged. A Vulkan
+device. `openagc_frontend_buffer_fill` is its write-only counterpart: one
+repeating four-byte pattern over a copy-destination range. Dword-aligned
+fills up to 64 bytes (a 4×4 RGBA8 tile) use the console-proven CP
+`IT_WRITE_DATA` host path (`openagc_gpu_host_write_data`, PM4 encode +
+CPU write, `gpu_execution` stays 0); larger fills stay chunked through
+the staging allocation and DMA copy vehicle. Refused for a buffer without
+the copy-destination bit. `openagc_frontend_image_copy_rect` is the
+image-to-image form of the same path: a rectangle of one image is copied
+row by row into another image of the same format, each row split at the
+staging bound, with the source moved to `TRANSFER_SOURCE/COPY` and the
+destination to `TRANSFER_DESTINATION/COPY` for the copy and both
+restored afterwards. A copy from an image to itself, a format mismatch,
+a rectangle that leaves either image, an unbound image, and an image on
+another frontend device are refused before a byte moves. `openagc_frontend_image_clear` fills a color target through the
+graphics host clear. Contiguous or per-row RGBA/BGRA/D24S8 scissors of
+at most 16×8 pixels use the console-proven CP `IT_WRITE_DATA` host path
+(Steps D–F); larger scissors keep the legacy per-pixel host fill. Either
+way `gpu_execution` stays 0. A Vulkan
 image view is an identity 2D color view of one mip and one layer; it
 does not allocate a second image, and the image stays alive until every
-view is destroyed. Clears, presentation,
+view is destroyed. Presentation,
 draws, and GPU execution do not exist here; frontend capabilities report
 `host_translation=1` with `gpu_execution=0`, `rasterization=0`, and
 `presentation=0`, and its format and usage masks come from the graphics
@@ -297,8 +318,28 @@ Vulkan `UINT16` and `UINT32`, and OpenGL `UNSIGNED_SHORT` and `UNSIGNED_INT`, sh
 `OUT_OF_RANGE`. A count that fits uses the same compiler gate and
 fetches nothing. A compute dispatch passes the workgroup counts through the shared frontend.
 A zero count completes without a launch. A count above 65535 is
-`OUT_OF_RANGE`. A positive count on a compute plan returns `NOT_READY`
-and runs no workgroup. A descriptor set is recorded only when it
+`OUT_OF_RANGE`. The console-proven store-const compute blob
+(`tools/shaders/store_const.s`) is recognized at intake as
+`host_store_const=1`: a `1,1,1` dispatch writes `0xA5A5A5A5` into plan
+slot 0 through `openagc_gpu_host_store_const` (encodes the 51-dword
+FW9.40 compute PM4 snapshot with `gpu_submitted=0`, then CPU-writes the
+dword) without claiming `compiler_verified` or `gpu_executable`. Vulkan
+`vkCmdDispatch` records that work and runs it on
+`vkQueueSubmit` (same deferred model as copies); OpenGL
+`glDispatchCompute` runs it immediately. `test_openagc_equivalence`
+asserts both frontends write the same word after the Vulkan submit.
+Render-pass load ops, `vkCmdClearAttachments`, and `vkCmdClearDepth`
+follow the same deferred rule: recording validates and snapshots the
+work, and pixel fills run on queue submit. OpenGL framebuffer begin and
+clear stay immediate. Outside-pass `vkCmdClearColorImage` was already
+deferred.
+Any other positive count on a compute plan still returns `NOT_READY`
+from the compiler gate and runs no workgroup. Host
+`glBufferData`/`glGetBufferSubData` on a uniform buffer write and read
+that memory directly (shader-read usage has no copy bit); clear-fill on
+a uniform stays refused. `glBufferSubData` is the same upload path as
+`glBufferData`, matched in equivalence against a deferred
+`vkCmdUpdateBuffer` (bytes appear only after `vkQueueSubmit`). A descriptor set is recorded only when it
 holds a buffer, a sampled view, or a sampler; an empty set is
 `BAD_STATE`. Recording it does not run a shader. A draw without them returns `BAD_STATE`.
 `openagc_frontend_pipeline_*` and
@@ -321,34 +362,29 @@ Vulkan-shaped subset, OpenGL-shaped subset, and the gated stages for
 executable pipelines, native layouts, presentation, and console
 qualification — is [roadmap.md](roadmap.md).
 
-## PM4 field-derived host vectors
+## PM4 host vectors (console-aligned FW9.40)
 
-The strictly limited host encoder records the FW9.40-note raw
-`IT_DMA_DATA` memory-to-memory form in seven dwords:
-`0xC0055002`, `0x8C00C000`, source low/high, destination low/high,
-and an aligned byte count (at most `0x1ffffc`). The trailing
-action-based `IT_RELEASE_MEM` EOP form uses eight dwords:
-`0xC0064900`, `0x06703514` (event 0x14, index 5, GCR 0x703, cache 3),
-`0x20000000` (data selection 1), aligned marker low/high, a nonzero
-32-bit sequence, zero, zero. It is followed by the two-dword NOP
-`0xC0001000, 0`. Tests lock down all 17 words for one copy and fence.
+The host encoder and `tools/payload/copy_eop.c` share
+`include/openagc/pm4_fw940.h`. One copy+fence IB is **31 dwords**:
 
-These words are **field-derived fixtures, not independently captured
-per-packet FW9.40 hardware goldens**. The user's local
-`ProsperoAI-main/notes/re/940-gpu-empirics.md` reports that the raw
-spoofer-layout DMA copy executed and that the **action-based** release
-fence fired on physical FW9.40; the related `940-gc-ioctl.md` gives the
-DMA field selectors. The latter note's earlier legacy EOP word order
-is intentionally excluded because the later empirical note says it
-did **not** fire. Public
-[OpenAGC PM4 definitions](https://github.com/OpenAGC/OpenAGC/blob/main/include/agc_pm4.h)
-and its
-[release packet layout](https://github.com/OpenAGC/OpenAGC/blob/main/src/cb_builders.c)
-provide factual field interpretation, not copied implementation.
-Public OpenAGC's other-firmware copy control word is **not** substituted
-for the FW9.40-observed form. No OpenAGC host packet has been tried on
-console hardware, and the deny-all PS5 target has no packet encoder or
-submission path.
+* seven `IT_DMA_DATA` dwords (`0xC0055002`, `0x8C00C000`, source
+  low/high, destination low/high, aligned byte count ≤ `0x1ffffc`);
+* eight action-based `IT_RELEASE_MEM` EOP dwords (`0xC0064900`,
+  `0x06703514`, `0x20000000`, marker low/high, nonzero sequence,
+  zero, zero);
+* sixteen NOP trailer dwords: eight pairs of `0xC0001000, 0`.
+
+That layout was observed on physical FW9.40 (`fw=0x9400008`) with one
+validated `copy_eop.elf` push (`submit=ok completed=1 matched=1`).
+Host tests lock down all 31 words for one copy and fence.
+
+`include/openagc/pm4_compute_fw940.h` encodes a separate **51-dword**
+compute store-const IB (SET_SH_REG compute-bank + DISPATCH_DIRECT
+initiator `0x41` + the same EOP+NOP trailer). One validated
+`store_const.elf` push wrote `0xA5A5A5A5` and fired the marker. The
+host library still never submits (`gpu_submitted=0`); the deny-all PS5
+policy target still has no packet encoder or submission path. Draw and
+render packets remain unavailable.
 
 ## Freestanding PS5 integration
 
@@ -382,7 +418,7 @@ builds only `OpenAGC::ps5_policy`. The CMake target adds
 `-ffreestanding -fno-builtin` with Clang/GCC; the SDK toolchain must supply
 its own `--target`, `-nostdinc`, and target include paths.
 
-## Graphics frontends and presentation: research, not support
+## Graphics frontends on the host core; presentation stays refused
 
 The public
 [PS5_Vulkan overview](https://github.com/mihawk-99/PS5_Vulkan/blob/main/README.md)
@@ -399,10 +435,10 @@ The public
 describes external PSBC output as raw code plus versioned typed metadata;
 neither its compiler nor its shader package writer is used at runtime here.
 
-Future original frontends can map Vulkan 1.0 buffer/image descriptors,
-queue ownership, pipeline state, descriptors, semaphores and render passes
-or OpenGL state and shader programs onto a separately qualified AGC
-backend. The host core holds three of those contracts already: an
+The two original frontends now map Vulkan 1.0 buffer/image descriptors,
+queue ownership, pipeline state, descriptors, semaphores and render
+passes, or OpenGL state and programs, onto this host core. The host core
+holds three of those contracts already: an
 explicit ownership handoff between the copy and graphics paths, a
 validated state rule for every GPU-shaped access, and an exact
 descriptor match for the uniform-buffer and sampled-image bindings a
@@ -410,15 +446,29 @@ plan declares. The shared frontend layer above adds the fourth piece
 both frontends need: one native-to-backend translation table and one
 staging/copy/transition path per device. The staged plan, including
 which stages stay refused and which gates they wait on, is
-[roadmap.md](roadmap.md). The remaining missing
+[roadmap.md](roadmap.md).
+
+What the two frontends deliver today is a host-only,
+**conformance-shaped subset**: enumeration, resources, transfer, fills,
+and inline updates, one color render pass with viewport, scissor, vertex
+and index bindings, descriptor sets, push constants, blend state,
+queries, and inline command recording, all executing the same CPU copies
+and clears the driver and graphics cores already performed. Draws and
+dispatches reach the shader compiler gate and return `NOT_READY` without
+rasterizing or running a workgroup; both frontends report
+`gpu_execution=0` and `presentation=0`, and
+`tests/test_openagc_equivalence.c` is the standing proof that equivalent
+Vulkan and OpenGL work lands on one backend state and one set of bytes.
+
+The remaining missing
 primitives are **native** image layouts and
 tiling beyond the host-linear metadata subset, an independently verified
 build-time shader compiler/metadata adapter and executable pipeline
 contract, real render-target/draw PM4, coherency/barriers, and an
 independent presentation/VideoOut interface. They require their own
-firmware-specific evidence and capability gates. This milestone
-exposes none of Vulkan 1.0, OpenGL, shader execution, image rendering,
-or VideoOut as supported.
+firmware-specific evidence and capability gates. Nothing here executes a
+shader, rasterizes a pixel, presents a frame, or runs on a console, and
+no firmware is qualified for graphics or VideoOut.
 
 ## Firmware-9.40 proof gates: passive baseline only
 

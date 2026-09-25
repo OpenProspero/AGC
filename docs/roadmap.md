@@ -29,12 +29,16 @@ Rules this roadmap obeys:
 | Driver core: memory, buffers, copy queue, fences, reference PM4 | `src/openagc_gpu.c` | Host copy simulation |
 | Graphics core: host-linear images, logical state/owner machine, CPU clear execution | `src/openagc_graphics.c` | Host metadata + CPU fills |
 | Shader intake: structural artifacts and pipeline plans | `src/openagc_shader.c` | No compiler, nothing executes |
-| **Shared frontend core** | `src/openagc_frontend.c` | Translation + shared image I/O |
+| **Shared frontend core** | `src/openagc_frontend.c` | Translation + shared image/buffer I/O and copy |
+| Vulkan 1.0 subset frontend (host) | `src/openagc_vulkan.c` | Transfer, clear, render-pass and pipeline recording |
+| OpenGL subset frontend (host) | `src/openagc_opengl.c` | Same backend, derived from GL commands |
 | Fail-closed PS5 policy | `src/openagc_ps5_policy.c` | Denies every entry point |
 
 Tests today: `openagc_host`, `openagc_gpu`, `openagc_graphics`,
-`openagc_shader`, `openagc_frontend`, `openagc_ps5_policy` (CTest).
-Everything below builds on `include/openagc/{driver,graphics,shader,frontend}.h`.
+`openagc_shader`, `openagc_frontend`, `openagc_vulkan`,
+`openagc_opengl`, `openagc_equivalence`, `openagc_ps5_policy` (CTest).
+Everything below builds on
+`include/openagc/{driver,graphics,shader,frontend,vulkan,opengl}.h`.
 
 ## Target architecture
 
@@ -85,10 +89,10 @@ already offers — that is how the two frontends stay one backend.
 * Capability gating: `host_translation=1`, `gpu_execution=0`,
   `rasterization=0`, `presentation=0`, accepted format/usage masks.
 
-Everything unsupported is refused with an explicit error: sRGB, depth
-testing, R8, GL `GL_RGB8`, transfer-only Vulkan images, `GENERAL`,
-`PREINITIALIZED`, `PRESENT_SRC_KHR`, storage/vertex/index/indirect
-buffer usage, unknown kinds.
+Everything unsupported is refused with an explicit error: sRGB, R8, GL
+`GL_RGB8`, transfer-only Vulkan images, `GENERAL`, `PREINITIALIZED`,
+`PRESENT_SRC_KHR`, the depth read-only layout, storage images and
+storage-buffer usage, unknown kinds.
 
 ## Stage 2 — shared resource core (done)
 
@@ -111,18 +115,25 @@ Delivered:
 4. `openagc_frontend_pipeline_*` — the only plan constructor the
    frontends use. A plan that reports `compiler_verified` or
    `gpu_executable` is refused.
+5. `openagc_frontend_image_copy_rect` and
+   `openagc_frontend_buffer_fill` — the rect copy between two
+   same-format images (row by row through the staging allocation, both
+   images restored) and the repeating four-byte pattern over a
+   copy-destination range. Both frontends reach them through their own
+   entry points rather than copying bytes themselves.
 
 Evidence: `test_shared_heap_timeline_and_plan` creates more buffers
 than the backend allocation cap, reuses a freed block, polls the
 timeline, and builds one compute plan with `gpu_executable=0`.
 
-## Stage 3 — Vulkan 1.0 subset frontend (host)
+## Stage 3 — Vulkan 1.0 subset frontend (host) (done)
 
-Started in `include/openagc/vulkan.h`. The host subset enumerates one
+Delivered in `include/openagc/vulkan.h`. The host subset enumerates one
 physical device whose only queue family is transfer, creates buffers
-and images through the shared frontend, records buffer copies and image
-layout transitions, and publishes a synchronous fence when that recording
-is submitted. Graphics and compute families are absent, not emulated.
+and images through the shared frontend, records buffer copies,
+`vkCmdCopyImage`, `vkCmdFillBuffer`, bounded `vkCmdUpdateBuffer`
+payloads, and image layout transitions, and publishes a synchronous
+fence when that recording is submitted. Graphics and compute families are absent, not emulated.
 A color render pass, viewport, scissor, vertex buffer, index buffer,
 graphics plan, and descriptor set can be recorded on that transfer
 pool. The set keeps every reflected set-0 slot. A vertex attribute must cover every location in the vertex shader input mask. A draw or dispatch
@@ -140,10 +151,11 @@ Scope is a **conformance-shaped subset**, not a full ICD:
   absent (not emulated silently);
 * `VkDeviceMemory`/`VkBuffer`/`VkImage`/`VkImageView` over stages 1-2;
 * command pools/buffers whose recording mirrors the host model:
-  layout transitions, copies, clears, one color render pass, viewport,
-  scissor, vertex and index bindings, and descriptor sets;
-  `vkCmdDraw` and `vkCmdDispatch` return `NOT_READY` from the compiler
-  gate and do not execute; dynamic rendering stays refused;
+  layout transitions, buffer and image copies, fills, inline updates,
+  clears, one color render pass, viewport, scissor, vertex and index
+  bindings, and descriptor sets; `vkCmdDraw` and `vkCmdDispatch` return
+  `NOT_READY` from the compiler gate and do not execute; dynamic
+  rendering stays refused;
 * fences/semaphores through the stage-2 timeline; no blocking waits.
   A semaphore wait that has not been reached returns `NOT_READY` and
   leaves the command buffer executable;
@@ -151,13 +163,16 @@ Scope is a **conformance-shaped subset**, not a full ICD:
 * format support derived from `openagc_frontend_translate_format`, so
   the Vulkan-visible format table and the backend table cannot diverge.
 
-Evidence: a host test binary that runs a Vulkan-shaped resource and
-transfer workload, plus negative tests for every refused entry point.
-Hardware/CTS runs are out of scope for this stage.
+Evidence: `test_openagc_vulkan` runs a Vulkan-shaped resource and
+transfer workload, including `vkCmdCopyImage`, `vkCmdFillBuffer`, and
+`vkCmdUpdateBuffer`, plus negative tests for every refused entry point.
+`test_openagc_equivalence` asserts the Vulkan result matches the OpenGL
+result on the same backend. Hardware/CTS runs are out of scope for this
+stage.
 
-## Stage 4 — OpenGL-style frontend (host)
+## Stage 4 — OpenGL-style frontend (host) (done)
 
-Started in `include/openagc/opengl.h`. A context creates textures,
+Delivered in `include/openagc/opengl.h`. A context creates textures,
 renderbuffers, and one color framebuffer on the shared frontend.
 `glTexSubImage2D` and `glGetTexImage` use the image upload and readback
 paths. Sampling derives `SHADER_READ/GRAPHICS`, an FBO color attachment
@@ -165,8 +180,14 @@ derives `COLOR_TARGET/GRAPHICS`, and `glFinish` publishes the same
 timeline a Vulkan fence uses. The default framebuffer is refused.
 `glDrawArrays` and `glDispatchCompute` use the same compiler gate as
 Vulkan and return `NOT_READY` when a pass or compute plan is bound;
-they do not rasterize or run a workgroup. Pixel unpack accepts a write
-and refuses a read; pixel pack does the opposite. A compute program is
+they do not rasterize or run a workgroup, except the shared
+`host_store_const` path (`1,1,1`) that both frontends execute as a CPU
+write. Pixel unpack accepts a write
+and refuses a read; pixel pack does the opposite. Uniform buffers also
+accept host `glBufferData`/`glGetBufferSubData` (direct memory I/O) while
+`glClearBufferSubData` on a uniform stays refused.
+`glCopyBufferSubData` is the same `openagc_frontend_buffer_copy` path as
+`vkCmdCopyBuffer` (pixel pack/unpack only). A compute program is
 a host pipeline plan with `compiler_verified=0` and `gpu_executable=0`,
 the same plan Vulkan creates. A graphics program is the same kind of
 plan for a vertex and pixel pair whose color target is already
@@ -185,9 +206,13 @@ Deliverables:
 * an explicit **derivation table** mapping implicit GL commands onto
   backend transitions, e.g. `glTexSubImage2D` → transfer-destination
   write, `glReadPixels`/`glGetTexImage` → transfer-source read,
-  sampling a bound texture → `SHADER_READ/GRAPHICS`, FBO attachment →
+  `glCopyTexSubImage2D` → the shared image rect copy,
+  `glClearBufferSubData` → the shared buffer fill, sampling a bound
+  texture → `SHADER_READ/GRAPHICS`, FBO attachment →
   `COLOR_TARGET/GRAPHICS`, `glMemoryBarrier` → recorded transition;
-* `glFinish`/`glFenceSync` mapped onto the stage-2 frontend timeline;
+* `glFinish`/`glFenceSync` mapped onto the stage-2 frontend timeline,
+  and deleting the bound draw target unbinding it rather than leaving
+  the context with a stale pointer;
 * refusals for everything with no backend meaning (geometry and
   compute draws, MSAA, depth testing, sRGB, default framebuffer/presentation).
 
@@ -205,12 +230,28 @@ Blocked by two independent gates:
    after a reviewed build-time artifact, an original metadata adapter,
    and a pinned executable manifest may compiled-artifact intake exist.
 2. **Draw/render PM4**: real render-target and draw packets have no
-   independently verified FW9.40 evidence in this repository, and the
-   current PM4 encoder is field-derived fixtures only.
+   independently verified FW9.40 evidence in this repository. Copy+EOP
+   encoding is console-aligned via `pm4_fw940.h` (31 dwords observed).
+   A separate compute store-const IB (`pm4_compute_fw940.h`, 51 dwords)
+   completed once on console; that does **not** unlock graphics draws
+   or host `gpu_execution`. Steps D–F (one-dword, 16-dword tile, and
+   multi-row CP `IT_WRITE_DATA`) are console-proven on FW9.40. Host
+   color clears (width ≤16, height ≤8) and dword-aligned fills ≤64 bytes
+   use that vehicle. Draw/render packets remain unavailable.
 
-Until both close, stages 3 and 4 must refuse draws and dispatches. If
-they ever open, the pipeline/descriptor contract from stage 2 is the
-single place both frontends plug into.
+Until both close, stages 3 and 4 must refuse draws and general
+dispatches. A narrow exception exists on the host only: the
+console-proven store-const compute blob may run through
+`openagc_gpu_host_store_const` (PM4 encode + CPU write) via
+`openagc_frontend_dispatch` (`host_store_const`, groups `1,1,1`) without
+setting `compiler_verified` or `gpu_executable`, and without opening a
+compute queue. Vulkan records the dispatch with
+`openagc_frontend_dispatch_validate` and executes it on queue submit;
+OpenGL keeps immediate dispatch. Render-pass load/clear pixel fills are
+likewise deferred on Vulkan submit (validate + snapshot at record time)
+while OpenGL framebuffer begin/clear stay immediate. If stages 5+ ever open
+further, the pipeline/descriptor contract from stage 2 is the single
+place both frontends plug into.
 
 ## Stage 6 — coherency, native layouts, tiling
 
@@ -246,8 +287,14 @@ copy, one fence, finite deadline, no retries) are specified in
 | `VkImageLayout`, GL state derivation | `openagc_frontend_translate_image_layout` | image state + owner machine |
 | `VkBufferUsageFlags`, GL buffer target | `openagc_frontend_translate_buffer_usage` | copy source/destination, shader-read |
 | `vkCreateImage`, `glTexImage2D` | `openagc_frontend_image_create` | bounded image + memory + buffer |
+| `vkCmdCopyBuffer`, `glCopyBufferSubData` | `openagc_frontend_buffer_copy` | copy-source → copy-destination |
 | `vkCmdCopyBufferToImage`, `glTexSubImage2D` | `openagc_frontend_image_upload` | transition → copy → transition |
 | `vkCmdCopyImageToBuffer`, `glGetTexImage` | `openagc_frontend_image_readback` | transition → copy → transition |
+| `vkCmdCopyImage`, `glCopyTexSubImage2D` | `openagc_frontend_image_copy_rect` | row copy with both ownership states |
+| `vkCmdFillBuffer`, `glClearBufferSubData` | `openagc_frontend_buffer_fill` | ≤64-byte aligned → WRITE_DATA; else staging fill |
+| `vkCmdClearColorImage` / GL clear | `openagc_frontend_image_clear` | ≤16×8 RGBA → WRITE_DATA; else host fill |
+| `vkCmdClearDepthStencilImage` / GL depth clear | graphics depth clear | ≤16×8 D24S8 → WRITE_DATA; else host fill |
+| `vkCmdUpdateBuffer`, `glBufferSubData` | `openagc_frontend_buffer_upload` | host write; Vulkan defers to submit |
 | `vkCmdPipelineBarrier`, `glMemoryBarrier` | `openagc_frontend_image_transition` | usage-checked state change |
 | `VkFence`, `VkSemaphore`, `glFenceSync` | stage 2 timeline wrapper | single-shot backend fence |
 | `VkQueue` (copy family) | shared core staging path | one host copy queue |

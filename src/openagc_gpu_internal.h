@@ -15,6 +15,15 @@ struct openagc_gpu_device {
     uint64_t memory_budget_bytes;
     uint64_t allocated_bytes;
     uint64_t next_synthetic_va;
+    uint64_t store_const_code_va;
+    uint64_t store_const_marker_va;
+    uint64_t write_data_marker_va;
+    uint32_t *last_compute_words;
+    uint32_t last_compute_word_count;
+    uint32_t compute_sequence;
+    uint32_t *last_write_words;
+    uint32_t last_write_word_count;
+    uint32_t write_sequence;
     uint32_t allocation_count;
     uint32_t buffer_count;
     uint32_t command_buffer_count;

@@ -52,6 +52,8 @@ typedef struct openagc_shader_capabilities {
     uint32_t structural_intake;
     uint32_t compiler_available;
     uint32_t gpu_execution;
+    /* Host CPU simulation of the console-proven store-const compute blob. */
+    uint32_t host_compute_simulation;
 } openagc_shader_capabilities;
 
 typedef struct openagc_shader_binding_decl {
@@ -107,6 +109,8 @@ typedef struct openagc_shader_artifact_info {
     uint32_t texture_count;
     uint32_t compiler_verified;
     uint32_t gpu_executable;
+    /* 1 when code is the console-proven store-const blob; host CPU may simulate it. */
+    uint32_t host_store_const;
     uint8_t code_sha256[32];
 } openagc_shader_artifact_info;
 
@@ -152,7 +156,7 @@ typedef struct openagc_shader_pipeline_info {
 
 #define OPENAGC_SHADER_CAPABILITIES_INIT \
     { (uint32_t)sizeof(openagc_shader_capabilities), 0u, 0u, 0u, 0u, \
-      0u, 0u, 0u, 0u, 0u }
+      0u, 0u, 0u, 0u, 0u, 0u }
 #define OPENAGC_SHADER_ARTIFACT_DESC_INIT \
     { (uint32_t)sizeof(openagc_shader_artifact_desc), OPENAGC_SHADER_API_VERSION, \
       OPENAGC_SHADER_TARGET_GFX1013, OPENAGC_SHADER_COMPILER_UNVERIFIED_FIXTURE, \
@@ -162,7 +166,7 @@ typedef struct openagc_shader_pipeline_info {
       (const uint8_t *)0, 0u }
 #define OPENAGC_SHADER_ARTIFACT_INFO_INIT \
     { (uint32_t)sizeof(openagc_shader_artifact_info), 0u, 0u, 0u, 0u, \
-      0u, 0u, 0u, { 0 } }
+      0u, 0u, 0u, 0u, { 0 } }
 #define OPENAGC_SHADER_PIPELINE_DESC_INIT \
     { (uint32_t)sizeof(openagc_shader_pipeline_desc), OPENAGC_SHADER_API_VERSION, \
       0u, (openagc_shader_artifact *)0, (openagc_shader_artifact *)0, \

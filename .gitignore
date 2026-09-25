@@ -4,3 +4,5 @@
 /.commandcode
 *.pyc
 __pycache__/
+*.elf
+/tools/payload/out
