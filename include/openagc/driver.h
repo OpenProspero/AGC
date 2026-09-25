@@ -4,6 +4,7 @@
 #define OPENAGC_DRIVER_H
 
 #include "openagc/openagc.h"
+#include "openagc/pm4_cb_capture_fw940.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -260,6 +261,35 @@ openagc_result openagc_gpu_device_get_last_write(const openagc_gpu_device *devic
 openagc_result openagc_gpu_host_graphics_register_eop(openagc_gpu_device *device,
                                                       const uint32_t *register_words,
                                                       uint32_t register_dword_count);
+/*
+ * Structural CB/DB capture verify: kind/firmware/count bounds and
+ * SHA-256(words) must match the manifest. Does not invent packets and does
+ * not set evidence_qualified (pin table is empty).
+ */
+openagc_result openagc_cb_capture_verify(const openagc_cb_capture_manifest *manifest,
+                                         const uint32_t *words);
+/*
+ * 1 only when manifest digest matches an independently owned evidence pin.
+ * Always 0 until OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT is nonzero.
+ */
+uint32_t openagc_cb_capture_evidence_qualified(const openagc_cb_capture_manifest *manifest);
+/*
+ * Always UNSUPPORTED_OPERATION. Inventing CB/DB bind or DRAW dwords is
+ * forbidden; supply a verified capture artifact instead.
+ */
+openagc_result openagc_cb_capture_encode_invent(openagc_cb_capture_kind kind,
+                                                uint32_t *words, uint32_t max_words,
+                                                uint32_t *out_count);
+/*
+ * Host-only: verify then copy a CB_BIND or DB_BIND capture into the write
+ * snapshot. DRAW captures remain NOT_READY. Does not submit, does not set
+ * gpu_execution, and leaves evidence_qualified=0 until a pin exists.
+ */
+openagc_result openagc_gpu_host_cb_bind_from_capture(
+    openagc_gpu_device *device, const openagc_cb_capture_manifest *manifest,
+    const uint32_t *words);
+openagc_result openagc_gpu_device_get_cb_capture_info(const openagc_gpu_device *device,
+                                                     openagc_cb_capture_info *info);
 /* Reserve a synthetic host VA span (page-aligned). Never maps console memory. */
 openagc_result openagc_gpu_device_reserve_synthetic_va(openagc_gpu_device *device,
                                                        uint64_t size_bytes,

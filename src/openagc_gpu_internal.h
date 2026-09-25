@@ -24,6 +24,10 @@ struct openagc_gpu_device {
     uint32_t *last_write_words;
     uint32_t last_write_word_count;
     uint32_t write_sequence;
+    uint32_t cb_capture_verified;
+    uint32_t cb_capture_evidence_qualified;
+    uint32_t cb_capture_kind;
+    uint32_t cb_capture_word_count;
     uint32_t allocation_count;
     uint32_t buffer_count;
     uint32_t command_buffer_count;

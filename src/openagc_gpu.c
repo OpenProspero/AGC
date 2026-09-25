@@ -4,10 +4,12 @@
 #include "openagc_graphics_internal.h"
 #include "openagc_shader_internal.h"
 #include "openagc/pm4_fw940.h"
+#include "openagc/pm4_cb_capture_fw940.h"
 #include "openagc/pm4_compute_fw940.h"
 #include "openagc/pm4_write_fw940.h"
 #include "openagc/store_const_code.h"
 #include "openagc/store_span_code.h"
+#include "openagc_sha256.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -1061,6 +1063,122 @@ openagc_result openagc_gpu_host_graphics_register_eop(openagc_gpu_device *device
     packet_words = register_dword_count + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
     device->last_write_word_count = packet_words;
     device->write_sequence = sequence;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_cb_capture_verify(const openagc_cb_capture_manifest *manifest,
+                                         const uint32_t *words)
+{
+    uint8_t digest[32];
+
+    if (manifest == NULL || words == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (manifest->struct_size != sizeof(*manifest) ||
+        manifest->api_version != OPENAGC_CB_CAPTURE_API_VERSION) {
+        return OPENAGC_ERROR_INCOMPATIBLE_VERSION;
+    }
+    if (manifest->firmware_id != OPENAGC_CB_CAPTURE_FW940_ID) {
+        return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+    }
+    if (manifest->kind != OPENAGC_CB_CAPTURE_KIND_CB_BIND &&
+        manifest->kind != OPENAGC_CB_CAPTURE_KIND_DB_BIND &&
+        manifest->kind != OPENAGC_CB_CAPTURE_KIND_DRAW) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (manifest->word_count == 0u ||
+        manifest->word_count > OPENAGC_CB_CAPTURE_MAX_WORDS) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    openagc_sha256((const uint8_t *)words,
+                   (size_t)manifest->word_count * sizeof(uint32_t), digest);
+    if (memcmp(digest, manifest->words_sha256, sizeof(digest)) != 0) {
+        return OPENAGC_ERROR_INTEGRITY;
+    }
+    return OPENAGC_OK;
+}
+
+uint32_t openagc_cb_capture_evidence_qualified(const openagc_cb_capture_manifest *manifest)
+{
+    /*
+     * Evidence pin table is empty (OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT=0).
+     * Do not invent pins; a real FW9.40 cite must be added explicitly.
+     */
+    (void)manifest;
+    return 0u;
+}
+
+openagc_result openagc_cb_capture_encode_invent(openagc_cb_capture_kind kind,
+                                                uint32_t *words, uint32_t max_words,
+                                                uint32_t *out_count)
+{
+    (void)kind;
+    (void)words;
+    (void)max_words;
+    if (out_count != NULL) {
+        *out_count = 0u;
+    }
+    return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+}
+
+openagc_result openagc_gpu_host_cb_bind_from_capture(
+    openagc_gpu_device *device, const openagc_cb_capture_manifest *manifest,
+    const uint32_t *words)
+{
+    openagc_result result;
+    uint32_t sequence;
+
+    if (device == NULL || manifest == NULL || words == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    result = openagc_cb_capture_verify(manifest, words);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    /* DRAW stays gated even with a structurally valid digest until pinned. */
+    if (manifest->kind == OPENAGC_CB_CAPTURE_KIND_DRAW) {
+        return OPENAGC_ERROR_NOT_READY;
+    }
+    if (manifest->kind != OPENAGC_CB_CAPTURE_KIND_CB_BIND &&
+        manifest->kind != OPENAGC_CB_CAPTURE_KIND_DB_BIND) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (manifest->word_count > OPENAGC_GPU_WRITE_DATA_EOP_WORDS) {
+        return OPENAGC_ERROR_CAPACITY;
+    }
+    if (device->write_sequence == UINT32_MAX || device->last_write_words == NULL) {
+        return OPENAGC_ERROR_OVERFLOW;
+    }
+    sequence = device->write_sequence + 1u;
+    memcpy(device->last_write_words, words,
+           (size_t)manifest->word_count * sizeof(uint32_t));
+    device->last_write_word_count = manifest->word_count;
+    device->write_sequence = sequence;
+    device->cb_capture_verified = 1u;
+    device->cb_capture_evidence_qualified =
+        openagc_cb_capture_evidence_qualified(manifest);
+    device->cb_capture_kind = manifest->kind;
+    device->cb_capture_word_count = manifest->word_count;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_gpu_device_get_cb_capture_info(const openagc_gpu_device *device,
+                                                     openagc_cb_capture_info *info)
+{
+    if (device == NULL || info == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (info->struct_size != sizeof(*info)) {
+        return OPENAGC_ERROR_INCOMPATIBLE_VERSION;
+    }
+    if (device->cb_capture_verified == 0u) {
+        return OPENAGC_ERROR_NOT_READY;
+    }
+    info->kind = device->cb_capture_kind;
+    info->word_count = device->cb_capture_word_count;
+    info->capture_verified = device->cb_capture_verified;
+    info->evidence_qualified = device->cb_capture_evidence_qualified;
+    info->gpu_submitted = 0u;
     return OPENAGC_OK;
 }
 

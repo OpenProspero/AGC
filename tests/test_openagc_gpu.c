@@ -6,6 +6,7 @@
 #include "openagc/pm4_write_fw940.h"
 #include "openagc/store_const_code.h"
 #include "openagc/store_span_code.h"
+#include "openagc_sha256.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -971,6 +972,97 @@ static int test_host_graphics_register_eop(void)
     return 0;
 }
 
+static void test_fill_cb_manifest(openagc_cb_capture_manifest *manifest,
+                                  openagc_cb_capture_kind kind,
+                                  const uint32_t *words, uint32_t word_count)
+{
+    *manifest = OPENAGC_CB_CAPTURE_MANIFEST_INIT;
+    manifest->kind = kind;
+    manifest->firmware_id = OPENAGC_CB_CAPTURE_FW940_ID;
+    manifest->word_count = word_count;
+    openagc_sha256((const uint8_t *)words, (size_t)word_count * sizeof(uint32_t),
+                   manifest->words_sha256);
+}
+
+static int test_cb_capture_refuse_and_accept(void)
+{
+    openagc_context_desc context_desc =
+        OPENAGC_CONTEXT_DESC_INIT(OPENAGC_BACKEND_HOST_REFERENCE);
+    openagc_gpu_device_desc device_desc = OPENAGC_GPU_DEVICE_DESC_INIT;
+    openagc_context *context = NULL;
+    openagc_gpu_device *device = NULL;
+    openagc_gpu_submission_view view = OPENAGC_GPU_SUBMISSION_VIEW_INIT;
+    openagc_cb_capture_info info = OPENAGC_CB_CAPTURE_INFO_INIT;
+    openagc_cb_capture_manifest manifest = OPENAGC_CB_CAPTURE_MANIFEST_INIT;
+    /* Structural fixture only — not a real FW9.40 CB/DB IB cite. */
+    static const uint32_t fixture_words[] = { OPENAGC_PM4_NOP_HEADER, 0u,
+                                              OPENAGC_PM4_NOP_HEADER, 0u };
+    uint32_t invent_words[8];
+    uint32_t invent_count = 99u;
+    uint32_t i;
+
+    CHECK(OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT == 0u);
+    EXPECT(openagc_cb_capture_encode_invent(OPENAGC_CB_CAPTURE_KIND_CB_BIND, invent_words,
+                                            8u, &invent_count),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    CHECK(invent_count == 0u);
+    EXPECT(openagc_cb_capture_encode_invent(OPENAGC_CB_CAPTURE_KIND_DRAW, invent_words, 8u,
+                                            &invent_count),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+
+    test_fill_cb_manifest(&manifest, OPENAGC_CB_CAPTURE_KIND_CB_BIND, fixture_words, 4u);
+    EXPECT(openagc_cb_capture_verify(&manifest, fixture_words), OPENAGC_OK);
+    CHECK(openagc_cb_capture_evidence_qualified(&manifest) == 0u);
+
+    manifest.words_sha256[0] ^= 0xffu;
+    EXPECT(openagc_cb_capture_verify(&manifest, fixture_words), OPENAGC_ERROR_INTEGRITY);
+    test_fill_cb_manifest(&manifest, OPENAGC_CB_CAPTURE_KIND_CB_BIND, fixture_words, 4u);
+    manifest.firmware_id = 0u;
+    EXPECT(openagc_cb_capture_verify(&manifest, fixture_words),
+           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    test_fill_cb_manifest(&manifest, OPENAGC_CB_CAPTURE_KIND_NONE, fixture_words, 4u);
+    EXPECT(openagc_cb_capture_verify(&manifest, fixture_words),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+
+    EXPECT(openagc_context_create(&context_desc, &context), OPENAGC_OK);
+    EXPECT(openagc_gpu_device_create(context, &device_desc, &device), OPENAGC_OK);
+    EXPECT(openagc_gpu_device_get_cb_capture_info(device, &info), OPENAGC_ERROR_NOT_READY);
+
+    test_fill_cb_manifest(&manifest, OPENAGC_CB_CAPTURE_KIND_DRAW, fixture_words, 4u);
+    EXPECT(openagc_gpu_host_cb_bind_from_capture(device, &manifest, fixture_words),
+           OPENAGC_ERROR_NOT_READY);
+
+    test_fill_cb_manifest(&manifest, OPENAGC_CB_CAPTURE_KIND_CB_BIND, fixture_words, 4u);
+    EXPECT(openagc_gpu_host_cb_bind_from_capture(device, &manifest, fixture_words),
+           OPENAGC_OK);
+    EXPECT(openagc_gpu_device_get_last_write(device, &view), OPENAGC_OK);
+    CHECK(view.gpu_submitted == 0u);
+    CHECK(view.word_count == 4u);
+    for (i = 0u; i < 4u; ++i) {
+        CHECK(view.words[i] == fixture_words[i]);
+    }
+    EXPECT(openagc_gpu_device_get_cb_capture_info(device, &info), OPENAGC_OK);
+    CHECK(info.kind == OPENAGC_CB_CAPTURE_KIND_CB_BIND);
+    CHECK(info.word_count == 4u);
+    CHECK(info.capture_verified == 1u);
+    CHECK(info.evidence_qualified == 0u);
+    CHECK(info.gpu_submitted == 0u);
+
+    test_fill_cb_manifest(&manifest, OPENAGC_CB_CAPTURE_KIND_DB_BIND, fixture_words, 4u);
+    EXPECT(openagc_gpu_host_cb_bind_from_capture(device, &manifest, fixture_words),
+           OPENAGC_OK);
+    EXPECT(openagc_gpu_device_get_cb_capture_info(device, &info), OPENAGC_OK);
+    CHECK(info.kind == OPENAGC_CB_CAPTURE_KIND_DB_BIND);
+    CHECK(info.evidence_qualified == 0u);
+    CHECK(info.gpu_submitted == 0u);
+
+    EXPECT(openagc_gpu_host_cb_bind_from_capture(NULL, &manifest, fixture_words),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    EXPECT(openagc_gpu_device_destroy(device), OPENAGC_OK);
+    EXPECT(openagc_context_destroy(context), OPENAGC_OK);
+    return 0;
+}
+
 int main(void)
 {
     if (test_device_and_memory() != 0 ||
@@ -983,7 +1075,8 @@ int main(void)
         test_host_store_const_apply() != 0 ||
         test_host_write_data_apply() != 0 ||
         test_host_dma_write_data_apply() != 0 ||
-        test_host_graphics_register_eop() != 0) {
+        test_host_graphics_register_eop() != 0 ||
+        test_cb_capture_refuse_and_accept() != 0) {
         return 1;
     }
     puts("OpenAGC GPU foundation tests passed");

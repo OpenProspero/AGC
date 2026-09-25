@@ -54,6 +54,8 @@ if(NOT OPENAGC_PS5_POLICY_ONLY)
 
         add_executable(openagc_gpu_tests tests/test_openagc_gpu.c)
         target_link_libraries(openagc_gpu_tests PRIVATE OpenAGC::openagc)
+        target_include_directories(openagc_gpu_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src")
         set_target_properties(openagc_gpu_tests PROPERTIES
             C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
         add_test(NAME openagc_gpu COMMAND openagc_gpu_tests)
@@ -81,6 +83,8 @@ if(NOT OPENAGC_PS5_POLICY_ONLY)
 
         add_executable(openagc_frontend_tests tests/test_openagc_frontend.c)
         target_link_libraries(openagc_frontend_tests PRIVATE OpenAGC::openagc)
+        target_include_directories(openagc_frontend_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src")
         set_target_properties(openagc_frontend_tests PROPERTIES
             C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
         add_test(NAME openagc_frontend COMMAND openagc_frontend_tests)
