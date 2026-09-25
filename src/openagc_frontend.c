@@ -928,6 +928,15 @@ openagc_result openagc_frontend_device_get_capabilities(
     return OPENAGC_OK;
 }
 
+openagc_result openagc_frontend_device_get_last_write(
+    const openagc_frontend_device *frontend, openagc_gpu_submission_view *view)
+{
+    if (frontend == NULL || view == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_gpu_device_get_last_write(frontend->device, view);
+}
+
 openagc_result openagc_frontend_device_destroy(openagc_frontend_device *frontend)
 {
     if (frontend == NULL) {
@@ -3593,6 +3602,7 @@ openagc_result openagc_frontend_pipeline_get_info(
     info->texture_count = plan_info.texture_count;
     info->host_register_program_dwords = pipeline->host_register_program_dwords;
     info->psbc_pgm_patched = pipeline->psbc_pgm_patched;
+    info->psbc_code_bound = pipeline->psbc_code_bound;
     return OPENAGC_OK;
 }
 
@@ -3821,6 +3831,18 @@ openagc_result openagc_frontend_pipeline_record_psbc_register_eop(
     return openagc_gpu_host_graphics_register_eop(pipeline->frontend->device,
                                                   pipeline->host_register_program,
                                                   pipeline->host_register_program_dwords);
+}
+
+openagc_result openagc_frontend_pipeline_record_psbc_register_eop_if_bound(
+    openagc_frontend_pipeline *pipeline)
+{
+    if (pipeline == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (pipeline->psbc_code_bound == 0u) {
+        return OPENAGC_OK;
+    }
+    return openagc_frontend_pipeline_record_psbc_register_eop(pipeline);
 }
 
 openagc_result openagc_frontend_pipeline_get_psbc_code_vas(

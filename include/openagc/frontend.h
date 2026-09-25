@@ -222,6 +222,8 @@ typedef struct openagc_frontend_pipeline_info {
     uint32_t host_register_program_dwords;
     /* 1 when SPI_SHADER_PGM_LO/HI were patched from host code VAs (still not gpu_executable). */
     uint32_t psbc_pgm_patched;
+    /* 1 when vertex+pixel PSBC machine code sits on the shared heap (still not gpu_executable). */
+    uint32_t psbc_code_bound;
 } openagc_frontend_pipeline_info;
 
 #define OPENAGC_FRONTEND_CAPABILITIES_INIT \
@@ -247,7 +249,7 @@ typedef struct openagc_frontend_pipeline_info {
 #define OPENAGC_FRONTEND_TIMELINE_INFO_INIT \
     { (uint32_t)sizeof(openagc_frontend_timeline_info), 0u, 0u }
 #define OPENAGC_FRONTEND_PIPELINE_INFO_INIT \
-    { (uint32_t)sizeof(openagc_frontend_pipeline_info), 0u, 0u, 0u, 0u, 0u, 0u, 0u }
+    { (uint32_t)sizeof(openagc_frontend_pipeline_info), 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u }
 
 /* Translation of native frontend enumerants onto the shared host backend. */
 openagc_result openagc_frontend_native_format_at(openagc_frontend_kind kind,
@@ -279,6 +281,12 @@ openagc_result openagc_frontend_device_create(
 openagc_result openagc_frontend_device_get_capabilities(
     const openagc_frontend_device *frontend,
     openagc_frontend_capabilities *capabilities);
+/*
+ * Host-only view of the last WRITE_DATA / register-program + EOP snapshot
+ * (gpu_submitted=0). BAD_STATE until a host write/register path has run.
+ */
+openagc_result openagc_frontend_device_get_last_write(
+    const openagc_frontend_device *frontend, openagc_gpu_submission_view *view);
 openagc_result openagc_frontend_device_destroy(openagc_frontend_device *frontend);
 
 openagc_result openagc_frontend_image_create(openagc_frontend_device *frontend,
@@ -611,6 +619,13 @@ openagc_result openagc_frontend_pipeline_patch_psbc_pgm_vas(
 /* Host-only: register program + shared EOP into the device write snapshot. No DRAW. */
 openagc_result openagc_frontend_pipeline_record_psbc_register_eop(
     openagc_frontend_pipeline *pipeline);
+/*
+ * Host-only: when psbc_code_bound, record the Stage-5 vert+frag register
+ * program + EOP (Step U shape) into the write snapshot. No-op when code is
+ * not heap-bound. Does not set gpu_executable and never emits DRAW.
+ */
+openagc_result openagc_frontend_pipeline_record_psbc_register_eop_if_bound(
+    openagc_frontend_pipeline *pipeline);
 openagc_result openagc_frontend_pipeline_get_psbc_code_vas(
     const openagc_frontend_pipeline *pipeline, uint64_t *vertex_code_va,
     uint64_t *pixel_code_va);
@@ -618,7 +633,9 @@ openagc_result openagc_frontend_pipeline_get_psbc_code_vas(
  * Host-only: place vertex+pixel PSBC machine code on the shared heap
  * (256-byte blocks), patch SPI_SHADER_PGM_LO/HI from those VAs, and retain
  * the spans on the plan. Requires an attached register snapshot. Does not
- * set gpu_executable and never emits DRAW.
+ * set gpu_executable and never emits DRAW. Vulkan defers the Step-U write
+ * snapshot to queue submit after bind_pipeline; OpenGL records on
+ * bind_program via record_psbc_register_eop_if_bound.
  */
 openagc_result openagc_frontend_pipeline_bind_psbc_code(openagc_frontend_pipeline *pipeline);
 openagc_result openagc_frontend_pipeline_destroy(openagc_frontend_pipeline *pipeline);
