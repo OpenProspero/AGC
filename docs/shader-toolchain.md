@@ -151,9 +151,13 @@ wrappers share the same path) remains available for re-attach.
 `>>8` / `>>40` encoding as console-proven compute) without claiming
 `gpu_executable`. `openagc_frontend_pipeline_record_psbc_register_eop`
 stores the register program plus the shared EOP trailer in the host
-write snapshot (`gpu_submitted=0`). Equivalence tests require identical
+write snapshot (`gpu_submitted=0`). After `bind_psbc_code`, Vulkan
+defers that Step-U-shaped record to queue submit when the pipeline is
+bound; OpenGL records on `bind_program` via
+`record_psbc_register_eop_if_bound`. Equivalence tests require identical
 words (including linkage and identical PGM patches), attribute-less
-draw → `NOT_READY` on both frontends, and zero
+draw → `NOT_READY` on both frontends, a 93-dword write view
+(`69 + EOP`) after bind+submit/bind_program, and zero
 `compiler_verified` / `gpu_executable`.
 
 ## Remaining executable-shader gates

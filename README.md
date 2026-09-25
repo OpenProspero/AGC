@@ -107,7 +107,9 @@ policy-only builds, use `-DOPENAGC_PS5_POLICY_ONLY=ON` and link only
   (VK/GL wrappers) remains available. Host can patch
   `SPI_SHADER_PGM_LO/HI` from 256-byte-aligned code VAs and record the
   register program + EOP into the write snapshot (still
-  `gpu_submitted=0`). No DRAW packets.
+  `gpu_submitted=0`). After `bind_psbc_code`, VK queue submit / GL
+  `bind_program` record the Step-U-shaped IB (69 + EOP = 93 dwords).
+  No DRAW packets.
 - Attribute-less plans (`vertex_input_mask == 0`) draw without a VBO;
   both frontends still stop at `NOT_READY`.
 - Build-time compiler job: [`.github/workflows/build-psbc-host.yml`](.github/workflows/build-psbc-host.yml)

@@ -267,7 +267,9 @@ Blocked by two independent gates:
    smoke.frag register program (SET_CONTEXT ×9 + graphics SET_SH ×4 +
    EOP; no linkage) on console. Step U proved the combined vert+frag
    host register program (Step S body + Step T body) + EOP in one IB
-   (93 dwords). Draw/render packets remain unavailable.
+   (93 dwords). Host VK/GL submit records that Step-U-shaped IB from
+   dual PSBC envelopes after `bind_psbc_code` (`gpu_submitted=0`);
+   draws stay `NOT_READY`. Draw/render packets remain unavailable.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
