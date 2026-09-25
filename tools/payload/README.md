@@ -124,7 +124,7 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
 | `store_span8.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,256 bytes; one nc push: `submit=ok completed=1 matched=1 spans=8 lanes=64 marker=1`, exit 0 |
 | `write_data_max_rows.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,216 bytes; one nc push: `submit=ok completed=1 matched=1 rows=8 dwords=16 pitch=64 marker=1`, exit 0 |
 | `write_data_grid.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,216 bytes; one nc push: `submit=ok completed=1 matched=1 rows=8 cols=2 dwords=16 pitch=128 marker=1`, exit 0 |
-| `set_sh_gfx_eop.c` | sdk (`prospero-clang`) | Host encoding locked; console push pending Step O entry conditions |
+| `set_sh_gfx_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,080 bytes; one nc push: `submit=ok completed=1 pairs=4 words=36 marker=1` |
 
 Firmware identity on the console: `fw=0x9400008` (9.40) from
 `/data/libkernel-dump.log`.

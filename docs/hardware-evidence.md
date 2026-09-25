@@ -629,8 +629,22 @@ no retries.
 `smoke.vert.gfx1013.bin`, patches PGM, no SET_CONTEXT, no DRAW.
 
 **Status before push.** Host path ready (`openagc_gpu_host_graphics_register_eop`,
-frontend `patch_psbc_pgm_vas` / `record_psbc_register_eop`). Console
-push is justified once probe confirms the same firmware identity;
-until then the payload stays unpushed.
+frontend `patch_psbc_pgm_vas` / `record_psbc_register_eop` /
+`bind_psbc_code`). Encoding locked in CTest.
 
-**Observed result.** Not yet run.
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`set_sh_gfx_eop.elf`
+(`fbc50bc17d68f9833c710f63f94efae79daefb68bc1a2b7058f1430bc6a7783a`,
+110,080 bytes):
+`submit=ok completed=1 pairs=4 words=36 code_va=0000000200020000 marker=1`,
+exit implied by completed marker. Live klog was attached across the push
+(no fault/hang/timeout string required for acceptance beyond marker=1
+and loader still accepting). Loader still accepted connections on 9021
+afterward.
+This proves graphics-bank SET_SH_REG + EOP on console with PGM patched
+to uploaded smoke.vert code. It does **not** unlock CB/DB, DRAW,
+SET_CONTEXT on console, tiling, VideoOut, or host `gpu_execution`.
+`hardware_qualified` stays **false**. The `openagc_ps5_policy` target
+stays deny-all. The next graphics-adjacent gate remains an independently
+owned FW9.40 capture of CB/DB bind or DRAW packets — inventing those is
+still out of scope.
