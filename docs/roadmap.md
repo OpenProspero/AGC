@@ -260,8 +260,11 @@ Blocked by two independent gates:
    Step O proved graphics-bank SET_SH + EOP; Step P proved minimal
    SET_CONTEXT_REG ×3 + EOP (smoke.vert context_registers only, no
    linkage). Step Q proved SET_CONTEXT ×3 + graphics SET_SH ×4 + EOP
-   in one IB (host snapshot order, no linkage). Draw/render packets
-   remain unavailable.
+   in one IB (host snapshot order, no linkage). Step R proved linkage
+   SET_CONTEXT ×3 + EOP (`ge_cntl` / `stages_en` / `user_vgpr_en` from
+   smoke.vert metadata). The host full register snapshot (context +
+   shader + linkage) is now console-aligned for encode/record only.
+   Draw/render packets remain unavailable.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
