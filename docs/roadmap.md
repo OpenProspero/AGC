@@ -259,8 +259,8 @@ Blocked by two independent gates:
    compute fills sized from the bound buffer up to SPAN_MAX.
    Step O proved graphics-bank SET_SH + EOP; Step P proved minimal
    SET_CONTEXT_REG ×3 + EOP (smoke.vert context_registers only, no
-   linkage). Step Q is the bounded SET_CONTEXT + graphics SET_SH
-   combination (host snapshot order, no linkage). Draw/render packets
+   linkage). Step Q proved SET_CONTEXT ×3 + graphics SET_SH ×4 + EOP
+   in one IB (host snapshot order, no linkage). Draw/render packets
    remain unavailable.
 
 Until both close, stages 3 and 4 must refuse draws and general
