@@ -369,3 +369,268 @@ This proves multi-row CP WRITE_DATA chaining on console. It does
 **not** unlock CB/DB, draws, tiling, VideoOut, or host `gpu_execution`.
 `hardware_qualified` stays **false**. The `openagc_ps5_policy` target
 stays deny-all.
+
+## Bounded experiment: full-width multi-row WRITE_DATA (Step G)
+
+**Question.** Do **two** FW9.40 `IT_WRITE_DATA` packets of **16** data
+dwords each (full clear-tile width) at a non-contiguous 128-byte pitch,
+followed by one shared EOP+NOP trailer, fill both rows correctly?
+
+**Why it matters.** Host color clears and buffer fills of N×64 bytes need
+full-width rows (Step E width × Step F chaining). Step F only proved
+8-dword rows; Step G proves the host max row width on console.
+
+**Payload (`tools/payload/write_data_wide_rows.c`).** One IB of
+`OPENAGC_PM4_WRITE_DATA_STEP_G_EOP_WORDS` (64) dwords. Host
+`openagc_frontend_buffer_fill` routes aligned multiples of 64 bytes
+(≤512) through `openagc_gpu_host_write_data_rows` with 16 dwords/row.
+
+**Status before push.** Encoding + host path ready; CTest updated.
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`write_data_wide_rows.elf`
+(`e24b720ed60fa83b20ec007761508585e304cc8c73a1a24a15feb1e97bc60da8`,
+111,216 bytes):
+`submit=ok completed=1 matched=1 destination=0000000200021000 rows=2 dwords=16 pitch=128 value=a5a5a5a5 marker=1`,
+exit 0. Live klog shows `GFX(pipe0) Game` for pid 94 and
+`exit_value=0`, with no fault/hang/timeout marker in that capture.
+Loader still accepted connections on 9021 afterward.
+This proves full-width multi-row CP WRITE_DATA on console. It does
+**not** unlock CB/DB, draws, tiling, VideoOut, or host `gpu_execution`.
+`hardware_qualified` stays **false**. The `openagc_ps5_policy` target
+stays deny-all.
+
+## Bounded experiment: DMA + WRITE_DATA + EOP (Step H)
+
+**Question.** Can one FW9.40 graphics-queue IB run **IT_DMA_DATA**
+(64 bytes) then **IT_WRITE_DATA** (4 dwords over the destination start)
+then the shared EOP+NOP trailer, with both the DMA tail and the write
+head matching?
+
+**Why it matters.** Host `vkCmdCopyBuffer` followed by `vkCmdFillBuffer`
+/ a clear needs both packet families in one submit without inventing
+CB/DB or draw packets. Steps B and D–G proved each side alone.
+
+**Payload (`tools/payload/dma_write_eop.c`).** One IB of
+`OPENAGC_PM4_DMA_WRITE_STEP_H_EOP_WORDS` (39) dwords. Host
+`openagc_gpu_host_dma_write_data` encodes the same layout and applies
+the CPU copy+fill simulation.
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`dma_write_eop.elf`
+(`42eeb61140c85cd71431e1ed9eedbbdc66068c414e7d5ac17a549c6d2a3ec84e`,
+111,208 bytes):
+`submit=ok completed=1 matched=1 dma_bytes=64 write_dwords=4 dma_tail=11111111 write_head=a5a5a5a5 marker=1`,
+exit 0. Live klog shows `GFX(pipe0) Game` for pid 95 and
+`exit_value=0`, with no fault/hang/timeout marker in that capture.
+Loader still accepted connections on 9021 afterward.
+This proves DMA+WRITE_DATA chaining on console. It does
+**not** unlock CB/DB, draws, tiling, VideoOut, or host `gpu_execution`.
+`hardware_qualified` stays **false**. The `openagc_ps5_policy` target
+stays deny-all.
+
+## Bounded experiment: compute store-span (Step I)
+
+**Question.** Does an 8-thread FW9.40 compute dispatch of the original
+`store_span` kernel (`flat_store_dword` to `s2:s3 + tid*4`, PAI vaddr
+pair / lane rules) write eight `0xA5A5A5A5` dwords and fire EOP?
+
+**Why it matters.** Without citeable CB/draw packets, a multi-lane
+compute store is the next native fill vehicle beyond one-dword
+`store_const` (Step C) and CP WRITE_DATA (Steps D–H). It keeps
+`gpu_execution=0` on the host while matching console PM4.
+
+**Payload (`tools/payload/store_span.c`).** One IB of
+`OPENAGC_PM4_COMPUTE_STORE_WORDS` (51) dwords with `NUM_THREAD_X=8`.
+Host `openagc_gpu_host_store_span` / `host_store_span` artifact flag.
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`store_span.elf`
+(`43eb843c75b05e2629b72054c4358d3133cb0618267f74932693c55c75b4eabf`,
+111,256 bytes):
+`submit=ok completed=1 matched=1 lanes=8 head=a5a5a5a5 tail=a5a5a5a5 beyond=cccccccc marker=1`,
+exit 0. Live klog shows `GFX(pipe0) Game` for pid 96 and
+`exit_value=0`, with no fault/hang/timeout marker in that capture.
+Loader still accepted connections on 9021 afterward.
+This proves 8-lane compute flat_store fills on console. It does
+**not** unlock CB/DB, draws, tiling, VideoOut, or host `gpu_execution`.
+`hardware_qualified` stays **false**. The `openagc_ps5_policy` target
+stays deny-all.
+
+## Bounded experiment: dual compute store-span (Step J)
+
+**Question.** Can one FW9.40 IB run the Step I `store_span` preamble
+once, then **two** USER_DATA+DISPATCH pairs (bases `dest` and
+`dest+32`), then one EOP, filling 16 dwords / 64 bytes?
+
+**Why it matters.** Host compute clears larger than 32 bytes need
+chained dispatches without inventing CB/draw. Step I proved one span;
+Step J proves multi-dispatch compute fill on the same queue.
+
+**Payload (`tools/payload/store_span2.c`).** One IB of
+`OPENAGC_PM4_COMPUTE_STORE_SPAN2_WORDS` (62) dwords. Host
+`openagc_gpu_host_store_span2`.
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`store_span2.elf`
+(`c91f3ffc0b99e886de081c2a78871cd72614bdb0a7865aa48ad27fb2bc66382a`,
+111,256 bytes):
+`submit=ok completed=1 matched=1 lanes=16 head=a5a5a5a5 mid=a5a5a5a5 tail=a5a5a5a5 beyond=cccccccc marker=1`,
+exit 0. Live klog shows `GFX(pipe0) Game` for pid 97 and
+`exit_value=0`, with no fault/hang/timeout marker in that capture.
+Loader still accepted connections on 9021 afterward.
+This proves dual store_span chaining on console. It does
+**not** unlock CB/DB, draws, tiling, VideoOut, or host `gpu_execution`.
+`hardware_qualified` stays **false**. The `openagc_ps5_policy` target
+stays deny-all.
+
+## Bounded experiment: N-span compute store (Step K)
+
+**Question.** Can one FW9.40 IB share the Step I preamble, then run
+**N** USER_DATA+DISPATCH pairs (bases `dest + i*32`, sample N=4 /
+128 bytes), then one EOP, filling `N*8` dwords?
+
+**Why it matters.** Host clears larger than 64 bytes need a general
+N-span encoder (`1..OPENAGC_PM4_COMPUTE_SPAN_MAX`) without inventing
+CB/draw. Step J proved dual; Step K proves the parameterized chain.
+
+**Payload (`tools/payload/store_span4.c`).** One IB of
+`OPENAGC_PM4_COMPUTE_STORE_SPAN4_WORDS` (84) dwords. Host
+`openagc_gpu_host_store_span_n` / dispatch sizing from binding bytes.
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`store_span4.elf`
+(`0c1297e1ffd6aa1dcb71ee686f15fe0cc41ef9db08a6e8a03b80c6923f0947e7`,
+111,256 bytes):
+`submit=ok completed=1 matched=1 spans=4 lanes=32 head=a5a5a5a5 tail=a5a5a5a5 beyond=cccccccc marker=1`,
+exit 0. Live klog shows `GFX(pipe0) Game` for pid 98 and
+`exit_value=0`, with no fault/hang/timeout marker in that capture.
+Loader still accepted connections on 9021 afterward.
+This proves N-span store_span chaining on console (sample N=4). It does
+**not** unlock CB/DB, draws, tiling, VideoOut, or host `gpu_execution`.
+`hardware_qualified` stays **false**. The `openagc_ps5_policy` target
+stays deny-all.
+
+## Bounded experiment: max N-span compute store (Step L)
+
+**Question.** Can one FW9.40 IB run `OPENAGC_PM4_COMPUTE_SPAN_MAX`
+(=8) USER_DATA+DISPATCH pairs (bases `dest + i*32`), then one EOP,
+filling 256 bytes / 64 dwords?
+
+**Why it matters.** Host `host_store_span_n` clamps binding size to
+this ceiling. Console must prove the max chain the host will encode
+before any larger fill invents a new vehicle or CB/draw.
+
+**Payload (`tools/payload/store_span8.c`).** One IB of
+`OPENAGC_PM4_COMPUTE_STORE_SPAN_MAX_WORDS` (128) dwords. Host dispatch
+sizes spans from binding bytes up to this max.
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`store_span8.elf`
+(`143e47e09fd5a1fa7a1f236c82e21f7fcad7ffa3172897404800c320aeaddf20`,
+111,256 bytes):
+`submit=ok completed=1 matched=1 spans=8 lanes=64 head=a5a5a5a5 tail=a5a5a5a5 beyond=cccccccc marker=1`,
+exit 0. Live klog was attached across the push (no fault/hang/timeout
+string in the drained window). Loader still accepted connections on
+9021 afterward.
+This proves the host SPAN_MAX compute fill chain on console. It does
+**not** unlock CB/DB, draws, tiling, VideoOut, or host `gpu_execution`.
+`hardware_qualified` stays **false**. The `openagc_ps5_policy` target
+stays deny-all.
+
+## Bounded experiment: host MAX_ROWS WRITE_DATA window (Step M)
+
+**Question.** Can one FW9.40 IB run **eight** full-width (16-dword)
+`IT_WRITE_DATA` packets at contiguous pitch 64, then one EOP, filling
+the host 16×8 RGBA8 clear window (512 bytes)?
+
+**Why it matters.** Host color/depth clears and buffer fills already
+encode up to `OPENAGC_PM4_WRITE_DATA_MAX_ROWS` (=8) in one IB, but
+console evidence stopped at Step G (2×16). Step M closes that gap so
+the host clear ceiling is console-proven, not assumed.
+
+**Payload (`tools/payload/write_data_max_rows.c`).** One IB of
+`OPENAGC_PM4_WRITE_DATA_STEP_M_EOP_WORDS` (184) dwords. No shader,
+no CB/DB, no draw.
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`write_data_max_rows.elf`
+(`6404db2af9df8d537a98bde92c5e942642a6020a6359eb8f784aaa966ab245c3`,
+111,216 bytes):
+`submit=ok completed=1 matched=1 destination=0000000200021000 rows=8 dwords=16 pitch=64 value=a5a5a5a5 marker=1`,
+exit 0. Live klog shows `GFX(pipe0) Game` for pid 100 and
+`exit_value=0`, with no fault/hang/timeout marker in that capture.
+Loader still accepted connections on 9021 afterward.
+This proves the host MAX_ROWS WRITE_DATA clear window on console. It
+does **not** unlock CB/DB, draws, tiling, VideoOut, or host
+`gpu_execution`. `hardware_qualified` stays **false**. The
+`openagc_ps5_policy` target stays deny-all. The next graphics-adjacent
+gate remains an independently owned FW9.40 capture of CB/DB bind or
+draw packets — inventing those is still out of scope.
+
+## Bounded experiment: multi-column WRITE_DATA grid (Step N)
+
+**Question.** Can one FW9.40 IB run an **8×2** grid of full-width
+(16-dword) `IT_WRITE_DATA` packets at pitch 128, then one EOP, filling
+a 32×8 RGBA8 window (1024 bytes)?
+
+**Why it matters.** Host color clears wider than 16 already tiled into
+multiple single-column IBs (each with its own EOP). Step N proves a
+multi-column grid in **one** IB so VK/GL clears of width 32×height≤8
+share one PM4 snapshot (`openagc_gpu_host_write_data_grid`).
+
+**Payload (`tools/payload/write_data_grid.c`).** One IB of
+`OPENAGC_PM4_WRITE_DATA_STEP_N_EOP_WORDS` (344) dwords. No shader,
+no CB/DB, no draw.
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`write_data_grid.elf`
+(`1e369345bf100a970c248ad1b2ada02b09ffa900aabd4edae8ae5603cbb3a97c`,
+111,216 bytes):
+`submit=ok completed=1 matched=1 destination=0000000200021000 rows=8 cols=2 dwords=16 pitch=128 value=a5a5a5a5 marker=1`,
+exit 0. Live klog shows `GFX(pipe0) Game` for pid 101 and
+`exit_value=0`, with no fault/hang/timeout marker in that capture.
+Loader still accepted connections on 9021 afterward.
+This proves the host MAX_COLS×MAX_ROWS WRITE_DATA clear grid on
+console. It does **not** unlock CB/DB, draws, tiling, VideoOut, or host
+`gpu_execution`. `hardware_qualified` stays **false**. The
+`openagc_ps5_policy` target stays deny-all.
+
+## Bounded experiment: graphics-bank SET_SH + EOP (Step O)
+
+**Question.** Does one FW9.40 IB of **graphics-bank** `SET_SH_REG`
+(opcode `0x76`, low_bits=0) for the four smoke.vert
+`shader_registers` pairs — with `SPI_SHADER_PGM_LO/HI` patched to an
+uploaded 256-byte-aligned code VA using the same `>>8` / `>>40`
+encoding as console-proven compute — plus the shared EOP+NOP trailer,
+complete with a fired marker and no GPU fault?
+
+**Why it matters.** Host PSBC plans already encode SET_CONTEXT/SET_SH
+snapshots and can patch PGM addresses. Compute proved SET_SH with the
+compute-bank bit set; graphics-bank SET_SH (bit clear) is still
+unowned on console. A positive Step O result is the smallest
+graphics-adjacent register program OpenAGC can own **without**
+inventing CB/DB bind or DRAW packets. A negative result retires
+graphics SET_SH as a safe vehicle on this firmware. Either way it does
+**not** unlock draws, tiling, VideoOut, or host `gpu_execution`.
+
+**Why not SET_CONTEXT or DRAW yet.** SET_CONTEXT_REG can touch SPI and
+geometry state that may interact with the compositor; DRAW and CB/DB
+still lack an independently owned FW9.40 capture. Step O deliberately
+omits both.
+
+**Entry conditions.** Steps A–N proven on `fw=0x9400008`; host encoding
+locked in `pm4_graphics_fw940.h` / `psbc_metadata.h` (PGM patch +
+`openagc_pm4_encode_graphics_sh_eop`); payload ELF-validated; one push,
+no retries.
+
+**Payload (`tools/payload/set_sh_gfx_eop.c`).** One IB of
+`OPENAGC_PM4_GRAPHICS_SH_EOP_WORDS(4)` dwords. Uploads
+`smoke.vert.gfx1013.bin`, patches PGM, no SET_CONTEXT, no DRAW.
+
+**Status before push.** Host path ready (`openagc_gpu_host_graphics_register_eop`,
+frontend `patch_psbc_pgm_vas` / `record_psbc_register_eop`). Console
+push is justified once probe confirms the same firmware identity;
+until then the payload stays unpushed.
+
+**Observed result.** Not yet run.

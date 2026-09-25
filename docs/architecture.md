@@ -218,12 +218,12 @@ structural metadata: nothing reads a texel.
 
 The release-tagged, build-time-only
 [compiler provenance plan](shader-toolchain.md) pins public source
-revisions without vendoring or fetching them. No compatible compiler,
-actual compiled artifact, local binary digest, or manifest is present.
-The code checks a claimed PSBC provenance envelope for the published
-source/release pin, then returns `NOT_READY` instead of accepting it.
-Fixtures in CTest contain arbitrary test bytes, **not** AGC shader
-code. No external Mesa/OpenGNM runtime is linked.
+revisions without vendoring or fetching them. Host intake may accept a
+pin-checked `OPENGNM_PSBC` envelope as a structural artifact
+(`psbc_envelope=1`) after reflection and descriptor cross-checks; it
+still reports `compiler_verified=0` and `gpu_executable=0`, and
+`require_compiler` returns `NOT_READY`. Fixtures in CTest may also use
+arbitrary unverified bytes. No external Mesa/OpenGNM runtime is linked.
 
 ## Shared frontend layer
 
@@ -267,7 +267,12 @@ device. `openagc_frontend_buffer_fill` is its write-only counterpart: one
 repeating four-byte pattern over a copy-destination range. Dword-aligned
 fills up to 64 bytes (a 4×4 RGBA8 tile) use the console-proven CP
 `IT_WRITE_DATA` host path (`openagc_gpu_host_write_data`, PM4 encode +
-CPU write, `gpu_execution` stays 0); larger fills stay chunked through
+CPU write, `gpu_execution` stays 0); aligned spans up to 512 bytes use
+full-width multi-row WRITE_DATA plus a remainder packet when needed
+(Steps F/G, `openagc_gpu_host_write_data_buffer_rows`); a copy followed
+by a head fill uses the console Step H composite
+(`openagc_frontend_buffer_copy_then_fill` / Vulkan submit coalesce);
+other fills stay chunked through
 the staging allocation and DMA copy vehicle. Refused for a buffer without
 the copy-destination bit. `openagc_frontend_image_copy_rect` is the
 image-to-image form of the same path: a rectangle of one image is copied
@@ -277,10 +282,10 @@ destination to `TRANSFER_DESTINATION/COPY` for the copy and both
 restored afterwards. A copy from an image to itself, a format mismatch,
 a rectangle that leaves either image, an unbound image, and an image on
 another frontend device are refused before a byte moves. `openagc_frontend_image_clear` fills a color target through the
-graphics host clear. Contiguous or per-row RGBA/BGRA/D24S8 scissors of
-at most 16×8 pixels use the console-proven CP `IT_WRITE_DATA` host path
-(Steps D–F); larger scissors keep the legacy per-pixel host fill. Either
-way `gpu_execution` stays 0. A Vulkan
+graphics host clear. Contiguous or per-row RGBA/BGRA/D24S8 scissors of at most 16×8 pixels
+use one WRITE_DATA window; a 32×8 scissor uses one multi-column grid
+(Step N); larger scissors are tiled into those windows (Steps D–G, M,
+N). Either way `gpu_execution` stays 0. A Vulkan
 image view is an identity 2D color view of one mip and one layer; it
 does not allocate a second image, and the image stays alive until every
 view is destroyed. Presentation,
@@ -323,11 +328,14 @@ A zero count completes without a launch. A count above 65535 is
 `host_store_const=1`: a `1,1,1` dispatch writes `0xA5A5A5A5` into plan
 slot 0 through `openagc_gpu_host_store_const` (encodes the 51-dword
 FW9.40 compute PM4 snapshot with `gpu_submitted=0`, then CPU-writes the
-dword) without claiming `compiler_verified` or `gpu_executable`. Vulkan
+dword) without claiming `compiler_verified` or `gpu_executable`. The
+console-proven `store_span` blob is likewise `host_store_span=1`: binding
+size selects 1..`OPENAGC_PM4_COMPUTE_SPAN_MAX` chained 8-lane fills via
+`openagc_gpu_host_store_span_n` (Steps I–L). Vulkan
 `vkCmdDispatch` records that work and runs it on
 `vkQueueSubmit` (same deferred model as copies); OpenGL
 `glDispatchCompute` runs it immediately. `test_openagc_equivalence`
-asserts both frontends write the same word after the Vulkan submit.
+asserts both frontends write the same words after the Vulkan submit.
 Render-pass load ops, `vkCmdClearAttachments`, and `vkCmdClearDepth`
 follow the same deferred rule: recording validates and snapshots the
 work, and pixel fills run on queue submit. OpenGL framebuffer begin and
@@ -385,6 +393,26 @@ initiator `0x41` + the same EOP+NOP trailer). One validated
 host library still never submits (`gpu_submitted=0`); the deny-all PS5
 policy target still has no packet encoder or submission path. Draw and
 render packets remain unavailable.
+
+`include/openagc/pm4_graphics_fw940.h` encodes host-only
+`SET_CONTEXT_REG` (0x69) and graphics-bank `SET_SH_REG` (0x76) from
+PSBC smoke metadata register pairs (`psbc_metadata.h`), including
+vertex linkage context pairs (`ge_cntl`, `stages_en`, `user_vgpr_en`)
+when present.
+`DRAW_INDEX_AUTO` (0x2D) is cited but never emitted. Runtime
+`OPENGNM_PSBC` intake accepts pin-checked empty-binding envelopes
+(`compiler_binary_sha256` must equal
+`OPENAGC_SHADER_PINNED_PSBC_EXECUTABLE_SHA256`) as structural artifacts
+with `psbc_envelope=1`; `compiler_verified` and `gpu_executable` stay 0.
+Envelope metadata is retained on the artifact for host register encoding.
+
+Graphics plans auto-attach a host register-program snapshot when both
+stages are envelopes; `openagc_frontend_pipeline_set_psbc_register_snapshot`
+(thin wrappers on Vulkan and OpenGL) remains for explicit re-attach.
+The snapshot is byte-identical across both frontends, reports
+`host_register_program_dwords` on pipeline info, and leaves
+`compiler_verified` / `gpu_executable` at zero. Attribute-less draws
+(`vertex_input_mask == 0`) need no VBO and still return `NOT_READY`.
 
 ## Freestanding PS5 integration
 

@@ -1,8 +1,9 @@
 /build/
 /out/
+/tools/payload/out/
 /CMakeUserPresets.json
 /.commandcode
 *.pyc
 __pycache__/
-*.elf
-/tools/payload/out
+*.bin
+/tests/fixtures/psbc_smoke

@@ -17,9 +17,11 @@ Rules this roadmap obeys:
 3. No reference project (PS5_Vulkan, ps5-opengl, Mesa, OpenGNM, public
    OpenAGC) is vendored, linked, or copied. Public work is read as
    architectural research only.
-4. `src/openagc_ps5_policy.c` stays deny-all. Every new public symbol
-   gets a fail-closed stub there, and the host library never appears in
-   a PS5 image.
+4. `src/openagc_ps5_policy.c` stays fail-closed for unqualified
+   firmware. Every new public symbol gets a deny stub there until a
+   reviewed evidence path opens it; the host library never appears in
+   a PS5 image. Deny-all is the gate while FW is unqualified — not the
+   product end state.
 
 ## Where we are
 
@@ -224,20 +226,38 @@ for equivalent work, asserted by shared helper checks in CTest.
 
 Blocked by two independent gates:
 
-1. **Compiler**: no pinned, verified PSBC/OpenGNM compiler is installed;
-   `openagc_shader_artifact_require_compiler` always returns
-   `NOT_READY`. See [shader-toolchain.md](shader-toolchain.md). Only
-   after a reviewed build-time artifact, an original metadata adapter,
-   and a pinned executable manifest may compiled-artifact intake exist.
+1. **Compiler / executable shaders**: build-time PSBC pin, typed
+   reflection, host register-program encoder, and pin-checked
+   `OPENGNM_PSBC` envelope intake exist
+   (`OPENAGC_SHADER_PINNED_PSBC_EXECUTABLE_SHA256`, `psbc_metadata.h`,
+   `pm4_graphics_fw940.h`, fixtures under `tests/fixtures/psbc_smoke/`).
+   Accepted envelopes report `psbc_envelope=1` with
+   `compiler_verified=0` and `gpu_executable=0`;
+   `openagc_shader_artifact_require_compiler` still returns `NOT_READY`.
+   Envelope metadata is retained on the artifact; a graphics plan with
+   both stages as envelopes auto-attaches the host SET_CONTEXT/SET_SH
+   register snapshot including vertex linkage context pairs (still
+   non-executable). Attribute-less plans (`vertex_input_mask == 0`)
+   record draws without a VBO and still stop at `NOT_READY`. Non-empty
+   PSBC descriptor bindings remain unsupported. See
+   [shader-toolchain.md](shader-toolchain.md).
 2. **Draw/render PM4**: real render-target and draw packets have no
    independently verified FW9.40 evidence in this repository. Copy+EOP
    encoding is console-aligned via `pm4_fw940.h` (31 dwords observed).
    A separate compute store-const IB (`pm4_compute_fw940.h`, 51 dwords)
-   completed once on console; that does **not** unlock graphics draws
-   or host `gpu_execution`. Steps D–F (one-dword, 16-dword tile, and
-   multi-row CP `IT_WRITE_DATA`) are console-proven on FW9.40. Host
-   color clears (width ≤16, height ≤8) and dword-aligned fills ≤64 bytes
-   use that vehicle. Draw/render packets remain unavailable.
+   completed once on console; Steps I–L extend that to 8-lane
+   `store_span` chains (1/2/4/8 spans through
+   `OPENAGC_PM4_COMPUTE_SPAN_MAX`) without graphics draws or
+   `gpu_execution`. Steps D–H (WRITE_DATA and DMA+WRITE_DATA) are
+   console-proven on FW9.40; Step M proves the host
+   `OPENAGC_PM4_WRITE_DATA_MAX_ROWS` (=8) full-width clear window in
+   one IB; Step N proves `MAX_COLS` (=2) × MAX_ROWS in one IB
+   (`openagc_gpu_host_write_data_grid`). Host color/depth clears tile
+   any scissor into ≤32×8 WRITE_DATA windows; dword-aligned fills ≤512
+   bytes use the single-column vehicle; `openagc_gpu_host_dma_write_data`
+   records copy-then-fill; `host_store_span` / `host_store_span_n` cover
+   compute fills sized from the bound buffer up to SPAN_MAX.
+   Draw/render packets remain unavailable.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
@@ -291,9 +311,11 @@ copy, one fence, finite deadline, no retries) are specified in
 | `vkCmdCopyBufferToImage`, `glTexSubImage2D` | `openagc_frontend_image_upload` | transition → copy → transition |
 | `vkCmdCopyImageToBuffer`, `glGetTexImage` | `openagc_frontend_image_readback` | transition → copy → transition |
 | `vkCmdCopyImage`, `glCopyTexSubImage2D` | `openagc_frontend_image_copy_rect` | row copy with both ownership states |
-| `vkCmdFillBuffer`, `glClearBufferSubData` | `openagc_frontend_buffer_fill` | ≤64-byte aligned → WRITE_DATA; else staging fill |
-| `vkCmdClearColorImage` / GL clear | `openagc_frontend_image_clear` | ≤16×8 RGBA → WRITE_DATA; else host fill |
-| `vkCmdClearDepthStencilImage` / GL depth clear | graphics depth clear | ≤16×8 D24S8 → WRITE_DATA; else host fill |
+| `vkCmdFillBuffer`, `glClearBufferSubData` | `openagc_frontend_buffer_fill` | ≤512 B aligned → WRITE_DATA rows + rem; else staging |
+| `vkCmdCopyBuffer` then `vkCmdFillBuffer` (head) | `openagc_frontend_buffer_copy_then_fill` | Step H DMA+WRITE_DATA coalesce on submit |
+| `glCopyBufferThenClearSubData` | same | immediate Step H composite |
+| `vkCmdClearColorImage` / GL clear | `openagc_frontend_image_clear` | tiled ≤16×8 WRITE_DATA windows (Steps D–G) |
+| `vkCmdClearDepthStencilImage` / GL depth clear | graphics depth clear | tiled ≤16×8 D24S8 WRITE_DATA windows |
 | `vkCmdUpdateBuffer`, `glBufferSubData` | `openagc_frontend_buffer_upload` | host write; Vulkan defers to submit |
 | `vkCmdPipelineBarrier`, `glMemoryBarrier` | `openagc_frontend_image_transition` | usage-checked state change |
 | `VkFence`, `VkSemaphore`, `glFenceSync` | stage 2 timeline wrapper | single-shot backend fence |

@@ -1,34 +1,73 @@
 # OpenAGC
 
-OpenProspero's original, GPL-3.0-or-later C99 foundation for a future GPU
-driver. This release has a **host-testable driver core** for resource
-ownership, bounded copy command buffers, queue/fence behavior, and
-graphics-resource state recording. It is **not** a working PS5 GPU or
-display driver.
+OpenProspero's GPL-3.0-or-later C99 path to a **working PS5 GPU and
+display driver**, with Vulkan 1.0 and OpenGL running natively on one
+shared OpenAGC backend.
 
-| Capability | Host reference (`OpenAGC::openagc`) | PS5 policy (`OpenAGC::ps5_policy`) |
-| --- | --- | --- |
-| C99 ABI and typed validation | Versioned headers, explicit errors | Same symbols; fail closed |
-| Memory and buffers | Owned host allocations, one-time binding, capacity and lifetime checks | Unavailable |
-| Copy command buffers | Bounded host PM4 word recording and synchronous CPU copy simulation | Unavailable |
-| Queues and fences | One copy queue, synchronous simulated completion, poll/reset | Unavailable |
-| Images and render state | Host-linear RGBA8/BGRA8 metadata with declared color-target/sampled usage, explicit logical owner/state transitions including copy-queue and shader-read ownership, scissor and clear recording, and deterministic **CPU** clear execution into bound host memory | Unavailable |
-| Shader intake and pipelines | SHA-256-checked **unverified fixture** snapshots and host-only vertex/pixel/compute pipeline plans with exactly matched uniform-buffer and sampled-image descriptors; no compiler or executable shader | Unavailable |
-| Shared frontend core (Vulkan/OpenGL) | Versioned native-to-backend translation, one staging/copy/transition path per device, CPU image and buffer upload/readback that preserves logical state and owner, and per-usage copy direction | Unavailable |
-| Native tiling, executable shader pipelines, draws, rasterization, VideoOut | Not implemented | Not implemented |
-| Vulkan 1.0 and OpenGL frontends | Host subsets over the shared core: enumeration, transfer, clears, render-pass and pipeline recording; draws refused; one host-simulated store-const compute dispatch | Unavailable |
+## Goal
 
-**Firmware 9.40 is not qualified.** Unknown firmware is not qualified either;
-in fact no PS5 firmware has been qualified. The PS5 policy target returns
-`OPENAGC_ERROR_UNSUPPORTED_FIRMWARE` before any allocation, ioctl, kernel
-memory operation, VideoOut call, or GPU submission. The firmware numbers in the
-context descriptor are untrusted diagnostic hints, not an authorization
-mechanism. Neither target contains console graphics or video-output code.
-Do not use this project to attempt hardware initialization or testing.
+Become a real PS5 GPU/display driver: qualified firmware submit,
+executable pipelines, draws, and presentation — with host-testable
+VK/GL frontends on the same core. Current gaps (compiler gate, missing
+CB/DRAW evidence, presentation) are tracked stages, not the product
+identity.
 
-## Build and use
+## Current status (honest)
 
-With a C99-capable GCC or recent MSVC toolchain and CMake:
+| Area | Status |
+| --- | --- |
+| Memory, buffers, copy queues, fences | Host simulation with explicit errors |
+| Images / clears | Host-linear RGBA8/BGRA8; CPU clear fills; WRITE_DATA tiling ≤32×8 |
+| Compute (narrow) | Console-proven `store_const` and `store_span` (1–8 lanes) via host CPU path |
+| Shader intake | Unverified fixtures **and** pin-checked `OPENGNM_PSBC` envelopes (`psbc_envelope=1`) |
+| Pipelines | Structural plans; host SET_CONTEXT/SET_SH (+ vertex linkage) snapshot from PSBC |
+| Vulkan / OpenGL | Shared frontend core; equivalent work lands on the same backend bytes |
+| Attribute-less draws | Bind + draw recorded; still `NOT_READY` (no CB/DRAW / no `gpu_executable`) |
+| Draws / general dispatch | Refused (`NOT_READY` from compiler gate) |
+| Presentation / swapchain | Refused until a display path exists |
+| `compiler_verified` / `gpu_executable` | Always **0** on accepted plans today |
+
+## PS5 policy (fail-closed until qualified)
+
+| Area | `OpenAGC::ps5_policy` |
+| --- | --- |
+| Same public symbols | Fail closed: `UNSUPPORTED_FIRMWARE` while FW is unqualified |
+| Host OpenAGC library | Must **not** be linked into a PS5 image |
+| FW9.40 | **Not** hardware-qualified yet; no submit path in policy |
+
+Unknown firmware is not qualified either. Firmware fields in descriptors
+are diagnostic hints, not authorization. Policy opens only when
+evidence qualifies a path — deny-all is the gate, not the end state.
+
+## Stage gates (short)
+
+See [docs/roadmap.md](docs/roadmap.md) for the full staged plan.
+
+1. **Stages 1–4 (host)** — shared frontend core, VK/GL subsets, refuse unsupported ops. Done on host.
+2. **Stage 5** — still gated:
+   - **Compiler / executable shaders**: pin-checked PSBC envelopes may be
+     intaken as structural (`psbc_envelope=1`); host register programs
+     include context, shader, and vertex linkage pairs; `require_compiler`
+     still returns `NOT_READY`; nothing sets `gpu_executable`.
+   - **Draw / CB/DB PM4**: no independently owned FW9.40 color-buffer or
+     DRAW capture in-tree; public AMD opcodes alone are not enough.
+3. **Stages 6–7** — native tiling / coherency and presentation: refused
+   until separate evidence.
+
+## Console evidence (FW9.40, host-aligned only)
+
+Separate SDK payloads on console proved, among other steps:
+
+- DMA + EOP copy (`pm4_fw940.h`, 31 dwords)
+- WRITE_DATA fills through MAX_ROWS / MAX_COLS grid (Steps D–H, M, N)
+- Compute `store_const` and `store_span` chains through SPAN_MAX (I–L)
+
+The host library encodes aligned PM4 snapshots and simulates on CPU; it
+**never** submits those words to a console from this tree until a
+reviewed, evidence-backed path exists. Draw/render packets remain
+unavailable.
+
+## Build
 
 ```text
 cmake -S . -B build
@@ -36,166 +75,64 @@ cmake --build build --config Debug
 ctest --test-dir build --build-config Debug --output-on-failure
 ```
 
-The public C/C++-compatible header is `include/openagc/openagc.h` (include
-`<openagc/openagc.h>`); the additive driver ABI is
-`include/openagc/driver.h` (include `<openagc/driver.h>`). Link
-`OpenAGC::openagc` in a host CMake project using `add_subdirectory`.
-Create an `OPENAGC_BACKEND_HOST_REFERENCE` context, then a
-`openagc_gpu_device` using `OPENAGC_GPU_DEVICE_DESC_INIT`. The driver
-API allocates bounded host memory, binds typed copy-source/destination
-buffers, records validated copies, and submits them to a **CPU-only**
-copy queue with an explicit fence. `openagc_gpu_command_buffer_get_recording`
-and `openagc_gpu_queue_get_last_submission` expose read-only, deterministic
-PM4 snapshots with **synthetic host addresses**; those words must never be
-sent to a console. `openagc_gpu_fence_poll` distinguishes unsignaled
-(`OPENAGC_ERROR_NOT_READY`) from completed host simulation.
+Headers (include as `<openagc/….h>`):
 
-The additive graphics header `include/openagc/graphics.h` (include
-`<openagc/graphics.h>`) defines versioned image and render-state descriptors.
-It supports only single-layer, single-mip, single-sample **host-linear**
-RGBA8/BGRA8 images bound to same-device host memory, with declared
-color-target and/or sampled usage. A graphics command buffer records
-logical `UNDEFINED/HOST` to `COLOR_TARGET/GRAPHICS` ownership
-transitions, one bound target, a bounded scissor, and RGBA8 clear
-commands; an image may only enter a state its usage declares, so a
-color-target-only image cannot reach `SHADER_READ/GRAPHICS` and a
-sampled-only image cannot reach `COLOR_TARGET/GRAPHICS`. An image may
-also be handed to the copy queue as `TRANSFER_DESTINATION/COPY` (an
-upload target) or `TRANSFER_SOURCE/COPY` (a readback source), and the
-copy path enforces that direction: a copy that overlaps image memory is
-refused unless the image is copy-owned in the matching state, both when
-the copy is recorded and again when the queue preflights the whole
-submission. `apply_host_state` commits metadata only. After it succeeds,
-a separate `openagc_graphics_command_buffer_execute_host` runs the
-recorded clears as deterministic scissor-clipped **CPU** fills of the
-bound host-linear image bytes: RGBA8 stores R,G,B,A and BGRA8 stores
-B,G,R,A, row padding is never written, the reported `gpu_submitted`
-stays 0, and the logical state/owner is unchanged. It creates no
-graphics queue, GPU packet, fence, or display frame, and it draws
-nothing. Unsupported formats, native tiling, scanout usage, depth,
-multisampling, and presentation fail explicitly. Query
-`openagc_graphics_get_capabilities` rather than inferring rendering
-support from successful recording.
+| Header | Role |
+| --- | --- |
+| `openagc.h` | Core ABI |
+| `driver.h` | GPU device / copy / fence |
+| `graphics.h` | Images and host clear path |
+| `shader.h` | Artifact intake and pipeline plans |
+| `frontend.h` | Shared VK/GL translation core |
+| `vulkan.h` / `opengl.h` | Host frontend subsets |
+| `psbc_metadata.h` / `pm4_*_fw940.h` | PSBC reflection and PM4 helpers |
 
-`include/openagc/shader.h` (include `<openagc/shader.h>`) adds an
-immutable **structural-only** gfx1013 artifact/reflection intake and
-vertex/pixel/compute pipeline-plan validator. It deep-copies caller
-bytes and typed reflection, verifies the code SHA-256, and checks
-stage linkage, color format, uniform-buffer bindings, sampled-image
-declarations, ownership, capacity, and object lifetimes. A plan's
-supplied uniform buffers and sampled images must match the reflected
-binding slots exactly: buffers carry the shader-read usage and cover
-the declared minimum, while sampled images carry the sampled usage,
-sit in `SHADER_READ/GRAPHICS`, and match the declared format. Both
-kinds are retained until the plan is destroyed. Host fixtures are
-labeled `OPENAGC_SHADER_COMPILER_UNVERIFIED_FIXTURE`; they are **not**
-compiled shaders. No PSBC/Mesa compiler or executable digest is
-installed, so a claimed OpenGNM PSBC artifact returns
-`OPENAGC_ERROR_NOT_READY`, and every accepted plan reports
-`compiler_verified=0` and `gpu_executable=0`. There is no shader
-command recording or execution, and nothing samples an image.
-See the [pinned build-time compiler plan](docs/shader-toolchain.md)
-before attempting any real artifact. The user-approved
-[GitHub Actions compiler build](.github/workflows/build-psbc-host.yml)
-is **manual-only**; it never runs on a push, and even a successful
-private compiler artifact cannot unlock PS5 execution or runtime
-shader intake.
+Link `OpenAGC::openagc` on the host via `add_subdirectory`. For PS5
+policy-only builds, use `-DOPENAGC_PS5_POLICY_ONLY=ON` and link only
+`OpenAGC::ps5_policy`. Recipe notes: [docs/architecture.md](docs/architecture.md).
 
-`include/openagc/frontend.h` (include `<openagc/frontend.h>`) is the
-shared core a Vulkan 1.0 or OpenGL frontend reuses instead of talking
-to the driver directly. It translates published Vulkan and OpenGL
-enumerants onto this backend — format, image usage, image layout,
-buffer usage — and refuses everything the host core cannot represent:
-sRGB and R8 images, `GENERAL`, `PREINITIALIZED`, `PRESENT_SRC_KHR`, the
-depth read-only layout, storage or transfer-only images, and
-storage-buffer usage. `openagc_frontend_device_create` builds one
-staging allocation, one copy queue, and one transition recorder per
-backend device. `openagc_frontend_image_upload` and
-`openagc_frontend_image_readback` move bytes through that copy path
-with **CPU** copies and restore the image's logical state and owner
-afterwards, so neither frontend reimplements the ownership dance.
-`openagc_frontend_image_copy_rect` copies a rectangle between two
-same-format images the same way, row by row, and leaves both images in
-the state and owner they had; a self copy and a format mismatch are
-refused. `openagc_frontend_buffer_*` gives both frontends the same
-buffer object over that path, with the copy direction enforced by the
-translated usage, so a GL unpack buffer cannot be read and a pack
-buffer cannot be written; `openagc_frontend_buffer_fill` writes a
-repeating four-byte pattern into a copy-destination range.
-Capabilities report `host_translation=1`, `host_image_copy=1`, and
-`host_buffer_fill=1` with `gpu_execution=0`, `rasterization=0`, and
-`presentation=0`. The staged plan for both frontends, including what
-stays refused, is [docs/roadmap.md](docs/roadmap.md).
+## Shader / PSBC (host)
 
-`include/openagc/vulkan.h` and `include/openagc/opengl.h` are the two
-host frontends over that core. The Vulkan subset enumerates one
-physical device whose only queue family is transfer, creates buffers,
-images, and views, and records buffer copies, `vkCmdCopyImage`,
-`vkCmdFillBuffer`, bounded `vkCmdUpdateBuffer` payloads, clears, and
-layout transitions; fences and semaphores share the stage-2 timeline.
-The OpenGL subset derives the same backend state from its own commands:
-`glTexSubImage2D`/`glGetTexImage` are the upload and readback pair,
-`glCopyTexSubImage2D` is the rect copy, an FBO attachment derives
-`COLOR_TARGET/GRAPHICS`, sampling derives `SHADER_READ/GRAPHICS`,
-`glClearBufferSubData` is the buffer fill, and
-`glFinish`/`glFenceSync` publish the timeline a Vulkan fence uses. Both
-record one color render pass, viewports, scissors, vertex and index
-bindings, descriptor sets, push constants, blend state, and queries.
-`vkCmdDraw`/`vkCmdDispatch` and `glDrawArrays`/`glDispatchCompute`
-return `NOT_READY` from the shader compiler gate and rasterize nothing,
-except the narrow host_store_const compute path (`1,1,1` →
-`0xA5A5A5A5`) proven on console and asserted by
-`test_openagc_equivalence`;
-swapchains, the default framebuffer, presentation, depth testing, sRGB,
-MSAA, and native tiling stay refused, and both frontends report
-`gpu_execution=0` and `presentation=0`.
-`tests/test_openagc_equivalence.c` asserts that equivalent Vulkan and
-OpenGL work lands on the same backend state, the same bytes, and the
-same pixels.
+- Fixtures: `OPENAGC_SHADER_COMPILER_UNVERIFIED_FIXTURE` (structural only).
+- Pin-checked envelopes: `OPENAGC_SHADER_COMPILER_OPENGNM_PSBC` with
+  matching `OPENAGC_SHADER_PINNED_PSBC_*` digest, revision, and metadata
+  v14. Empty `descriptor_bindings` in metadata require zero OpenAGC
+  bindings/textures. Non-empty bindings stay `UNSUPPORTED_OPERATION`.
+- Accepted PSBC artifacts report `psbc_envelope=1`, still
+  `compiler_verified=0` and `gpu_executable=0`.
+- Intake retains envelope metadata; graphics create auto-attaches the
+  host SET_CONTEXT/SET_SH snapshot (plus vertex linkage context pairs)
+  when both stages are envelopes. Explicit
+  `openagc_frontend_pipeline_set_psbc_register_snapshot`
+  (VK/GL wrappers) remains available. Host can patch
+  `SPI_SHADER_PGM_LO/HI` from 256-byte-aligned code VAs and record the
+  register program + EOP into the write snapshot (still
+  `gpu_submitted=0`). No DRAW packets.
+- Attribute-less plans (`vertex_input_mask == 0`) draw without a VBO;
+  both frontends still stop at `NOT_READY`.
+- Build-time compiler job: [`.github/workflows/build-psbc-host.yml`](.github/workflows/build-psbc-host.yml)
+  (manual-only). Details: [docs/shader-toolchain.md](docs/shader-toolchain.md).
 
-The earlier host UI recorder remains available and ABI-compatible. Its
-header provides `OPENAGC_CONTEXT_DESC_INIT(backend)`,
-`OPENAGC_DEVICE_DESC_INIT(width, height, capacity)`,
-`OPENAGC_CAPABILITIES_INIT`, and `OPENAGC_FRAME_VIEW_INIT`. Specify
-`OPENAGC_BACKEND_HOST_REFERENCE` for the host implementation, then create a
-context and device, record with `openagc_frame_begin`,
-`openagc_frame_clear`, `openagc_frame_rect`, and `openagc_frame_present`.
-Inspect `openagc_device_get_last_frame` to render the recorded clear/rectangle
-commands **in your own host preview**. A successful host `present` only
-finalizes the recording; it does not draw, display, or submit GPU work.
+## Frontends (host)
 
-The host device accepts dimensions from 1 to 8192 in each direction, at most
-16,777,216 pixels total, and 1 to 4096 commands per frame. Rectangles use
-finite float coordinates and sizes, positive width/height, and must fit
-entirely within the device. Failed validation or exhausted capacity does not
-append a command. The view remains valid until the next successful frame
-begin or device destruction. Destroy devices before their context; the
-library returns explicit errors for invalid state or inputs. Calls on a
-context or its devices must be serialized by the caller.
+Vulkan and OpenGL share `frontend.h`: one staging/copy/transition path,
+native→backend translation, and explicit refuse for unsupported formats
+and layouts. Equivalence: `tests/test_openagc_equivalence.c` (including
+WRITE_DATA grid clears, depth clears, and PSBC register snapshots).
 
-For the PS5 fail-closed object/library and a `-nostdinc` cross-build recipe,
-see [docs/architecture.md](docs/architecture.md). **Never link the host
-`openagc` target into a PS5 image**; use only `openagc_ps5_policy` there.
-The architecture document also lists the FW9.40 console-aligned
-DMA/EOP vectors (`pm4_fw940.h`, 31 dwords) and the compute store-const
-dispatch (`pm4_compute_fw940.h`, 51 dwords), their evidence limits,
-graphics frontend research, and a staged, opt-in qualification plan.
-The host library never submits packets; separate SDK payloads proved
-copy+EOP and one compute store. Draw/render packets remain unavailable.
+Narrow compute exception on host only: `host_store_const` /
+`host_store_span` with groups `1,1,1` (console-proven blobs), without
+opening a compute queue or flipping `gpu_executable`.
 
-## Status, direction, and provenance
+## Docs
 
-[The architecture and qualification status](docs/architecture.md) describe the
-separate backends, how the Vulkan 1.0 and OpenGL subsets map onto the shared
-host core, and why no console capability is claimed. The staged plan for those
-two frontends is [docs/roadmap.md](docs/roadmap.md). Public PS5_Vulkan and ps5-opengl
-graphics architecture and public
-OpenAGC PM4 interface facts were consulted as **knowledge references**;
-FW9.40 empirical packet facts were read from the user's ProsperoAI notes.
-No source, licensed assets, proprietary SDK content, binaries, firmware,
-or keys were copied or made runtime dependencies. This implementation is
-new OpenProspero-owned code; references do not imply endorsement or
-hardware compatibility.
+| Doc | Content |
+| --- | --- |
+| [architecture.md](docs/architecture.md) | Backends, PM4 layout, PS5 policy build |
+| [roadmap.md](docs/roadmap.md) | Stages and refuse rules |
+| [shader-toolchain.md](docs/shader-toolchain.md) | PSBC pin, reflection, intake gates |
+| [hardware-evidence.md](docs/hardware-evidence.md) | Console step evidence and limits |
 
-Copyright (C) 2026 OpenProspero. SPDX-License-Identifier:
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+Public PS5_Vulkan / ps5-opengl docs and ProsperoAI notes were consulted
+as **knowledge references** only. No third-party source, SDK, firmware,
+or proprietary blob is vendored or linked.
