@@ -2,6 +2,8 @@
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/driver.h"
 #include "openagc/pm4_compute_fw940.h"
+#include "openagc/pm4_copy_data_fw940.h"
+#include "openagc/pm4_context_regs_gfx10.h"
 #include "openagc/pm4_graphics_fw940.h"
 #include "openagc/pm4_write_fw940.h"
 #include "openagc/store_const_code.h"
@@ -1067,9 +1069,15 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
 {
     openagc_ib_dump_info info = OPENAGC_IB_DUMP_INFO_INIT;
     uint32_t words[8];
+    uint32_t probe_words[OPENAGC_PM4_COPY_DATA_CB_PROBE_EOP_WORDS];
+    uint32_t probe_count;
+    const openagc_gfx10_reg_name *named;
     static const char dump_text[] =
         "openagc-ib-dump: tag=step-u fw=0x9400008 completed=1 words=4\n"
         "ib c0001000 00000000 c0001000 00000000\n";
+    static const char ctxreg_text[] =
+        "openagc-ib-dump: tag=ctxreg-cb fw=0x9400008 completed=1 words=8\n"
+        "ib 11111111 22222222 33333333 44444444 55555555 66666666 77777777 0000000f\n";
     static const char bad_tag[] =
         "openagc-ib-dump: tag=cb-invent fw=0x9400008 completed=1 words=1\n"
         "ib deadbeef\n";
@@ -1079,6 +1087,26 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     CHECK(OPENAGC_SCANOUT_USAGE_SUPPORTED == 0u);
     CHECK(OPENAGC_PRESENTATION_SUPPORTED == 0u);
     CHECK(OPENAGC_VIDEOOUT_EVIDENCE_PIN_COUNT == 0u);
+
+    /* Smoke context offsets map to public Mesa/amdgpu names; COLOR_BASE absent. */
+    named = openagc_gfx10_lookup_reg(433u, 1u);
+    CHECK(named != NULL && strcmp(named->name, "SPI_VS_OUT_CONFIG") == 0);
+    named = openagc_gfx10_lookup_reg(143u, 1u);
+    CHECK(named != NULL && strcmp(named->name, "CB_SHADER_MASK") == 0 &&
+          named->smoke_owned == 1u);
+    named = openagc_gfx10_lookup_reg(792u, 1u);
+    CHECK(named != NULL && strcmp(named->name, "CB_COLOR0_BASE") == 0 &&
+          named->smoke_owned == 0u);
+    named = openagc_gfx10_lookup_reg(72u, 0u);
+    CHECK(named != NULL && strcmp(named->name, "SPI_SHADER_PGM_LO_VS") == 0);
+    CHECK(openagc_gfx10_cb_probe_offsets[0] == OPENAGC_GFX10_CB_COLOR0_BASE);
+
+    probe_count = openagc_pm4_encode_copy_data_cb_probe_eop(0x1000u, 1u, 0x2000u,
+                                                            probe_words);
+    CHECK(probe_count == OPENAGC_PM4_COPY_DATA_CB_PROBE_EOP_WORDS);
+    CHECK(probe_words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_COPY_DATA, 6u, 0u));
+    CHECK(probe_words[1] == OPENAGC_PM4_COPY_DATA_CONTROL);
+    CHECK(probe_words[2] == OPENAGC_GFX10_CB_COLOR0_BASE);
 
     EXPECT(openagc_ib_dump_parse(NULL, words, 8u, &info), OPENAGC_ERROR_INVALID_ARGUMENT);
     EXPECT(openagc_ib_dump_parse(dump_text, words, 8u, &info), OPENAGC_OK);
@@ -1090,6 +1118,13 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     CHECK(info.word_count == 4u);
     CHECK(words[0] == 0xc0001000u && words[1] == 0u);
     CHECK(words[2] == 0xc0001000u && words[3] == 0u);
+
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(ctxreg_text, words, 8u, &info), OPENAGC_OK);
+    CHECK(info.kind == OPENAGC_IB_DUMP_KIND_CTXREG_CB);
+    CHECK(info.evidence_qualified == 0u);
+    CHECK(info.word_count == 8u);
+    CHECK(words[0] == 0x11111111u && words[7] == 0x0000000fu);
 
     info = OPENAGC_IB_DUMP_INFO_INIT;
     EXPECT(openagc_ib_dump_parse(bad_tag, words, 8u, &info),

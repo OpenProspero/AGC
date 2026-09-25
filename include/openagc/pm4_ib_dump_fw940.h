@@ -22,18 +22,27 @@
  *   ib <N hex dwords, lowercase, space-separated, may wrap lines>
  *
  * tag=step-u means register program + EOP only (no CB color, no DRAW).
+ * tag=ctxreg-cb means Step-W COLOR_BASE-class readback values (8 dwords in
+ * openagc_gfx10_cb_probe_offsets order). Not a CB_BIND pin by itself;
+ * evidence_qualified stays 0 until an owned capture is pinned separately.
  */
 
 #define OPENAGC_IB_DUMP_API_VERSION 1u
 #define OPENAGC_IB_DUMP_FW940_ID 0x9400008u
 #define OPENAGC_IB_DUMP_MAX_WORDS 256u
 #define OPENAGC_IB_DUMP_TAG_STEP_U "step-u"
+#define OPENAGC_IB_DUMP_TAG_CTXREG_CB "ctxreg-cb"
 
 typedef uint32_t openagc_ib_dump_kind;
 enum {
     OPENAGC_IB_DUMP_KIND_NONE = 0u,
     /* Proven Step-U register program + EOP. Not a CB/DB/DRAW cite. */
-    OPENAGC_IB_DUMP_KIND_REGISTER_EOP = 1u
+    OPENAGC_IB_DUMP_KIND_REGISTER_EOP = 1u,
+    /*
+     * Step-W CB probe readback values (not SET_CONTEXT packets).
+     * Never treat as evidence_qualified CB_BIND without a pin.
+     */
+    OPENAGC_IB_DUMP_KIND_CTXREG_CB = 2u
 };
 
 typedef struct openagc_ib_dump_info {
