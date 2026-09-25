@@ -263,8 +263,9 @@ Blocked by two independent gates:
    in one IB (host snapshot order, no linkage). Step R proved linkage
    SET_CONTEXT ×3 + EOP (`ge_cntl` / `stages_en` / `user_vgpr_en` from
    smoke.vert metadata). Step S proved the full host-aligned register
-   program (context + SH + linkage) + EOP in one IB. Draw/render packets
-   remain unavailable.
+   program (context + SH + linkage) + EOP in one IB. Step T proved the
+   smoke.frag register program (SET_CONTEXT ×9 + graphics SET_SH ×4 +
+   EOP; no linkage) on console. Draw/render packets remain unavailable.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
