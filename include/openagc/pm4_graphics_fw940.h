@@ -165,9 +165,10 @@ static inline uint32_t openagc_pm4_encode_graphics_linkage_eop(
 
 /*
  * SET_CONTEXT_REG pairs then graphics SET_SH_REG pairs + shared EOP+NOP
- * (Step Q vehicle). Same proven pair sources as Steps P and O; order
- * matches host openagc_psbc_reflection_encode_register_program without
- * linkage. No ge_cntl/stages_en, no DRAW, no CB/DB.
+ * (Step Q / Step T vehicle). Step Q uses smoke.vert (3+4); Step T uses
+ * smoke.frag (9+4, no linkage). Order matches host
+ * openagc_psbc_reflection_encode_register_program without linkage. No
+ * ge_cntl/stages_en, no DRAW, no CB/DB.
  * words must hold 3*(ctx_count+sh_count) + EOP dwords.
  */
 #define OPENAGC_PM4_GRAPHICS_CONTEXT_SH_EOP_WORDS(ctx_count, sh_count) \

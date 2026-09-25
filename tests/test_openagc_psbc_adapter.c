@@ -344,6 +344,48 @@ static int test_psbc_pgm_patch_and_eop(void)
         CHECK(combo_words[combo_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] ==
               OPENAGC_PM4_EOP_HEADER);
     }
+    /* smoke.frag SET_CONTEXT ×9 + graphics SET_SH ×4 + EOP (Step T vehicle). */
+    {
+        static const uint32_t frag_ctx_offsets[] = { 452u, 453u, 435u, 436u, 438u,
+                                                     440u, 515u, 143u, 784u };
+        static const uint32_t frag_ctx_values[] = { 0u, 9u, 128u, 128u, 32768u,
+                                                    0u, 16u, 15u, 0u };
+        static const uint32_t frag_sh_offsets[] = { 8u, 9u, 10u, 11u };
+        static const uint32_t frag_sh_values[] = { 0u, 0u, 36438017u, 4u };
+        uint32_t frag_words[OPENAGC_PM4_GRAPHICS_CONTEXT_SH_EOP_WORDS(9u, 4u)];
+        uint32_t frag_count;
+        uint32_t host_words[64];
+        uint32_t host_count;
+        openagc_psbc_reflection frag_reflection;
+        uint8_t *frag_json = NULL;
+        uint32_t frag_json_size = 0u;
+
+        frag_count = openagc_pm4_encode_graphics_context_sh_eop(
+            frag_ctx_offsets, frag_ctx_values, 9u, frag_sh_offsets, frag_sh_values, 4u,
+            1u, UINT64_C(0x3000), frag_words);
+        CHECK(frag_count == OPENAGC_PM4_GRAPHICS_CONTEXT_SH_EOP_WORDS(9u, 4u));
+        CHECK(frag_count == 63u);
+        CHECK(frag_words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(frag_words[1] == 452u && frag_words[2] == 0u);
+        CHECK(frag_words[27] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_SH_REG, 3u, 0u));
+        CHECK(frag_words[28] == 8u && frag_words[29] == 0u);
+        CHECK(frag_words[frag_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] ==
+              OPENAGC_PM4_EOP_HEADER);
+
+        CHECK(load_file("tests/fixtures/psbc_smoke/smoke.frag.metadata.json", &frag_json,
+                        &frag_json_size) ||
+              load_file("../tests/fixtures/psbc_smoke/smoke.frag.metadata.json", &frag_json,
+                        &frag_json_size));
+        EXPECT(openagc_psbc_metadata_parse_reflection(frag_json, frag_json_size,
+                                                      &frag_reflection),
+               OPENAGC_OK);
+        free(frag_json);
+        CHECK(frag_reflection.has_linkage == 0u);
+        host_count = openagc_psbc_reflection_encode_register_program_eop(
+            &frag_reflection, 1u, UINT64_C(0x3000), host_words);
+        CHECK(frag_count == host_count);
+        CHECK(memcmp(frag_words, host_words, (size_t)frag_count * sizeof(uint32_t)) == 0);
+    }
     /* Linkage SET_CONTEXT ×3 + EOP (Step R vehicle: verified metadata only). */
     {
         uint32_t link_words[OPENAGC_PM4_GRAPHICS_LINKAGE_EOP_WORDS];
