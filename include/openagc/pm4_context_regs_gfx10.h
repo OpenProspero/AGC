@@ -3,7 +3,6 @@
 #ifndef OPENAGC_PM4_CONTEXT_REGS_GFX10_H
 #define OPENAGC_PM4_CONTEXT_REGS_GFX10_H
 
-#include <stddef.h>
 #include <stdint.h>
 
 /*
@@ -154,7 +153,7 @@ static inline const openagc_gfx10_reg_name *openagc_gfx10_lookup_reg(uint32_t of
             return &openagc_gfx10_psbc_smoke_regs[i];
         }
     }
-    return NULL;
+    return (const openagc_gfx10_reg_name *)0;
 }
 
 #endif /* OPENAGC_PM4_CONTEXT_REGS_GFX10_H */

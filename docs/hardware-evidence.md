@@ -1081,10 +1081,25 @@ on opcode knowledge. Reading whatever the live FW9.40 context holds
 (compositor residue or zeros) is the fail-closed path to own those
 dwords without invention.
 
-**Status.** Host encode + dump parse + atlas landed; console result
-recorded below when pushed.
+**Status.** Host encode + dump parse + atlas landed. Console push
+recorded below.
 
+**Artifact.** `ctxreg_cb_dump_eop.elf`
+(`0c088bbcf4216dc2fbbdc8ef4482014b3e1d9e3f053b98c4cc8ca1702c910cd1`,
+110,000 bytes): one push wrote
+`/data/prosperoai/openagc-ib-dump-ctxreg-cb.log` with
+`tag=ctxreg-cb fw=0x9400008 completed=0 words=8` and eight poison
+`cccccccc` dwords (destination untouched). Host `openagc_ib_dump_parse`
+accepts the log as `CTXREG_CB` with `evidence_qualified=0`. Loader still
+accepted connections on 9021 afterward.
+This proves the dump vehicle and that the public-cite `COPY_DATA`
+register→memory encoding used here did **not** complete on the FW9.40
+graphics submit path within the deadline. It does **not** unlock CB/DB
+binds, DRAW, or owned COLOR_BASE values. `hardware_qualified` stays
+**false**; `OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**. No retry
+of alternate COPY_DATA encodings without a separate reviewed cite.
 
+### Stage 6/7 refuse contracts (fail-closed scaffold)
 
 **Status.** `include/openagc/presentation_refuse_fw940.h` documents
 `OPENAGC_NATIVE_TILING_SUPPORTED=0`, `OPENAGC_SCANOUT_USAGE_SUPPORTED=0`,
