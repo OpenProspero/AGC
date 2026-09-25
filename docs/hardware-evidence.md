@@ -645,6 +645,42 @@ This proves graphics-bank SET_SH_REG + EOP on console with PGM patched
 to uploaded smoke.vert code. It does **not** unlock CB/DB, DRAW,
 SET_CONTEXT on console, tiling, VideoOut, or host `gpu_execution`.
 `hardware_qualified` stays **false**. The `openagc_ps5_policy` target
-stays deny-all. The next graphics-adjacent gate remains an independently
-owned FW9.40 capture of CB/DB bind or DRAW packets — inventing those is
-still out of scope.
+stays deny-all. The next graphics-adjacent gate is a bounded
+SET_CONTEXT-only IB (Step P); inventing CB/DB or DRAW remains out of
+scope.
+
+## Bounded experiment: SET_CONTEXT + EOP (Step P)
+
+**Question.** Does one FW9.40 IB of **three** public-AMD
+`SET_CONTEXT_REG` packets (opcode `0x69`) for the smoke.vert
+`context_registers` pairs — offsets/values from the pin-checked PSBC
+fixture, **without** linkage (`ge_cntl` / `stages_en` / `user_vgpr_en`),
+SET_SH, DRAW, or CB/DB — plus the shared EOP+NOP trailer, complete with
+a fired marker and no GPU fault?
+
+**Why it matters.** Host PSBC plans already encode SET_CONTEXT snapshots.
+Step O proved graphics-bank SET_SH + EOP. The remaining register-program
+half used by host plans is SET_CONTEXT. Owning the minimal
+context-register vehicle on console (without enabling geometry stages
+via linkage) is the smallest next graphics-adjacent proof that does not
+invent CB/DB or DRAW.
+
+**Why not linkage / DRAW / CB yet.** Linkage writes `ge_cntl` and
+`stages_en`, which enable geometry pipeline stages and may interact with
+the compositor. DRAW and CB/DB still lack an independently owned FW9.40
+capture. Step P deliberately omits all three.
+
+**Entry conditions.** Steps A–O proven on `fw=0x9400008`; host encoding
+locked in `pm4_graphics_fw940.h`
+(`openagc_pm4_encode_graphics_context_eop`); payload ELF-validated; one
+push, no retries.
+
+**Payload (`tools/payload/set_context_eop.c`).** One IB of
+`OPENAGC_PM4_GRAPHICS_CONTEXT_EOP_WORDS(3)` (=33) dwords. Pairs
+`(433,128)`, `(451,4)`, `(519,0)` from smoke.vert metadata. No code
+upload, no SET_SH, no linkage, no DRAW.
+
+**Status before push.** Host encoding locked in CTest
+(`test_openagc_psbc_adapter`).
+
+**Observed result.** *Pending one validated console push.*

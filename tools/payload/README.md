@@ -105,6 +105,10 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
 15. `set_sh_gfx_eop.c` (Step O, graphics-bank SET_SH ×4 + EOP) only after
     Step N and host PGM-patch encoding is locked. One push, no retries.
     No SET_CONTEXT, no DRAW, no CB/DB.
+16. `set_context_eop.c` (Step P, SET_CONTEXT ×3 + EOP) only after Step O
+    and host `openagc_pm4_encode_graphics_context_eop` is locked. One
+    push, no retries. smoke.vert `context_registers` only — no linkage,
+    no SET_SH, no DRAW, no CB/DB.
 
 ## Toolchain result (2026-09-25)
 
