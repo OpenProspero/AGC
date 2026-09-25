@@ -8,3 +8,4 @@
 __pycache__/
 *.bin
 /tests/fixtures/psbc_smoke
+*.elf

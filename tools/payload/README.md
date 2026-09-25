@@ -136,6 +136,11 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     `openagc-ib-dump-step-u.log`) only after Step U and host
     `openagc_ib_dump_parse` is locked. One push, no retries. Same
     register IB as Step U; no DRAW, no CB/DB; dump is not a CB pin.
+23. `ctxreg_cb_dump_eop.c` (Step W, COPY_DATA readback of CB_COLOR0_* +
+    masks → `openagc-ib-dump-ctxreg-cb.log`) only after host
+    `openagc_pm4_encode_copy_data_cb_probe_eop` and `tag=ctxreg-cb` parse
+    are locked. One push, no retries. Reads public offsets only; does
+    not SET CB binds or invent values; dump is not a CB pin.
 
 ## Toolchain result (2026-09-25)
 
