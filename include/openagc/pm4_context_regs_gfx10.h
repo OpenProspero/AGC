@@ -18,7 +18,9 @@
  * Offsets only — never invent register *values*. Smoke metadata values
  * are owned via PSBC fixtures + Steps P–U; CB_COLOR*_BASE/PITCH/… values
  * are not present in smoke and must come from an independently owned
- * console readback/capture (Step W). hardware_qualified stays false.
+ * console readback/capture. Step W (relative COPY_DATA src) was
+ * console-negative; Step X probes absolute CONTEXT_REG_START+offset.
+ * hardware_qualified stays false.
  */
 
 typedef struct openagc_gfx10_reg_name {
@@ -73,7 +75,7 @@ typedef struct openagc_gfx10_reg_name {
 #define OPENAGC_GFX10_SPI_SHADER_PGM_RSRC2_PS 11u
 
 /*
- * Fixed Step-W probe order for COLOR_BASE-class readback dumps.
+ * Fixed CB probe order for COLOR_BASE-class readback dumps (Steps W/X).
  * Values must come from console COPY_DATA; do not invent.
  */
 #define OPENAGC_GFX10_CB_PROBE_COUNT 8u
