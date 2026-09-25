@@ -207,8 +207,9 @@ static void openagc_graphics_fill_scissor(openagc_graphics_image *image,
 }
 
 /*
- * Width ≤16 and height ≤8: console-proven WRITE_DATA (Steps D–F).
- * Contiguous span uses one packet; pitched rows use one packet per row.
+ * Width ≤16 and height ≤8: one WRITE_DATA window (Steps D–G, M).
+ * Width 32 and height ≤8: one multi-column grid (Step N).
+ * Other sizes are tiled into those windows on the host.
  */
 static int openagc_graphics_scissor_fits_write_data(
     const openagc_graphics_scissor *scissor)
@@ -216,11 +217,18 @@ static int openagc_graphics_scissor_fits_write_data(
     if (scissor->width == 0u || scissor->height == 0u) {
         return 0;
     }
-    if (scissor->width > OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS ||
-        scissor->height > OPENAGC_PM4_WRITE_DATA_MAX_ROWS) {
+    if (scissor->height > OPENAGC_PM4_WRITE_DATA_MAX_ROWS) {
         return 0;
     }
-    return 1;
+    if (scissor->width <= OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS) {
+        return 1;
+    }
+    if (scissor->width <= OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS *
+                              OPENAGC_PM4_WRITE_DATA_MAX_COLS &&
+        (scissor->width % OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS) == 0u) {
+        return 1;
+    }
+    return 0;
 }
 
 static openagc_result openagc_graphics_clear_scissor_write_data_value(
@@ -242,9 +250,61 @@ static openagc_result openagc_graphics_clear_scissor_write_data_value(
         return openagc_gpu_host_write_data_memory(image->device, image->memory, offset, value,
                                                   (uint32_t)pixels);
     }
+    if (scissor->width > OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS) {
+        uint32_t columns = scissor->width / OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS;
+
+        return openagc_gpu_host_write_data_grid(
+            image->device, image->memory, offset, image->row_pitch_bytes, value,
+            OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS, columns, scissor->height);
+    }
     return openagc_gpu_host_write_data_rows(image->device, image->memory, offset,
                                             image->row_pitch_bytes, value, dwords,
                                             scissor->height);
+}
+
+/* Tile any scissor into ≤32×8 WRITE_DATA windows (console Steps D–G, M, N). */
+static openagc_result openagc_graphics_clear_scissor_write_data_value_tiled(
+    openagc_graphics_image *image, const openagc_graphics_scissor *scissor, uint32_t value)
+{
+    uint32_t tile_y;
+    const uint32_t max_width =
+        OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS * OPENAGC_PM4_WRITE_DATA_MAX_COLS;
+
+    if (openagc_graphics_scissor_fits_write_data(scissor) != 0) {
+        return openagc_graphics_clear_scissor_write_data_value(image, scissor, value);
+    }
+    for (tile_y = 0u; tile_y < scissor->height; tile_y += OPENAGC_PM4_WRITE_DATA_MAX_ROWS) {
+        uint32_t tile_h = scissor->height - tile_y;
+        uint32_t tile_x;
+
+        if (tile_h > OPENAGC_PM4_WRITE_DATA_MAX_ROWS) {
+            tile_h = OPENAGC_PM4_WRITE_DATA_MAX_ROWS;
+        }
+        for (tile_x = 0u; tile_x < scissor->width; ) {
+            openagc_graphics_scissor tile;
+            openagc_result result;
+            uint32_t tile_w = scissor->width - tile_x;
+
+            if (tile_w > max_width) {
+                tile_w = max_width;
+            }
+            if (tile_w > OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS &&
+                (tile_w % OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS) != 0u) {
+                /* Uneven remainder: emit a 16-wide column first. */
+                tile_w = OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS;
+            }
+            tile.x = scissor->x + tile_x;
+            tile.y = scissor->y + tile_y;
+            tile.width = tile_w;
+            tile.height = tile_h;
+            result = openagc_graphics_clear_scissor_write_data_value(image, &tile, value);
+            if (result != OPENAGC_OK) {
+                return result;
+            }
+            tile_x += tile_w;
+        }
+    }
+    return OPENAGC_OK;
 }
 
 static int openagc_graphics_clear_uses_write_data(const openagc_graphics_image *image,
@@ -254,7 +314,10 @@ static int openagc_graphics_clear_uses_write_data(const openagc_graphics_image *
         image->format != OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM) {
         return 0;
     }
-    return openagc_graphics_scissor_fits_write_data(scissor);
+    if (scissor->width == 0u || scissor->height == 0u) {
+        return 0;
+    }
+    return 1;
 }
 
 static openagc_result openagc_graphics_clear_scissor_write_data(
@@ -268,7 +331,7 @@ static openagc_result openagc_graphics_clear_scissor_write_data(
     texel[2] = image->format == OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM ? color.r : color.b;
     texel[3] = color.a;
     memcpy(&value, texel, sizeof(value));
-    return openagc_graphics_clear_scissor_write_data_value(image, scissor, value);
+    return openagc_graphics_clear_scissor_write_data_value_tiled(image, scissor, value);
 }
 
 static int openagc_graphics_depth_clear_uses_write_data(
@@ -277,7 +340,10 @@ static int openagc_graphics_depth_clear_uses_write_data(
     if (image->format != OPENAGC_GRAPHICS_FORMAT_D24_UNORM_S8_UINT) {
         return 0;
     }
-    return openagc_graphics_scissor_fits_write_data(scissor);
+    if (scissor->width == 0u || scissor->height == 0u) {
+        return 0;
+    }
+    return 1;
 }
 
 static openagc_result openagc_graphics_clear_depth_scissor_write_data(
@@ -292,7 +358,7 @@ static openagc_result openagc_graphics_clear_depth_scissor_write_data(
     texel[2] = (uint8_t)(depth24 >> 16);
     texel[3] = (uint8_t)stencil;
     memcpy(&value, texel, sizeof(value));
-    return openagc_graphics_clear_scissor_write_data_value(image, scissor, value);
+    return openagc_graphics_clear_scissor_write_data_value_tiled(image, scissor, value);
 }
 
 static void openagc_graphics_fill_depth_scissor(openagc_graphics_image *image,

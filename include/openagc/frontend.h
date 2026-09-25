@@ -218,6 +218,10 @@ typedef struct openagc_frontend_pipeline_info {
     uint32_t gpu_executable;
     uint32_t resource_count;
     uint32_t texture_count;
+    /* Host-only SET_CONTEXT_REG/SET_SH_REG dword count; 0 until PSBC snapshot. */
+    uint32_t host_register_program_dwords;
+    /* 1 when SPI_SHADER_PGM_LO/HI were patched from host code VAs (still not gpu_executable). */
+    uint32_t psbc_pgm_patched;
 } openagc_frontend_pipeline_info;
 
 #define OPENAGC_FRONTEND_CAPABILITIES_INIT \
@@ -243,7 +247,7 @@ typedef struct openagc_frontend_pipeline_info {
 #define OPENAGC_FRONTEND_TIMELINE_INFO_INIT \
     { (uint32_t)sizeof(openagc_frontend_timeline_info), 0u, 0u }
 #define OPENAGC_FRONTEND_PIPELINE_INFO_INIT \
-    { (uint32_t)sizeof(openagc_frontend_pipeline_info), 0u, 0u, 0u, 0u, 0u }
+    { (uint32_t)sizeof(openagc_frontend_pipeline_info), 0u, 0u, 0u, 0u, 0u, 0u, 0u }
 
 /* Translation of native frontend enumerants onto the shared host backend. */
 openagc_result openagc_frontend_native_format_at(openagc_frontend_kind kind,
@@ -356,6 +360,18 @@ openagc_result openagc_frontend_buffer_copy(openagc_frontend_buffer *source,
                                             openagc_frontend_buffer *destination,
                                             uint64_t destination_offset,
                                             uint64_t size_bytes);
+/*
+ * Console Step H: one DMA + WRITE_DATA fill of the destination head in a
+ * single PM4 snapshot. fill_bytes must be a multiple of 4, ≤64, and ≤
+ * size_bytes. Falls back to copy then fill when the composite shape does
+ * not apply.
+ */
+openagc_result openagc_frontend_buffer_copy_then_fill(openagc_frontend_buffer *source,
+                                                      uint64_t source_offset,
+                                                      openagc_frontend_buffer *destination,
+                                                      uint64_t destination_offset,
+                                                      uint64_t size_bytes, uint32_t value,
+                                                      uint64_t fill_bytes);
 /* If the image is not already a transfer destination, it is moved there for
    the copy and then restored. */
 openagc_result openagc_frontend_copy_buffer_to_image(openagc_frontend_buffer *source,
@@ -493,14 +509,16 @@ openagc_result openagc_frontend_query_get(const openagc_frontend_query_pool *poo
                                           uint32_t *available);
 openagc_result openagc_frontend_query_pool_destroy(openagc_frontend_query_pool *pool);
 /* Does not rasterize. Zero vertices or instances complete with no launch.
-   A positive count whose plan is not executable is NOT_READY. */
+   A positive count whose plan is not executable is NOT_READY.
+   When vertex_input_mask is zero (attribute-less / VertexID shaders), no
+   vertex buffer or attributes are required. */
 /* One 16-byte record: vertex count, instance count, first vertex, first instance. */
 openagc_result openagc_frontend_render_pass_draw_indirect(
     const openagc_frontend_render_pass *pass, openagc_frontend_buffer *buffer, uint64_t offset);
 openagc_result openagc_frontend_render_pass_draw(const openagc_frontend_render_pass *pass,
                                                  uint32_t vertex_count, uint32_t instance_count,
                                                  uint32_t first_vertex, uint32_t first_instance);
-/* Requires a bound index buffer. Does not fetch indices. */
+/* Requires a bound index buffer. Attribute-less plans skip vertex fetch. */
 openagc_result openagc_frontend_render_pass_draw_indexed(
     const openagc_frontend_render_pass *pass, uint32_t index_count, uint32_t instance_count,
     uint32_t first_index, int32_t vertex_offset, uint32_t first_instance);
@@ -567,9 +585,38 @@ openagc_result openagc_frontend_pipeline_layout_retain(openagc_frontend_pipeline
 openagc_result openagc_frontend_pipeline_layout_release(openagc_frontend_pipeline_layout *layout);
 openagc_result openagc_frontend_pipeline_get_info(
     const openagc_frontend_pipeline *pipeline, openagc_frontend_pipeline_info *info);
+/*
+ * Host-only: parse pinned-shape PSBC metadata for the bound graphics
+ * vertex+pixel stages and store SET_CONTEXT_REG/SET_SH_REG words on the
+ * plan (including vertex linkage context pairs when present). Graphics
+ * create auto-attaches this when both stages are psbc_envelope with
+ * retained metadata. Does not set compiler_verified or gpu_executable
+ * and never emits DRAW. machine_code_size in each metadata object must
+ * match the stage artifact code size.
+ */
+openagc_result openagc_frontend_pipeline_set_psbc_register_snapshot(
+    openagc_frontend_pipeline *pipeline, const uint8_t *vertex_metadata,
+    uint32_t vertex_metadata_size, const uint8_t *pixel_metadata,
+    uint32_t pixel_metadata_size);
+openagc_result openagc_frontend_pipeline_get_host_register_program(
+    const openagc_frontend_pipeline *pipeline, uint32_t *words, uint32_t max_words,
+    uint32_t *out_count);
+/*
+ * Patch SPI_SHADER_PGM_LO/HI in the stored snapshot from 256-byte-aligned
+ * host code VAs (same >>8 / >>40 encoding as console-proven compute).
+ * Re-encodes from retained stage metadata. Does not set gpu_executable.
+ */
+openagc_result openagc_frontend_pipeline_patch_psbc_pgm_vas(
+    openagc_frontend_pipeline *pipeline, uint64_t vertex_code_va, uint64_t pixel_code_va);
+/* Host-only: register program + shared EOP into the device write snapshot. No DRAW. */
+openagc_result openagc_frontend_pipeline_record_psbc_register_eop(
+    openagc_frontend_pipeline *pipeline);
+openagc_result openagc_frontend_pipeline_get_psbc_code_vas(
+    const openagc_frontend_pipeline *pipeline, uint64_t *vertex_code_va,
+    uint64_t *pixel_code_va);
 openagc_result openagc_frontend_pipeline_destroy(openagc_frontend_pipeline *pipeline);
-/* Graphics only. Stride must be a non-zero multiple of 4. A draw does not
-   fetch vertices until this is set. */
+/* Graphics only. Stride must be a non-zero multiple of 4. Required before
+   a draw that fetches vertices (vertex_input_mask != 0). */
 /* Names the sampler a sampled image must use. NULL clears it. A pipeline
    with no texture refuses a sampler. Destroy of a named sampler is BUSY. */
 openagc_result openagc_frontend_pipeline_set_sampler(openagc_frontend_pipeline *pipeline,

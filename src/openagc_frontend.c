@@ -1,7 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/frontend.h"
+#include "openagc/psbc_metadata.h"
+#include "openagc/shader.h"
+#include "openagc/pm4_compute_fw940.h"
 #include "openagc/pm4_write_fw940.h"
+#include "openagc/store_span_code.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -169,6 +173,15 @@ struct openagc_frontend_pipeline {
     uint32_t pass_binds;
     openagc_frontend_sampler *sampler;
     openagc_frontend_pipeline_layout *layout;
+    uint32_t *host_register_program;
+    uint32_t host_register_program_dwords;
+    uint8_t *psbc_vertex_metadata;
+    uint32_t psbc_vertex_metadata_size;
+    uint8_t *psbc_pixel_metadata;
+    uint32_t psbc_pixel_metadata_size;
+    uint64_t psbc_vertex_code_va;
+    uint64_t psbc_pixel_code_va;
+    uint32_t psbc_pgm_patched;
 };
 
 static openagc_result openagc_frontend_reset_transitions(
@@ -1575,6 +1588,51 @@ openagc_result openagc_frontend_buffer_copy(openagc_frontend_buffer *source,
                                  destination->buffer, destination_offset, size_bytes);
 }
 
+openagc_result openagc_frontend_buffer_copy_then_fill(openagc_frontend_buffer *source,
+                                                      uint64_t source_offset,
+                                                      openagc_frontend_buffer *destination,
+                                                      uint64_t destination_offset,
+                                                      uint64_t size_bytes, uint32_t value,
+                                                      uint64_t fill_bytes)
+{
+    openagc_result result;
+
+    if (source == NULL || destination == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if ((source->placed == 0u && source->memory == NULL) ||
+        (destination->placed == 0u && destination->memory == NULL)) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    if (source->frontend != destination->frontend) {
+        return OPENAGC_ERROR_OWNERSHIP;
+    }
+    if ((source->usage & OPENAGC_GPU_BUFFER_COPY_SOURCE_BIT) == 0u ||
+        (destination->usage & OPENAGC_GPU_BUFFER_COPY_DESTINATION_BIT) == 0u) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (!openagc_frontend_io_range(source->frontend, source->size_bytes, source_offset,
+                                   size_bytes) ||
+        !openagc_frontend_io_range(destination->frontend, destination->size_bytes,
+                                   destination_offset, size_bytes)) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if ((fill_bytes & 3u) != 0u || fill_bytes == 0u || fill_bytes > size_bytes ||
+        fill_bytes > OPENAGC_PM4_WRITE_DATA_CLEAR_BYTES || (size_bytes & 3u) != 0u ||
+        (source_offset & 3u) != 0u || (destination_offset & 3u) != 0u ||
+        size_bytes > 0x1ffffcu) {
+        result = openagc_frontend_buffer_copy(source, source_offset, destination,
+                                              destination_offset, size_bytes);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+        return openagc_frontend_buffer_fill(destination, destination_offset, fill_bytes, value);
+    }
+    return openagc_gpu_host_dma_write_data(
+        source->frontend->device, source->buffer, source_offset, destination->buffer,
+        destination_offset, (uint32_t)size_bytes, value, (uint32_t)(fill_bytes / 4u));
+}
+
 openagc_result openagc_frontend_buffer_fill(openagc_frontend_buffer *buffer, uint64_t offset,
                                             uint64_t size_bytes, uint32_t value)
 {
@@ -1597,12 +1655,30 @@ openagc_result openagc_frontend_buffer_fill(openagc_frontend_buffer *buffer, uin
     if (!openagc_frontend_io_range(frontend, buffer->size_bytes, offset, size_bytes)) {
         return OPENAGC_ERROR_OUT_OF_RANGE;
     }
-    /* Aligned fills up to a 4x4 RGBA8 tile use console WRITE_DATA (Steps D/E).
-     * Larger fills stay on the host staging + DMA copy vehicle. */
+    /* Aligned fills: Steps D/E (≤64 B one packet); Steps F/G (N×64 B as
+     * full-width WRITE_DATA rows + one EOP); remainder ≤64 B as one more
+     * packet. Larger / unaligned → staging DMA. */
     if ((offset & 3u) == 0u && (size_bytes & 3u) == 0u && size_bytes != 0u &&
-        size_bytes <= OPENAGC_PM4_WRITE_DATA_CLEAR_BYTES) {
-        return openagc_gpu_host_write_data(frontend->device, buffer->buffer, offset, value,
-                                           (uint32_t)(size_bytes / 4u));
+        size_bytes <= OPENAGC_PM4_WRITE_DATA_CLEAR_BYTES * OPENAGC_PM4_WRITE_DATA_MAX_ROWS) {
+        uint64_t filled = 0u;
+
+        if (size_bytes >= OPENAGC_PM4_WRITE_DATA_CLEAR_BYTES) {
+            uint32_t rows =
+                (uint32_t)(size_bytes / OPENAGC_PM4_WRITE_DATA_CLEAR_BYTES);
+            openagc_result rows_result = openagc_gpu_host_write_data_buffer_rows(
+                frontend->device, buffer->buffer, offset, OPENAGC_PM4_WRITE_DATA_CLEAR_BYTES,
+                value, OPENAGC_PM4_WRITE_DATA_CLEAR_DWORDS, rows);
+
+            if (rows_result != OPENAGC_OK) {
+                return rows_result;
+            }
+            filled = (uint64_t)rows * OPENAGC_PM4_WRITE_DATA_CLEAR_BYTES;
+        }
+        if (filled < size_bytes) {
+            return openagc_gpu_host_write_data(frontend->device, buffer->buffer, offset + filled,
+                                               value, (uint32_t)((size_bytes - filled) / 4u));
+        }
+        return OPENAGC_OK;
     }
     for (index = 0u; index < (uint32_t)sizeof(pattern); index += 4u) {
         memcpy(pattern + index, &value, 4u);
@@ -2543,6 +2619,8 @@ openagc_result openagc_frontend_render_pass_set_scissor(openagc_frontend_render_
 static openagc_result openagc_frontend_draw_launch(const openagc_frontend_render_pass *pass)
 {
     openagc_frontend_pipeline_info info = OPENAGC_FRONTEND_PIPELINE_INFO_INIT;
+    openagc_shader_artifact_info vertex_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+    openagc_shader_artifact_info pixel_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
     openagc_result result = openagc_shader_artifact_require_compiler(pass->pipeline->vertex);
 
     if (result != OPENAGC_OK) {
@@ -2555,6 +2633,22 @@ static openagc_result openagc_frontend_draw_launch(const openagc_frontend_render
     result = openagc_frontend_pipeline_get_info(pass->pipeline, &info);
     if (result != OPENAGC_OK) {
         return result;
+    }
+    result = openagc_shader_artifact_get_info(pass->pipeline->vertex, &vertex_info);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_shader_artifact_get_info(pass->pipeline->pixel, &pixel_info);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    /*
+     * A PSBC envelope pair must carry the host SET_* snapshot before the
+     * compiler gate. Still never claims gpu_executable or emits DRAW.
+     */
+    if (vertex_info.psbc_envelope != 0u && pixel_info.psbc_envelope != 0u &&
+        info.host_register_program_dwords == 0u) {
+        return OPENAGC_ERROR_BAD_STATE;
     }
     if (pass->pipeline->push_constant_end != 0u) {
         uint8_t scratch[128];
@@ -2608,38 +2702,47 @@ openagc_result openagc_frontend_render_pass_draw(const openagc_frontend_render_p
     if (pass == NULL) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
-    if (!openagc_frontend_draw_ready(pass) || pass->vertex == NULL) {
+    if (!openagc_frontend_draw_ready(pass)) {
         return OPENAGC_ERROR_BAD_STATE;
     }
     if (vertex_count == 0u || instance_count == 0u) {
         return OPENAGC_OK;
     }
-    if (pass->pipeline->vertex_stride == 0u || pass->pipeline->vertex_attribute_count == 0u ||
-        pass->pipeline->primitive == 0u) {
+    if (pass->pipeline->primitive == 0u) {
         return OPENAGC_ERROR_BAD_STATE;
     }
-    {
-        uint64_t bytes =
-            ((uint64_t)first_vertex + (uint64_t)vertex_count) * pass->pipeline->vertex_stride;
-
-        if (pass->vertex_offset > pass->vertex->size_bytes ||
-            bytes > pass->vertex->size_bytes - pass->vertex_offset) {
-            return OPENAGC_ERROR_OUT_OF_RANGE;
+    /*
+     * Attribute-less shaders (vertex_input_mask == 0) need no VBO fetch —
+     * typical PSBC smoke / SV_VertexID paths. Otherwise require bound
+     * vertex buffer + stride + attributes that cover the input mask.
+     */
+    if (pass->pipeline->vertex_input_mask != 0u) {
+        if (pass->vertex == NULL || pass->pipeline->vertex_stride == 0u ||
+            pass->pipeline->vertex_attribute_count == 0u) {
+            return OPENAGC_ERROR_BAD_STATE;
         }
-    }
-    {
-        uint32_t vertex;
+        {
+            uint64_t bytes =
+                ((uint64_t)first_vertex + (uint64_t)vertex_count) * pass->pipeline->vertex_stride;
 
-        uint32_t instance;
+            if (pass->vertex_offset > pass->vertex->size_bytes ||
+                bytes > pass->vertex->size_bytes - pass->vertex_offset) {
+                return OPENAGC_ERROR_OUT_OF_RANGE;
+            }
+        }
+        {
+            uint32_t vertex;
+            uint32_t instance;
 
-        for (instance = 0u; instance < instance_count; ++instance) {
-            for (vertex = 0u; vertex < vertex_count; ++vertex) {
-                openagc_result result = openagc_frontend_fetch_vertex(
-                    pass, (uint64_t)first_vertex + (uint64_t)vertex,
-                    (uint64_t)first_instance + (uint64_t)instance);
+            for (instance = 0u; instance < instance_count; ++instance) {
+                for (vertex = 0u; vertex < vertex_count; ++vertex) {
+                    openagc_result result = openagc_frontend_fetch_vertex(
+                        pass, (uint64_t)first_vertex + (uint64_t)vertex,
+                        (uint64_t)first_instance + (uint64_t)instance);
 
-                if (result != OPENAGC_OK) {
-                    return result;
+                    if (result != OPENAGC_OK) {
+                        return result;
+                    }
                 }
             }
         }
@@ -2754,14 +2857,20 @@ openagc_result openagc_frontend_render_pass_draw_indexed(
             return OPENAGC_ERROR_OUT_OF_RANGE;
         }
     }
-    if (pass->vertex == NULL || pass->pipeline->vertex_stride == 0u ||
-        pass->pipeline->vertex_attribute_count == 0u || pass->pipeline->primitive == 0u) {
+    if (pass->pipeline->primitive == 0u) {
         return OPENAGC_ERROR_BAD_STATE;
     }
-    result = openagc_frontend_indexed_vertices_fit(pass, index_count, first_index, vertex_offset,
-                                                  first_instance, instance_count);
-    if (result != OPENAGC_OK) {
-        return result;
+    if (pass->pipeline->vertex_input_mask != 0u) {
+        if (pass->vertex == NULL || pass->pipeline->vertex_stride == 0u ||
+            pass->pipeline->vertex_attribute_count == 0u) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        result = openagc_frontend_indexed_vertices_fit(pass, index_count, first_index,
+                                                      vertex_offset, first_instance,
+                                                      instance_count);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
     }
     return openagc_frontend_draw_launch(pass);
 }
@@ -3281,6 +3390,56 @@ openagc_result openagc_frontend_graphics_pipeline_create_with_resources(
     (*out_pipeline)->primitive = OPENAGC_FRONTEND_PRIMITIVE_TRIANGLE_LIST;
     (*out_pipeline)->blend_src = OPENAGC_FRONTEND_BLEND_ONE;
     (*out_pipeline)->blend_dst = OPENAGC_FRONTEND_BLEND_ZERO;
+    /*
+     * When both stages are pin-checked PSBC envelopes, attach the host
+     * SET_CONTEXT/SET_SH snapshot from retained metadata. Still leaves
+     * compiler_verified and gpu_executable at zero; never emits DRAW.
+     */
+    {
+        openagc_shader_artifact_info vertex_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+        openagc_shader_artifact_info pixel_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+        const uint8_t *vertex_metadata = NULL;
+        const uint8_t *pixel_metadata = NULL;
+        uint32_t vertex_metadata_size = 0u;
+        uint32_t pixel_metadata_size = 0u;
+
+        result = openagc_shader_artifact_get_info(vertex_artifact, &vertex_info);
+        if (result != OPENAGC_OK) {
+            (void)openagc_frontend_pipeline_destroy(*out_pipeline);
+            *out_pipeline = NULL;
+            return result;
+        }
+        result = openagc_shader_artifact_get_info(pixel_artifact, &pixel_info);
+        if (result != OPENAGC_OK) {
+            (void)openagc_frontend_pipeline_destroy(*out_pipeline);
+            *out_pipeline = NULL;
+            return result;
+        }
+        if (vertex_info.psbc_envelope != 0u && pixel_info.psbc_envelope != 0u) {
+            result = openagc_shader_artifact_get_compiler_metadata(
+                vertex_artifact, &vertex_metadata, &vertex_metadata_size);
+            if (result != OPENAGC_OK) {
+                (void)openagc_frontend_pipeline_destroy(*out_pipeline);
+                *out_pipeline = NULL;
+                return result;
+            }
+            result = openagc_shader_artifact_get_compiler_metadata(
+                pixel_artifact, &pixel_metadata, &pixel_metadata_size);
+            if (result != OPENAGC_OK) {
+                (void)openagc_frontend_pipeline_destroy(*out_pipeline);
+                *out_pipeline = NULL;
+                return result;
+            }
+            result = openagc_frontend_pipeline_set_psbc_register_snapshot(
+                *out_pipeline, vertex_metadata, vertex_metadata_size, pixel_metadata,
+                pixel_metadata_size);
+            if (result != OPENAGC_OK) {
+                (void)openagc_frontend_pipeline_destroy(*out_pipeline);
+                *out_pipeline = NULL;
+                return result;
+            }
+        }
+    }
     return OPENAGC_OK;
 }
 
@@ -3425,6 +3584,246 @@ openagc_result openagc_frontend_pipeline_get_info(
     info->gpu_executable = plan_info.gpu_executable;
     info->resource_count = plan_info.resource_count;
     info->texture_count = plan_info.texture_count;
+    info->host_register_program_dwords = pipeline->host_register_program_dwords;
+    info->psbc_pgm_patched = pipeline->psbc_pgm_patched;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_frontend_pipeline_set_psbc_register_snapshot(
+    openagc_frontend_pipeline *pipeline, const uint8_t *vertex_metadata,
+    uint32_t vertex_metadata_size, const uint8_t *pixel_metadata,
+    uint32_t pixel_metadata_size)
+{
+    openagc_frontend_pipeline_info info = OPENAGC_FRONTEND_PIPELINE_INFO_INIT;
+    openagc_shader_artifact_info vertex_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+    openagc_shader_artifact_info pixel_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+    openagc_psbc_reflection vertex_reflection;
+    openagc_psbc_reflection pixel_reflection;
+    uint32_t *words = NULL;
+    uint8_t *vertex_copy = NULL;
+    uint8_t *pixel_copy = NULL;
+    uint32_t word_count;
+    uint32_t capacity;
+    openagc_result result;
+
+    if (pipeline == NULL || vertex_metadata == NULL || pixel_metadata == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    result = openagc_frontend_pipeline_get_info(pipeline, &info);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (info.kind != OPENAGC_SHADER_PIPELINE_GRAPHICS) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (pipeline->vertex == NULL || pipeline->pixel == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    result = openagc_shader_artifact_get_info(pipeline->vertex, &vertex_info);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_shader_artifact_get_info(pipeline->pixel, &pixel_info);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_metadata_parse_reflection(vertex_metadata, vertex_metadata_size,
+                                                   &vertex_reflection);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_reflection_validate(&vertex_reflection, 1u, vertex_info.code_size);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (vertex_reflection.has_linkage == 0u) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    result = openagc_psbc_metadata_parse_reflection(pixel_metadata, pixel_metadata_size,
+                                                   &pixel_reflection);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_reflection_validate(&pixel_reflection, 5u, pixel_info.code_size);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (pixel_reflection.has_linkage != 0u) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    capacity = openagc_psbc_reflection_register_program_dwords(&vertex_reflection) +
+               openagc_psbc_reflection_register_program_dwords(&pixel_reflection);
+    if (capacity == 0u || capacity > 768u) {
+        return OPENAGC_ERROR_CAPACITY;
+    }
+    words = (uint32_t *)malloc((size_t)capacity * sizeof(uint32_t));
+    if (words == NULL) {
+        return OPENAGC_ERROR_OUT_OF_MEMORY;
+    }
+    vertex_copy = (uint8_t *)malloc((size_t)vertex_metadata_size);
+    pixel_copy = (uint8_t *)malloc((size_t)pixel_metadata_size);
+    if (vertex_copy == NULL || pixel_copy == NULL) {
+        free(words);
+        free(vertex_copy);
+        free(pixel_copy);
+        return OPENAGC_ERROR_OUT_OF_MEMORY;
+    }
+    memcpy(vertex_copy, vertex_metadata, (size_t)vertex_metadata_size);
+    memcpy(pixel_copy, pixel_metadata, (size_t)pixel_metadata_size);
+    word_count = openagc_psbc_reflection_encode_register_program(&vertex_reflection, words);
+    word_count += openagc_psbc_reflection_encode_register_program(&pixel_reflection,
+                                                                 words + word_count);
+    if (word_count != capacity) {
+        free(words);
+        free(vertex_copy);
+        free(pixel_copy);
+        return OPENAGC_ERROR_INTEGRITY;
+    }
+    free(pipeline->host_register_program);
+    free(pipeline->psbc_vertex_metadata);
+    free(pipeline->psbc_pixel_metadata);
+    pipeline->host_register_program = words;
+    pipeline->host_register_program_dwords = word_count;
+    pipeline->psbc_vertex_metadata = vertex_copy;
+    pipeline->psbc_vertex_metadata_size = vertex_metadata_size;
+    pipeline->psbc_pixel_metadata = pixel_copy;
+    pipeline->psbc_pixel_metadata_size = pixel_metadata_size;
+    pipeline->psbc_vertex_code_va = 0u;
+    pipeline->psbc_pixel_code_va = 0u;
+    pipeline->psbc_pgm_patched = 0u;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_frontend_pipeline_get_host_register_program(
+    const openagc_frontend_pipeline *pipeline, uint32_t *words, uint32_t max_words,
+    uint32_t *out_count)
+{
+    if (pipeline == NULL || out_count == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *out_count = 0u;
+    if (pipeline->host_register_program_dwords == 0u ||
+        pipeline->host_register_program == NULL) {
+        return OPENAGC_ERROR_NOT_READY;
+    }
+    if (words == NULL || max_words < pipeline->host_register_program_dwords) {
+        *out_count = pipeline->host_register_program_dwords;
+        return OPENAGC_ERROR_CAPACITY;
+    }
+    memcpy(words, pipeline->host_register_program,
+           (size_t)pipeline->host_register_program_dwords * sizeof(uint32_t));
+    *out_count = pipeline->host_register_program_dwords;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_frontend_pipeline_patch_psbc_pgm_vas(
+    openagc_frontend_pipeline *pipeline, uint64_t vertex_code_va, uint64_t pixel_code_va)
+{
+    openagc_shader_artifact_info vertex_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+    openagc_shader_artifact_info pixel_info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+    openagc_psbc_reflection vertex_reflection;
+    openagc_psbc_reflection pixel_reflection;
+    uint32_t *words = NULL;
+    uint32_t word_count;
+    uint32_t capacity;
+    openagc_result result;
+
+    if (pipeline == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (pipeline->host_register_program == NULL || pipeline->psbc_vertex_metadata == NULL ||
+        pipeline->psbc_pixel_metadata == NULL) {
+        return OPENAGC_ERROR_NOT_READY;
+    }
+    if (pipeline->vertex == NULL || pipeline->pixel == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    result = openagc_shader_artifact_get_info(pipeline->vertex, &vertex_info);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_shader_artifact_get_info(pipeline->pixel, &pixel_info);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_metadata_parse_reflection(
+        pipeline->psbc_vertex_metadata, pipeline->psbc_vertex_metadata_size, &vertex_reflection);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_reflection_validate(&vertex_reflection, 1u, vertex_info.code_size);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_metadata_parse_reflection(
+        pipeline->psbc_pixel_metadata, pipeline->psbc_pixel_metadata_size, &pixel_reflection);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_reflection_validate(&pixel_reflection, 5u, pixel_info.code_size);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_reflection_patch_pgm_va(&vertex_reflection, vertex_code_va);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_reflection_patch_pgm_va(&pixel_reflection, pixel_code_va);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    capacity = openagc_psbc_reflection_register_program_dwords(&vertex_reflection) +
+               openagc_psbc_reflection_register_program_dwords(&pixel_reflection);
+    if (capacity == 0u || capacity != pipeline->host_register_program_dwords) {
+        return OPENAGC_ERROR_INTEGRITY;
+    }
+    words = (uint32_t *)malloc((size_t)capacity * sizeof(uint32_t));
+    if (words == NULL) {
+        return OPENAGC_ERROR_OUT_OF_MEMORY;
+    }
+    word_count = openagc_psbc_reflection_encode_register_program(&vertex_reflection, words);
+    word_count += openagc_psbc_reflection_encode_register_program(&pixel_reflection,
+                                                                 words + word_count);
+    if (word_count != capacity) {
+        free(words);
+        return OPENAGC_ERROR_INTEGRITY;
+    }
+    free(pipeline->host_register_program);
+    pipeline->host_register_program = words;
+    pipeline->psbc_vertex_code_va = vertex_code_va;
+    pipeline->psbc_pixel_code_va = pixel_code_va;
+    pipeline->psbc_pgm_patched = 1u;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_frontend_pipeline_record_psbc_register_eop(
+    openagc_frontend_pipeline *pipeline)
+{
+    if (pipeline == NULL || pipeline->frontend == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (pipeline->host_register_program == NULL || pipeline->host_register_program_dwords == 0u) {
+        return OPENAGC_ERROR_NOT_READY;
+    }
+    return openagc_gpu_host_graphics_register_eop(pipeline->frontend->device,
+                                                  pipeline->host_register_program,
+                                                  pipeline->host_register_program_dwords);
+}
+
+openagc_result openagc_frontend_pipeline_get_psbc_code_vas(
+    const openagc_frontend_pipeline *pipeline, uint64_t *vertex_code_va,
+    uint64_t *pixel_code_va)
+{
+    if (pipeline == NULL || vertex_code_va == NULL || pixel_code_va == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (pipeline->psbc_pgm_patched == 0u) {
+        *vertex_code_va = 0u;
+        *pixel_code_va = 0u;
+        return OPENAGC_ERROR_NOT_READY;
+    }
+    *vertex_code_va = pipeline->psbc_vertex_code_va;
+    *pixel_code_va = pipeline->psbc_pixel_code_va;
     return OPENAGC_OK;
 }
 
@@ -3900,6 +4299,9 @@ openagc_result openagc_frontend_pipeline_destroy(openagc_frontend_pipeline *pipe
             return result;
         }
     }
+    free(pipeline->host_register_program);
+    free(pipeline->psbc_vertex_metadata);
+    free(pipeline->psbc_pixel_metadata);
     pipeline->frontend->pipeline_count--;
     free(pipeline->layout);
     free(pipeline);
@@ -4012,6 +4414,30 @@ openagc_result openagc_frontend_dispatch_validate(const openagc_frontend_pipelin
         }
         return OPENAGC_OK;
     }
+    if (artifact_info.host_store_span != 0u) {
+        openagc_gpu_buffer *buffer = NULL;
+        openagc_graphics_image *image = NULL;
+        uint64_t offset = 0u;
+        uint64_t size_bytes = 0u;
+        uint32_t spans;
+
+        if (groups_x != 1u || groups_y != 1u || groups_z != 1u) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+        result = openagc_shader_pipeline_plan_slot(pipeline->plan, 0u, &buffer, &offset,
+                                                  &size_bytes, &image);
+        if (result != OPENAGC_OK || buffer == NULL || size_bytes < OPENAGC_STORE_SPAN_BYTES) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        spans = (uint32_t)(size_bytes / OPENAGC_STORE_SPAN_BYTES);
+        if (spans > OPENAGC_PM4_COMPUTE_SPAN_MAX) {
+            spans = OPENAGC_PM4_COMPUTE_SPAN_MAX;
+        }
+        if (spans == 0u) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        return OPENAGC_OK;
+    }
     result = openagc_shader_artifact_require_compiler(pipeline->compute);
     if (result != OPENAGC_OK) {
         return result;
@@ -4052,6 +4478,27 @@ openagc_result openagc_frontend_dispatch(const openagc_frontend_pipeline *pipeli
             return OPENAGC_ERROR_BAD_STATE;
         }
         return openagc_gpu_host_store_const(pipeline->frontend->device, buffer, offset);
+    }
+    if (artifact_info.host_store_span != 0u) {
+        openagc_gpu_buffer *buffer = NULL;
+        openagc_graphics_image *image = NULL;
+        uint64_t offset = 0u;
+        uint64_t size_bytes = 0u;
+        uint32_t spans;
+
+        result = openagc_shader_pipeline_plan_slot(pipeline->plan, 0u, &buffer, &offset,
+                                                  &size_bytes, &image);
+        if (result != OPENAGC_OK || buffer == NULL || size_bytes < OPENAGC_STORE_SPAN_BYTES) {
+            return OPENAGC_ERROR_BAD_STATE;
+        }
+        spans = (uint32_t)(size_bytes / OPENAGC_STORE_SPAN_BYTES);
+        if (spans > OPENAGC_PM4_COMPUTE_SPAN_MAX) {
+            spans = OPENAGC_PM4_COMPUTE_SPAN_MAX;
+        }
+        if (spans == 1u) {
+            return openagc_gpu_host_store_span(pipeline->frontend->device, buffer, offset);
+        }
+        return openagc_gpu_host_store_span_n(pipeline->frontend->device, buffer, offset, spans);
     }
     return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
 }
