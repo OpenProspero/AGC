@@ -274,7 +274,9 @@ Blocked by two independent gates:
    (`pm4_cb_capture_fw940.h` + `openagc_gpu_host_cb_bind_from_capture`):
    only a verified capture artifact (manifest+digest) may be recorded;
    invent encode is refused; evidence pin count is 0; `gpu_executable`
-   stays 0.
+   stays 0. Step V proves a console IB dump vehicle for the Step-U
+   register IB (`pm4_ib_dump_fw940.h` + `openagc_ib_dump_parse`); dumps
+   never qualify CB pins.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
@@ -296,14 +298,17 @@ The host core is host-linear only. Native tiling, swizzles, layout
 conversion, and cache coherency rules need their own firmware evidence
 and their own review; until then Vulkan images are linear/host-visible
 and GL textures are linear, and both frontends must report that
-capability honestly.
+capability honestly. Fail-closed constants live in
+`presentation_refuse_fw940.h` (`OPENAGC_NATIVE_TILING_SUPPORTED=0`,
+`OPENAGC_SCANOUT_USAGE_SUPPORTED=0`).
 
 ## Stage 7 — presentation
 
 Vulkan swapchain and GL window-system integration need a display path
 that does not exist here (no VideoOut, no flip, no display controller).
-Presentation stays refused, and it is a separate interface with its own
-approval, not a mode of the copy queue.
+Presentation stays refused (`OPENAGC_PRESENTATION_SUPPORTED=0`,
+`OPENAGC_VIDEOOUT_EVIDENCE_PIN_COUNT=0`), and it is a separate interface
+with its own approval, not a mode of the copy queue.
 
 ## Stage 8 — console qualification
 

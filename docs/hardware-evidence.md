@@ -981,3 +981,50 @@ owned FW9.40 CB/DB/DRAW dump in-repo). Structural verify+record may set
 PS5 policy unchanged. DRAW captures remain `NOT_READY` even when the
 digest matches. Console push of invent/CB remains out of scope until a
 real cite is pinned.
+
+## Bounded experiment: IB dump of Step U (Step V)
+
+**Question.** Can a console payload re-submit the proven Step-U register
+program + EOP and write an FTP-retrievable `openagc-ib-dump` log of the
+exact submitted dwords, without adding CB/DB color binds or DRAW, so a
+later independently owned CB capture can reuse the same dump vehicle?
+
+**Design.** `tools/payload/ib_dump_step_u_eop.c` encodes the same Step-U
+IB, submits once, polls the EOP marker, then writes
+`/data/prosperoai/openagc-ib-dump-step-u.log` in the format defined by
+`include/openagc/pm4_ib_dump_fw940.h`. Host
+`openagc_ib_dump_parse` accepts `tag=step-u` as `REGISTER_EOP` with
+`evidence_qualified=0`. One push, no retries. No invent CB values.
+
+**Why it matters.** Stage 5 remains blocked on an independently owned
+FW9.40 CB/DB or DRAW cite. Public Mesa/amdgpu/umr sources cite
+`PACKET3_SET_CONTEXT_REG` and `CB_COLOR*` *offsets* but not a
+PS5-owned dword *value* sequence safe to pin. Owning a dump vehicle on
+console is the safest path to intake a real capture without inventing
+registers.
+
+**Why not CB / DRAW yet.** Unchanged: no independently owned FW9.40
+CB/DB/DRAW IB exists in-repo or on the console FTP tree. Step V dumps
+only the Step-U register program.
+
+**Artifact.** `ib_dump_step_u_eop.elf`
+(`b75eea10928df6eb8657365b4ab70a9081ed024cc50fc000d4d7d0b5198d5137`,
+110,240 bytes): one push wrote
+`/data/prosperoai/openagc-ib-dump-step-u.log` with
+`tag=step-u fw=0x9400008 completed=1 words=93` and 93 hex dwords;
+host `openagc_ib_dump_parse` accepted the log as `REGISTER_EOP` with
+`evidence_qualified=0`. Loader still accepted connections on 9021
+afterward.
+This proves the IB dump vehicle on console for the Step-U register
+program. It does **not** unlock CB/DB, DRAW, tiling, VideoOut, or host
+`gpu_execution`. `hardware_qualified` stays **false**;
+`OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**.
+
+### Stage 6/7 refuse contracts (fail-closed scaffold)
+
+**Status.** `include/openagc/presentation_refuse_fw940.h` documents
+`OPENAGC_NATIVE_TILING_SUPPORTED=0`, `OPENAGC_SCANOUT_USAGE_SUPPORTED=0`,
+`OPENAGC_PRESENTATION_SUPPORTED=0`, and
+`OPENAGC_VIDEOOUT_EVIDENCE_PIN_COUNT=0`. Host image create already
+refuses `NATIVE_OPTIMAL` / `SCANOUT`; `openagc_vk_create_swapchain`
+returns `UNSUPPORTED_OPERATION`. No VideoOut path is opened.
