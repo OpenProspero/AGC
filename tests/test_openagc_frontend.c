@@ -5,7 +5,9 @@
 #include "openagc/store_const_code.h"
 #include "openagc/store_span_code.h"
 #include "openagc/pm4_compute_fw940.h"
+#include "openagc/pm4_fw940.h"
 #include "openagc/pm4_write_fw940.h"
+#include "openagc_sha256.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -1417,6 +1419,66 @@ static int test_host_store_span_dispatch(void)
     return 0;
 }
 
+static int test_cb_capture_bind_path(void)
+{
+    openagc_context_desc context_desc =
+        OPENAGC_CONTEXT_DESC_INIT(OPENAGC_BACKEND_HOST_REFERENCE);
+    openagc_gpu_device_desc device_desc = OPENAGC_GPU_DEVICE_DESC_INIT;
+    openagc_frontend_device_desc frontend_desc = OPENAGC_FRONTEND_DEVICE_DESC_INIT;
+    openagc_frontend_image_desc image_desc = OPENAGC_FRONTEND_IMAGE_DESC_INIT(
+        OPENAGC_FRONTEND_VULKAN, OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+        OPENAGC_FRONTEND_VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        OPENAGC_FRONTEND_VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 8u, 4u, 32u);
+    openagc_context *context = NULL;
+    openagc_gpu_device *device = NULL;
+    openagc_frontend_device *frontend = NULL;
+    openagc_frontend_image *color = NULL;
+    openagc_frontend_render_pass *pass = NULL;
+    openagc_cb_capture_manifest manifest = OPENAGC_CB_CAPTURE_MANIFEST_INIT;
+    openagc_cb_capture_info info = OPENAGC_CB_CAPTURE_INFO_INIT;
+    openagc_gpu_submission_view write_view = OPENAGC_GPU_SUBMISSION_VIEW_INIT;
+    static const uint32_t fixture_words[] = { OPENAGC_PM4_NOP_HEADER, 0u,
+                                              OPENAGC_PM4_NOP_HEADER, 0u };
+
+    EXPECT(openagc_context_create(&context_desc, &context), OPENAGC_OK);
+    EXPECT(openagc_gpu_device_create(context, &device_desc, &device), OPENAGC_OK);
+    EXPECT(openagc_frontend_device_create(device, &frontend_desc, &frontend), OPENAGC_OK);
+    EXPECT(openagc_frontend_image_create(frontend, &image_desc, &color), OPENAGC_OK);
+    EXPECT(openagc_frontend_render_pass_create(frontend, color, &pass), OPENAGC_OK);
+
+    manifest.kind = OPENAGC_CB_CAPTURE_KIND_CB_BIND;
+    manifest.firmware_id = OPENAGC_CB_CAPTURE_FW940_ID;
+    manifest.word_count = 4u;
+    openagc_sha256((const uint8_t *)fixture_words, sizeof(fixture_words),
+                   manifest.words_sha256);
+
+    /* Not begun yet. */
+    EXPECT(openagc_frontend_render_pass_bind_cb_capture(pass, &manifest, fixture_words),
+           OPENAGC_ERROR_BAD_STATE);
+    EXPECT(openagc_frontend_render_pass_begin(pass), OPENAGC_OK);
+    EXPECT(openagc_frontend_render_pass_bind_cb_capture(pass, &manifest, fixture_words),
+           OPENAGC_OK);
+    EXPECT(openagc_frontend_device_get_cb_capture_info(frontend, &info), OPENAGC_OK);
+    CHECK(info.capture_verified == 1u);
+    CHECK(info.evidence_qualified == 0u);
+    CHECK(info.gpu_submitted == 0u);
+    EXPECT(openagc_gpu_device_get_last_write(device, &write_view), OPENAGC_OK);
+    CHECK(write_view.gpu_submitted == 0u && write_view.word_count == 4u);
+
+    /* Invent remains refused; draw without pipeline stays refused. */
+    EXPECT(openagc_cb_capture_encode_invent(OPENAGC_CB_CAPTURE_KIND_CB_BIND, NULL, 0u, NULL),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    EXPECT(openagc_frontend_render_pass_draw(pass, 3u, 1u, 0u, 0u), OPENAGC_ERROR_BAD_STATE);
+
+    EXPECT(openagc_frontend_render_pass_end(pass), OPENAGC_OK);
+    EXPECT(openagc_frontend_render_pass_destroy(pass), OPENAGC_OK);
+    EXPECT(openagc_frontend_image_destroy(color), OPENAGC_OK);
+    EXPECT(openagc_frontend_device_destroy(frontend), OPENAGC_OK);
+    EXPECT(openagc_gpu_device_destroy(device), OPENAGC_OK);
+    EXPECT(openagc_context_destroy(context), OPENAGC_OK);
+    return 0;
+}
+
 int main(void)
 {
     if (test_translation_tables() != 0 ||
@@ -1429,7 +1491,8 @@ int main(void)
         test_explicit_memory() != 0 ||
         test_fill_and_image_copy() != 0 ||
         test_host_store_const_dispatch() != 0 ||
-        test_host_store_span_dispatch() != 0) {
+        test_host_store_span_dispatch() != 0 ||
+        test_cb_capture_bind_path() != 0) {
         return 1;
     }
     puts("OpenAGC shared frontend tests passed");

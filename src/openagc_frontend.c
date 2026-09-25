@@ -2616,6 +2616,28 @@ openagc_result openagc_frontend_render_pass_bind_vertex(openagc_frontend_render_
     return OPENAGC_OK;
 }
 
+openagc_result openagc_frontend_render_pass_bind_cb_capture(
+    openagc_frontend_render_pass *pass, const openagc_cb_capture_manifest *manifest,
+    const uint32_t *words)
+{
+    if (pass == NULL || manifest == NULL || words == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (pass->begun == 0u || pass->color == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    return openagc_gpu_host_cb_bind_from_capture(pass->frontend->device, manifest, words);
+}
+
+openagc_result openagc_frontend_device_get_cb_capture_info(
+    const openagc_frontend_device *frontend, openagc_cb_capture_info *info)
+{
+    if (frontend == NULL || info == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_gpu_device_get_cb_capture_info(frontend->device, info);
+}
+
 openagc_result openagc_frontend_render_pass_set_scissor(openagc_frontend_render_pass *pass,
                                                         uint32_t x, uint32_t y,
                                                         uint32_t width, uint32_t height)

@@ -480,6 +480,17 @@ openagc_result openagc_frontend_translate_index_width(openagc_frontend_kind kind
 openagc_result openagc_frontend_render_pass_bind_vertex(openagc_frontend_render_pass *pass,
                                                          openagc_frontend_buffer *buffer,
                                                          uint64_t offset);
+/*
+ * Fail-closed CB/DB bind from a verified capture artifact (manifest+digest).
+ * Requires a begun pass. Records host write snapshot only; refuses invent;
+ * leaves gpu_executable=0 and evidence_qualified=0 until a real FW9.40 pin
+ * exists. DRAW captures return NOT_READY.
+ */
+openagc_result openagc_frontend_render_pass_bind_cb_capture(
+    openagc_frontend_render_pass *pass, const openagc_cb_capture_manifest *manifest,
+    const uint32_t *words);
+openagc_result openagc_frontend_device_get_cb_capture_info(
+    const openagc_frontend_device *frontend, openagc_cb_capture_info *info);
 openagc_result openagc_frontend_render_pass_set_scissor(openagc_frontend_render_pass *pass,
                                                         uint32_t x, uint32_t y,
                                                         uint32_t width, uint32_t height);
