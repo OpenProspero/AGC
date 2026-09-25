@@ -300,6 +300,25 @@ static int test_psbc_pgm_patch_and_eop(void)
         CHECK(sh_words[1] == 72u && sh_words[2] == values[0]);
         CHECK(sh_words[sh_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] == OPENAGC_PM4_EOP_HEADER);
     }
+    /* SET_CONTEXT pairs alone + EOP (Step P vehicle: no linkage, no SET_SH). */
+    {
+        static const uint32_t ctx_offsets[] = { 433u, 451u, 519u };
+        static const uint32_t ctx_values[] = { 128u, 4u, 0u };
+        uint32_t ctx_words[OPENAGC_PM4_GRAPHICS_CONTEXT_EOP_WORDS(3u)];
+        uint32_t ctx_count;
+
+        ctx_count = openagc_pm4_encode_graphics_context_eop(
+            ctx_offsets, ctx_values, 3u, 1u, UINT64_C(0x3000), ctx_words);
+        CHECK(ctx_count == OPENAGC_PM4_GRAPHICS_CONTEXT_EOP_WORDS(3u));
+        CHECK(ctx_count == 33u);
+        CHECK(ctx_words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(ctx_words[1] == 433u && ctx_words[2] == 128u);
+        CHECK(ctx_words[3] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(ctx_words[4] == 451u && ctx_words[5] == 4u);
+        CHECK(ctx_words[6] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        CHECK(ctx_words[7] == 519u && ctx_words[8] == 0u);
+        CHECK(ctx_words[ctx_count - OPENAGC_PM4_EOP_WITH_NOP_WORDS] == OPENAGC_PM4_EOP_HEADER);
+    }
     free(json);
     return 0;
 }
