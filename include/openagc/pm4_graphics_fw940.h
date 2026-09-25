@@ -114,4 +114,24 @@ static inline uint32_t openagc_pm4_encode_graphics_sh_eop(
     return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
 }
 
+/*
+ * SET_CONTEXT_REG pairs + shared EOP+NOP (Step P vehicle).
+ * Offsets/values must come from verified PSBC context_registers only —
+ * no linkage (ge_cntl/stages_en), no SET_SH, no DRAW, no CB/DB.
+ * words must hold 3*pair_count + EOP dwords.
+ */
+#define OPENAGC_PM4_GRAPHICS_CONTEXT_EOP_WORDS(pair_count) \
+    ((uint32_t)(3u * (pair_count) + OPENAGC_PM4_EOP_WITH_NOP_WORDS))
+
+static inline uint32_t openagc_pm4_encode_graphics_context_eop(
+    const uint32_t *offsets, const uint32_t *values, uint32_t pair_count,
+    uint32_t sequence, uint64_t marker_va, uint32_t *words)
+{
+    uint32_t cursor;
+
+    cursor = openagc_pm4_encode_psbc_context_pairs(offsets, values, pair_count, words);
+    openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
+    return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+}
+
 #endif /* OPENAGC_PM4_GRAPHICS_FW940_H */
