@@ -291,7 +291,14 @@ Blocked by two independent gates:
    DB_SHADER/`CB_SHADER_MASK` values then absolute COPY_DATA readback
    (`tag=ctxreg-rt`); console completed once with exact fixture values
    (`9/128/128/32768/16/15`) — owned round-trip for those registers
-   only — still not COLOR_BASE / CB_BIND / DRAW.
+   only — still not COLOR_BASE / CB_BIND / DRAW. Step Z SETs owned
+   `CB_COLOR0_BASE`(+EXT) from an arena GPU VA (public Mesa `va>>8`
+   encoding) plus smoke `CB_SHADER_MASK`, then reads the CB probe set
+   back with the Step-X absolute COPY_DATA (`tag=ctxreg-cb-bind`);
+   console completed once with `BASE=02000240`, `BASE_EXT=0`, mask `15`
+   matching the owned VA — owned COLOR_BASE round-trip only;
+   `INFO`/`ATTRIB2`/`VIEW`/`TARGET_MASK` stay unowned and no DRAW was
+   submitted.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the

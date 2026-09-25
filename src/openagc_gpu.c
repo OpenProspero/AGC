@@ -1260,9 +1260,19 @@ openagc_result openagc_ib_dump_parse(const char *text, uint32_t *words,
         return OPENAGC_ERROR_OUT_OF_RANGE;
     }
 
+    /*
+     * The Step-Z payload writes its owned-expect line before the dump
+     * header. Skip leading non-header lines; refuse when none is present.
+     */
     p = openagc_ib_dump_skip_ws(text);
-    if (strncmp(p, "openagc-ib-dump:", 16) != 0) {
-        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    while (strncmp(p, "openagc-ib-dump:", 16) != 0) {
+        while (*p != '\0' && *p != '\n') {
+            ++p;
+        }
+        if (*p == '\0') {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+        p = openagc_ib_dump_skip_ws(p);
     }
     p = openagc_ib_dump_skip_sp(p + 16);
 

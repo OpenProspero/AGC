@@ -1194,6 +1194,86 @@ smoke-owned SPI/PA/DB_SHADER/`CB_SHADER_MASK` registers on FW9.40. It does
 `hardware_qualified` stays **false**;
 `OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**.
 
+## Bounded experiment: owned CB BASE + abs COPY_DATA round-trip (Step Z)
+
+**Question.** Can one FW9.40 IB program `CB_COLOR0_BASE` and
+`CB_COLOR0_BASE_EXT` from a known color-buffer VA inside the payload's
+own direct-memory arena (public Mesa encoding `va >> 8` /
+`(va >> 8) >> 32`), keep the smoke-owned `CB_SHADER_MASK`, then read the
+eight CB probe offsets back with the Step-X-proven absolute
+`COPY_DATA` and recover the programmed BASE/BASE_EXT?
+
+**Why it matters.** Stage 5 needs owned COLOR_BASE-class *values*.
+Steps X/Y proved absolute register readback and a smoke-owned
+SPI/PA/DB_SHADER/`CB_SHADER_MASK` round-trip, but both left
+`CB_COLOR0_BASE` zero or unowned. Step Z is the first submit that writes
+a known, owned color-buffer VA into the CB base registers and has the CP
+read the value back — the smallest owned BASE evidence that does not
+invent render-target format/tiling or DRAW.
+
+**Why not INFO/ATTRIB / DRAW yet.** `CB_COLOR0_INFO`/`ATTRIB2`/`VIEW`/
+`TARGET_MASK` values are still unowned (no independently owned FW9.40
+capture and no safe public cite for their *values*), and DRAW still has
+no owned capture. Step Z writes BASE, BASE_EXT, and the
+already-console-proven smoke `CB_SHADER_MASK` only. Pin table stays
+empty; `evidence_qualified` stays 0.
+
+**Payload contract (`tools/payload/ctxreg_cb_bind_eop.c`).**
+
+May do: open `/dev/gc`; map one arena; place a 4 KiB zeroed color buffer
+at a 256-byte-aligned VA; submit **one** IB of
+`OPENAGC_PM4_CTXREG_CB_BIND_EOP_WORDS` (=78) dwords — SET_CONTEXT
+`CB_COLOR0_BASE` + `BASE_EXT` + `CB_SHADER_MASK`, eight absolute
+`COPY_DATA` reads, shared EOP+NOP trailer; poll the marker 30s; write
+`/data/prosperoai/openagc-ib-dump-ctxreg-cb-bind.log` (one
+`openagc-cb-bind-owned:` expect line with the owned VA/BASE/BASE_EXT,
+then the `openagc-ib-dump:` block); CPU-check nothing else; exit.
+
+Must not do: no DRAW/`DRAW_INDEX_AUTO`; no INFO/ATTRIB/VIEW/TARGET_MASK
+SET; no shader; no `flat_load`; no second submit; no retry; no VideoOut;
+no queue-create/ACB; no malformed ELF.
+
+**Acceptance criteria.** `completed=1`, the readback BASE equals
+`color_va >> 8` and BASE_EXT equals `(color_va >> 8) >> 32`, shader mask
+equals 15, one log line set, no fault/hang/timeout in the live klog
+window (TCP 3232), loader still accepting connections afterward.
+
+**Status before push.** Host encode + dump parse locked in CTest
+(`test_openagc_gpu`); `openagc_ib_dump_parse` skips the leading
+owned-expect line and refuses text with no header;
+`openagc_ib_dump_cb_bind_owned_base_match` is fail-closed on zero
+expected BASE or any mismatch. One push, no retries.
+
+**Artifact.** `ctxreg_cb_bind_eop.elf` (built from revision `3f192cb`:
+`78bc6c66fde1ab472f8001a61b41734a20412ded62f8827f43db51570ff7f425`,
+110,152 bytes, ELF-validated). The console dump below is the record of the
+single push; no re-push was performed for this review.
+
+**Observed result (2026-09-25, FW `0x9400008`).** The dump
+`/data/prosperoai/openagc-ib-dump-ctxreg-cb-bind.log` records
+`tag=ctxreg-cb-bind fw=0x9400008 completed=1 words=8` and
+`ib 02000240 00000000 00000000 00000000 00000000 00000000 ffffffff 0000000f`
+against its owned expect line
+`color_va=0000000200024000 base_lo=02000240 base_ext=00000000 shader_mask=0000000f`:
+the CP readback of `CB_COLOR0_BASE` equals `color_va >> 8`, `BASE_EXT`
+equals `(color_va >> 8) >> 32` (zero at this VA), and the smoke-owned
+`CB_SHADER_MASK` reads 15, so the fail-closed owned-base match holds
+(host regression fixture: `test_openagc_gpu`). `ATTRIB2`/`VIEW`/`INFO`/
+`ATTRIB` read back zero (never written) and `TARGET_MASK` reads the
+unwritten residue `ffffffff`. The reviewed klog windows (FTP snapshot
+plus a live drain on 3232 after the fact) contain no
+panic/fault/hang/timeout marker, and the loader still accepted
+connections on 9021 afterward.
+This proves owned SET_CONTEXT → absolute COPY_DATA round-trip for
+`CB_COLOR0_BASE(+EXT)` on the FW9.40 graphics submit path. It does
+**not** unlock CB/DB binds or DRAW: `INFO`/`ATTRIB2`/`VIEW`/
+`TARGET_MASK` remain unowned, no DRAW initiator was submitted, and the
+pin table stays empty. `hardware_qualified` stays **false**;
+`OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**. The next
+graphics-adjacent gate is owning the remaining CB bind dwords from a
+citeable source; inventing `INFO`/`ATTRIB` values or DRAW remains out of
+scope.
+
 ### Stage 6/7 refuse contracts (fail-closed scaffold)
 
 **Status.** `include/openagc/presentation_refuse_fw940.h` documents

@@ -24,6 +24,10 @@
  *   openagc-ib-dump: tag=<token> fw=0x9400008 completed=<0|1> words=<N>
  *   ib <N hex dwords, lowercase, space-separated, may wrap lines>
  *
+ * The Step-Z payload writes one `openagc-cb-bind-owned:` expect line before
+ * the header; openagc_ib_dump_parse skips leading non-header lines and
+ * still refuses text with no header at all.
+ *
  * tag=step-u means register program + EOP only (no CB color, no DRAW).
  * tag=ctxreg-cb means Step-W COLOR_BASE-class readback (relative COPY_DATA
  * src; console-negative). tag=ctxreg-abs means Step-X absolute aperture

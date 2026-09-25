@@ -152,6 +152,16 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     after host `openagc_pm4_encode_ctxreg_rt_abs_eop` and `tag=ctxreg-rt`
     parse are locked. Distinct from Step X (writes before read);
     one push, no retries. No COLOR_BASE invent; dump is not a CB pin.
+26. `ctxreg_cb_bind_eop.c` (Step Z, SET owned `CB_COLOR0_BASE`(+EXT) from
+    an arena VA + smoke `CB_SHADER_MASK`, then absolute COPY_DATA CB
+    probe → `openagc-ib-dump-ctxreg-cb-bind.log`) only after host
+    `openagc_pm4_encode_ctxreg_cb_bind_abs_eop`,
+    `openagc_ib_dump_cb_bind_owned_base_match`, and `tag=ctxreg-cb-bind`
+    parse are locked. One push, no retries. No INFO/ATTRIB/VIEW/
+    TARGET_MASK SET, no DRAW; the dump is not a CB_BIND pin.
+    **Console result:** `completed=1`, readback BASE `02000240` =
+    `color_va >> 8`, `BASE_EXT=0`, `CB_SHADER_MASK=15` — owned BASE
+    round-trip proven; remaining bind dwords still unowned.
 
 ## Toolchain result (2026-09-25)
 
@@ -182,6 +192,7 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
 | `ctxreg_cb_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,000 bytes; one nc push: `openagc-ib-dump tag=ctxreg-cb completed=0 words=8` (poison `cccccccc`); host parse `CTXREG_CB` `evidence_qualified=0`; relative COPY_DATA src not console-proven — do not retry |
 | `ctxreg_abs_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-abs completed=1 words=8` (`00000000`×6 + `ffffffff`×2); host parse `CTXREG_ABS` `evidence_qualified=0`; absolute COPY_DATA proven; not a CB_BIND pin |
 | `ctxreg_rt_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-rt completed=1 words=6` (`00000009 00000080 00000080 00008000 00000010 0000000f`); host parse `CTXREG_RT` `evidence_qualified=0`; SET_CONTEXT→abs COPY_DATA round-trip proven; not a CB_BIND pin |
+| `ctxreg_cb_bind_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-cb-bind completed=1 words=8` (`02000240 00000000 00000000 00000000 00000000 00000000 ffffffff 0000000f`); owned BASE/BASE_EXT round-trip proven; host parse `CTXREG_CB_BIND` `evidence_qualified=0`; not a CB_BIND pin |
 
 Firmware identity on the console: `fw=0x9400008` (9.40) from
 `/data/libkernel-dump.log`.

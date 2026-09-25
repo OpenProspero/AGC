@@ -1098,6 +1098,21 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     static const char ctxreg_cb_bind_zero[] =
         "openagc-ib-dump: tag=ctxreg-cb-bind fw=0x9400008 completed=1 words=8\n"
         "ib 00000000 00000000 00000000 00000000 00000000 00000000 ffffffff 0000000f\n";
+    /* Step-Z payload shape: owned-expect line precedes the dump header. */
+    static const char ctxreg_cb_bind_owned_text[] =
+        "openagc-cb-bind-owned: color_va=00000001234567890000 base_lo=34567890 "
+        "base_ext=00000012 shader_mask=0000000f\n"
+        "openagc-ib-dump: tag=ctxreg-cb-bind fw=0x9400008 completed=1 words=8\n"
+        "ib 34567890 00000012 00000000 00000000 00000000 00000000 ffffffff 0000000f\n";
+    static const char no_header[] =
+        "openagc-cb-bind-owned: color_va=00000001234567890000 base_lo=34567890\n"
+        "ib 34567890 00000012\n";
+    /* Exact Step-Z console log shape (fw 0x9400008, arena VA 0x200024000). */
+    static const char ctxreg_cb_bind_console_text[] =
+        "openagc-cb-bind-owned: color_va=0000000200024000 base_lo=02000240 "
+        "base_ext=00000000 shader_mask=0000000f\n"
+        "openagc-ib-dump: tag=ctxreg-cb-bind fw=0x9400008 completed=1 words=8\n"
+        "ib 02000240 00000000 00000000 00000000 00000000 00000000 ffffffff 0000000f\n";
     static const char bad_tag[] =
         "openagc-ib-dump: tag=cb-invent fw=0x9400008 completed=1 words=1\n"
         "ib deadbeef\n";
@@ -1231,6 +1246,37 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     CHECK(openagc_ib_dump_cb_bind_owned_base_match(
               &info, words, expected_base_lo, expected_base_ext,
               OPENAGC_GFX10_CB_SHADER_MASK_OWNED) == 0u);
+
+    /* Leading owned-expect line is skipped; the dump itself still matches. */
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(ctxreg_cb_bind_owned_text, words, 8u, &info), OPENAGC_OK);
+    CHECK(info.kind == OPENAGC_IB_DUMP_KIND_CTXREG_CB_BIND);
+    CHECK(info.dump_parsed == 1u);
+    CHECK(info.completed == 1u);
+    CHECK(info.word_count == 8u);
+    CHECK(openagc_ib_dump_cb_bind_owned_base_match(
+              &info, words, expected_base_lo, expected_base_ext,
+              OPENAGC_GFX10_CB_SHADER_MASK_OWNED) == 1u);
+
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(no_header, words, 8u, &info),
+           OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+    CHECK(info.dump_parsed == 0u);
+
+    /* Console Step-Z log: owned BASE/BASE_EXT/shader mask match fail-closed. */
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(ctxreg_cb_bind_console_text, words, 8u, &info),
+           OPENAGC_OK);
+    CHECK(info.kind == OPENAGC_IB_DUMP_KIND_CTXREG_CB_BIND);
+    CHECK(info.completed == 1u);
+    CHECK(openagc_ib_dump_cb_bind_owned_base_match(
+              &info, words, openagc_pm4_cb_color0_base_lo(0x200024000ull),
+              openagc_pm4_cb_color0_base_ext(0x200024000ull),
+              OPENAGC_GFX10_CB_SHADER_MASK_OWNED) == 1u);
+    CHECK(words[OPENAGC_GFX10_CB_PROBE_IDX_BASE] == 0x02000240u);
+    CHECK(words[OPENAGC_GFX10_CB_PROBE_IDX_BASE_EXT] == 0u);
+    CHECK(words[OPENAGC_GFX10_CB_PROBE_IDX_SHADER_MASK] == 15u);
+    CHECK(info.evidence_qualified == 0u);
 
     info = OPENAGC_IB_DUMP_INFO_INIT;
     EXPECT(openagc_ib_dump_parse(bad_tag, words, 8u, &info),
