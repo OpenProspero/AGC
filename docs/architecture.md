@@ -438,7 +438,13 @@ host-system includes**. The shader-extended policy source cross-compiled
 with the SDK's `x86_64-sie-ps5` Clang, with no undefined symbols under
 `llvm-nm -u`; this version was not run on a console.
 Recheck undefined imports after every change; no
-missing symbol may be satisfied by the host library. This is build/link
+missing symbol may be satisfied by the host library.
+`tools/check_host_invariants.py` checks both host invariants
+mechanically: every externally linked `openagc_*` symbol declared in
+`include/openagc/*.h` has a policy definition (header `static inline`
+helpers excluded), and neither frontend calls backend core functions the
+shared core already offers. Current result: 430 extern symbols, 430
+defined, 0 missing, no bypass. This is build/link
 evidence, not hardware operation or firmware qualification. In CMake integration,
 configure the SDK toolchain with
 `-DOPENAGC_PS5_POLICY_ONLY=ON`; this omits both host code and host tests and

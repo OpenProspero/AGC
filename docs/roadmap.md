@@ -394,4 +394,5 @@ copy, one fence, finite deadline, no retries) are specified in
   *what*.
 * Run `ctest`, a sanitizer build, and the fail-closed policy build
   before calling a stage done. Verify the policy target defines every
-  public symbol and has no undefined imports.
+  public symbol with no undefined imports, and that the frontends stay
+  on the shared core: `python3 tools/check_host_invariants.py`.
