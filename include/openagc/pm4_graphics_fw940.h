@@ -115,13 +115,18 @@ static inline uint32_t openagc_pm4_encode_graphics_sh_eop(
 }
 
 /*
- * SET_CONTEXT_REG pairs + shared EOP+NOP (Step P vehicle).
- * Offsets/values must come from verified PSBC context_registers only —
- * no linkage (ge_cntl/stages_en), no SET_SH, no DRAW, no CB/DB.
- * words must hold 3*pair_count + EOP dwords.
+ * SET_CONTEXT_REG pairs + shared EOP+NOP (Step P / Step R vehicle).
+ * Offsets/values must come from verified PSBC metadata:
+ *   Step P — context_registers only (no linkage);
+ *   Step R — linkage ge_cntl/stages_en/user_vgpr_en only.
+ * No SET_SH, no DRAW, no CB/DB. words must hold 3*pair_count + EOP dwords.
  */
 #define OPENAGC_PM4_GRAPHICS_CONTEXT_EOP_WORDS(pair_count) \
     ((uint32_t)(3u * (pair_count) + OPENAGC_PM4_EOP_WITH_NOP_WORDS))
+
+/* Step R: three linkage context pairs + EOP (same word count as Step P). */
+#define OPENAGC_PM4_GRAPHICS_LINKAGE_EOP_WORDS \
+    OPENAGC_PM4_GRAPHICS_CONTEXT_EOP_WORDS(3u)
 
 static inline uint32_t openagc_pm4_encode_graphics_context_eop(
     const uint32_t *offsets, const uint32_t *values, uint32_t pair_count,
@@ -132,6 +137,30 @@ static inline uint32_t openagc_pm4_encode_graphics_context_eop(
     cursor = openagc_pm4_encode_psbc_context_pairs(offsets, values, pair_count, words);
     openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
     return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+}
+
+/*
+ * Linkage SET_CONTEXT_REG ×3 + EOP (Step R vehicle). Offsets/values from
+ * verified PSBC linkage (ge_cntl, stages_en, user_vgpr_en). Same encoder
+ * as Step P; no SET_SH, no DRAW, no CB/DB.
+ */
+static inline uint32_t openagc_pm4_encode_graphics_linkage_eop(
+    uint32_t ge_cntl_offset, uint32_t ge_cntl_value, uint32_t stages_en_offset,
+    uint32_t stages_en_value, uint32_t user_vgpr_en_offset,
+    uint32_t user_vgpr_en_value, uint32_t sequence, uint64_t marker_va,
+    uint32_t *words)
+{
+    uint32_t offsets[3];
+    uint32_t values[3];
+
+    offsets[0] = ge_cntl_offset;
+    offsets[1] = stages_en_offset;
+    offsets[2] = user_vgpr_en_offset;
+    values[0] = ge_cntl_value;
+    values[1] = stages_en_value;
+    values[2] = user_vgpr_en_value;
+    return openagc_pm4_encode_graphics_context_eop(offsets, values, 3u, sequence,
+                                                   marker_va, words);
 }
 
 /*
