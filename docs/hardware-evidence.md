@@ -782,3 +782,21 @@ No code upload, no SET_SH, no DRAW, no CB/DB.
 
 **Status before push.** Host encoding locked in CTest
 (`test_openagc_psbc_adapter`).
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`set_context_linkage_eop.elf`
+(`825641bb920a1961913231e8495d2d3c22f90de2c4b384224f57a57e83847853`,
+110,040 bytes):
+`submit=ok completed=1 pairs=3 words=33 marker=1`,
+exit implied by completed marker (`exit_value=0` for pid 105). Live klog
+was attached across the push (no fault/hang/timeout string in that
+capture). Loader still accepted connections on 9021 afterward.
+This proves linkage SET_CONTEXT_REG + EOP on console for the three
+smoke.vert linkage pairs. It does **not** unlock CB/DB, DRAW, tiling,
+VideoOut, or host `gpu_execution`. `hardware_qualified` stays **false**.
+The `openagc_ps5_policy` target stays deny-all. The next
+graphics-adjacent gate remains an independently owned FW9.40 capture of
+CB/DB bind or DRAW packets — inventing those is still out of scope.
+Host plans may now treat the full register snapshot (context + shader +
+linkage) as console-aligned for encode/record purposes only; draws stay
+`NOT_READY`.
