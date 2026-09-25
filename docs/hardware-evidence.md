@@ -945,3 +945,22 @@ Step T (distinct 256-byte-aligned code VAs). No DRAW, no CB/DB.
 **Status before push.** Host encoding locked in CTest
 (`test_openagc_psbc_adapter`); Step U encoder byte-identical to
 `encode_register_program(vert) + encode_register_program(frag) + EOP`.
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`set_context_sh_vert_frag_eop.elf`
+(`2b3b79b062f7dc14d559b465dca1a5f5267401c26748b6feee26f9be7dca9d4e`,
+110,144 bytes):
+`submit=ok completed=1 v_ctx=3 v_sh=4 link=3 f_ctx=9 f_sh=4 words=93 vert_va=0000000200020000 frag_va=0000000200020100 marker=1`,
+exit implied by completed marker. Live klog was attached across the push
+(no fault/hang/timeout string required for acceptance beyond marker=1
+and loader still accepting). Loader still accepted connections on 9021
+afterward.
+This proves the combined host-aligned vert+frag register program
+(SET_CONTEXT + graphics SET_SH + linkage, then frag SET_CONTEXT +
+graphics SET_SH) + EOP on console in host snapshot order. It does
+**not** unlock CB/DB, DRAW, tiling, VideoOut, or host `gpu_execution`.
+`hardware_qualified` stays **false**. The `openagc_ps5_policy` target
+stays deny-all. The next graphics-adjacent gate remains inventing neither
+CB/DB nor DRAW until an independently owned FW9.40 capture exists; host
+plans may treat the full Stage-5 vert+frag register snapshot as
+console-proven for encode/record only; draws stay `NOT_READY`.
