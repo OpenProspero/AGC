@@ -964,3 +964,20 @@ stays deny-all. The next graphics-adjacent gate remains inventing neither
 CB/DB nor DRAW until an independently owned FW9.40 capture exists; host
 plans may treat the full Stage-5 vert+frag register snapshot as
 console-proven for encode/record only; draws stay `NOT_READY`.
+
+### Host CB capture intake (fail-closed scaffold)
+
+**Question.** Can the host accept a CB/DB bind IB **only** when a
+manifest + SHA-256 digest verifies the supplied dwords, without inventing
+register values or DRAW packets?
+
+**Status.** Scaffolded in `include/openagc/pm4_cb_capture_fw940.h` and
+`openagc_gpu_host_cb_bind_from_capture` / frontend
+`openagc_frontend_render_pass_bind_cb_capture`. Invent encode always
+returns `UNSUPPORTED_OPERATION`. Evidence pin table count is **0** (no
+owned FW9.40 CB/DB/DRAW dump in-repo). Structural verify+record may set
+`capture_verified=1` with `evidence_qualified=0`, `gpu_submitted=0`;
+`hardware_qualified` stays **false**; `gpu_executable` stays 0; deny-all
+PS5 policy unchanged. DRAW captures remain `NOT_READY` even when the
+digest matches. Console push of invent/CB remains out of scope until a
+real cite is pinned.

@@ -270,6 +270,11 @@ Blocked by two independent gates:
    (93 dwords). Host VK/GL submit records that Step-U-shaped IB from
    dual PSBC envelopes after `bind_psbc_code` (`gpu_submitted=0`);
    draws stay `NOT_READY`. Draw/render packets remain unavailable.
+   Host CB/DB bind is scaffolded fail-closed
+   (`pm4_cb_capture_fw940.h` + `openagc_gpu_host_cb_bind_from_capture`):
+   only a verified capture artifact (manifest+digest) may be recorded;
+   invent encode is refused; evidence pin count is 0; `gpu_executable`
+   stays 0.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
