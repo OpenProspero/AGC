@@ -1334,7 +1334,30 @@ fail-closed `openagc_ib_dump_mmio_tilemode_lookup` are locked in
 `OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays 0;
 `evidence_qualified` stays 0. One push, no retries.
 
-**Observed result (pending).** Not yet run.
+**Artifact.** `mmio_tilemode_dump_eop.elf`
+(`5fd67bf50135fc39b9c90146d0fb57842c61ddc1cb16d0d807b7f657b96065f6`,
+110,184 bytes, ELF-validated): exactly one push, klog attached across it,
+no re-push afterward.
+
+**Observed result (2026-09-25, FW `0x9400008`).** The dump
+`/data/prosperoai/openagc-ib-dump-mmio-tilemode.log` records
+`tag=mmio-tilemode fw=0x9400008 completed=0 words=33` with all 33 dwords
+still `cccccccc` (destination untouched): the absolute `COPY_DATA` reads
+of `GB_ADDR_CONFIG`/`GB_TILE_MODE0..31` did **not** complete on the
+FW9.40 graphics submit path within the 30-second deadline. The loader
+still accepted connections on 9021, FTP served the log, and the live
+klog window contains no fault/hang/timeout/panic marker.
+This retires the mem-mapped-register `COPY_DATA` read of the `0x13xx`
+GB register block under the Step-X-equivalent encoding: the aperture
+that works for `0xA000 + ctxreg` does not extend to those addresses. It
+qualifies nothing and the tile-mode table stays unowned
+(`OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**;
+`hardware_qualified` stays **false**).
+**Do not retry this encoding.** Any next attempt must be a distinct,
+reviewed public-cite path (a different `COPY_DATA` source-select or an
+indexed read sequence), not another address tweak. Host parse and the
+fail-closed index lookup stay locked for a future successful capture; a
+`completed=0` dump never resolves an index.
 
 ### Stage 6/7 refuse contracts (fail-closed scaffold)
 

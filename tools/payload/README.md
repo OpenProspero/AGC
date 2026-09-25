@@ -169,6 +169,10 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     parse are locked. One push, no retries. No register write, no
     SET_CONTEXT, no DRAW; the dump owns the tile-mode table, not a CB
     bind. A `completed=0` timeout is a negative result — do not re-push.
+    **Console result:** `completed=0` with all 33 dwords poison
+    (`cccccccc`) — the `0x13xx` GB register block is not readable
+    through this COPY_DATA encoding; tile-mode table stays unowned.
+    Do not retry this encoding.
 
 ## Toolchain result (2026-09-25)
 
@@ -200,6 +204,7 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
 | `ctxreg_abs_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-abs completed=1 words=8` (`00000000`×6 + `ffffffff`×2); host parse `CTXREG_ABS` `evidence_qualified=0`; absolute COPY_DATA proven; not a CB_BIND pin |
 | `ctxreg_rt_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-rt completed=1 words=6` (`00000009 00000080 00000080 00008000 00000010 0000000f`); host parse `CTXREG_RT` `evidence_qualified=0`; SET_CONTEXT→abs COPY_DATA round-trip proven; not a CB_BIND pin |
 | `ctxreg_cb_bind_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-cb-bind completed=1 words=8` (`02000240 00000000 00000000 00000000 00000000 00000000 ffffffff 0000000f`); owned BASE/BASE_EXT round-trip proven; host parse `CTXREG_CB_BIND` `evidence_qualified=0`; not a CB_BIND pin |
+| `mmio_tilemode_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,184 bytes; one nc push: `openagc-ib-dump tag=mmio-tilemode completed=0 words=33` (all poison `cccccccc`); GB `0x13xx` MMIO not readable via this COPY_DATA encoding — do not retry; tile-mode table stays unowned |
 
 Firmware identity on the console: `fw=0x9400008` (9.40) from
 `/data/libkernel-dump.log`.
