@@ -103,22 +103,35 @@ static int openagc_logf(const char *fmt, ...)
     return openagc_log(line);
 }
 
-static int openagc_write_ctxreg_dump(int completed, const uint32_t *values,
-                                     uint32_t word_count)
+static int openagc_write_ctxreg_dump(int completed, uint64_t color_va,
+                                     const uint32_t *values, uint32_t word_count)
 {
-    char buffer[1024];
+    char buffer[1280];
     size_t used = 0u;
     uint32_t i;
+    uint32_t base_lo = openagc_pm4_cb_color0_base_lo(color_va);
+    uint32_t base_ext = openagc_pm4_cb_color0_base_ext(color_va);
     int n;
 
+    /* Owned expect line — not part of ib_dump_parse; for fail-closed match. */
     n = snprintf(buffer, sizeof(buffer),
-                 "openagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\nib",
-                 OPENAGC_IB_DUMP_TAG_CTXREG_CB_BIND, OPENAGC_IB_DUMP_FW940_ID,
-                 completed, word_count);
+                 "openagc-cb-bind-owned: color_va=%016llx base_lo=%08x base_ext=%08x "
+                 "shader_mask=%08x\n",
+                 (unsigned long long)color_va, base_lo, base_ext,
+                 OPENAGC_GFX10_CB_SHADER_MASK_OWNED);
     if (n < 0 || (size_t)n >= sizeof(buffer)) {
         return -1;
     }
     used = (size_t)n;
+
+    n = snprintf(buffer + used, sizeof(buffer) - used,
+                 "openagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\nib",
+                 OPENAGC_IB_DUMP_TAG_CTXREG_CB_BIND, OPENAGC_IB_DUMP_FW940_ID,
+                 completed, word_count);
+    if (n < 0 || (size_t)n >= sizeof(buffer) - used) {
+        return -1;
+    }
+    used += (size_t)n;
     for (i = 0u; i < word_count; ++i) {
         n = snprintf(buffer + used, sizeof(buffer) - used, " %08x", values[i]);
         if (n < 0 || (size_t)n >= sizeof(buffer) - used) {
@@ -250,8 +263,8 @@ int main(void)
     }
     close(gc_fd);
 
-    if (openagc_write_ctxreg_dump(completed, dest, OPENAGC_GFX10_CB_PROBE_COUNT) !=
-        0) {
+    if (openagc_write_ctxreg_dump(completed, color_va, dest,
+                                  OPENAGC_GFX10_CB_PROBE_COUNT) != 0) {
         return 1;
     }
     return completed ? 0 : 1;
