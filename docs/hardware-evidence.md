@@ -888,3 +888,23 @@ and SH pairs from `smoke.frag.metadata.json`; code upload of
 (`test_openagc_psbc_adapter`); Step T encoder byte-identical to
 `openagc_psbc_reflection_encode_register_program_eop` for smoke.frag
 (unpatched PGM LO/HI match fixture zeros until runtime patch).
+
+**Observed result (2026-09-25, FW `0x9400008`).** One push of
+`set_context_sh_frag_eop.elf`
+(`f7023696f475c461786439be9448fea6801c26281e404b56444f922afe336d1f`,
+110,088 bytes):
+`submit=ok completed=1 ctx=9 sh=4 words=63 code_va=0000000200020000 marker=1`,
+exit implied by completed marker. Live klog was attached across the push
+(no fault/hang/timeout string required for acceptance beyond marker=1
+and loader still accepting). Loader still accepted connections on 9021
+afterward.
+This proves the smoke.frag SET_CONTEXT_REG ×9 + graphics SET_SH_REG ×4
++ EOP IB on console (pixel half of the Stage-5 register snapshot). It
+does **not** unlock CB/DB, DRAW, tiling, VideoOut, or host
+`gpu_execution`. `hardware_qualified` stays **false**. The
+`openagc_ps5_policy` target stays deny-all. The next graphics-adjacent
+gate is a bounded vert+frag combined register IB (Step U: Step S shape
++ Step T shape + EOP, still no DRAW/CB); inventing CB/DB or DRAW remains
+out of scope. Host plans may treat both vertex and fragment register
+snapshots as console-proven for encode/record only; draws stay
+`NOT_READY`.
