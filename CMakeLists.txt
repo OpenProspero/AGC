@@ -70,6 +70,15 @@ if(NOT OPENAGC_PS5_POLICY_ONLY)
             C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
         add_test(NAME openagc_shader COMMAND openagc_shader_tests)
 
+        add_executable(openagc_psbc_adapter_tests tests/test_openagc_psbc_adapter.c)
+        target_link_libraries(openagc_psbc_adapter_tests PRIVATE OpenAGC::openagc)
+        target_include_directories(openagc_psbc_adapter_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        set_target_properties(openagc_psbc_adapter_tests PROPERTIES
+            C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+        add_test(NAME openagc_psbc_adapter COMMAND openagc_psbc_adapter_tests
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
         add_executable(openagc_frontend_tests tests/test_openagc_frontend.c)
         target_link_libraries(openagc_frontend_tests PRIVATE OpenAGC::openagc)
         set_target_properties(openagc_frontend_tests PROPERTIES

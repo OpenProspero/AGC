@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/shader.h"
+#include "openagc/psbc_metadata.h"
 #include "openagc/store_const_code.h"
+#include "openagc/store_span_code.h"
 #include "openagc_gpu_internal.h"
 #include "openagc_sha256.h"
 #include "openagc_shader_internal.h"
@@ -10,6 +12,7 @@
 #include <string.h>
 
 #define OPENAGC_SHADER_MAX_CODE_BYTES 65536u
+#define OPENAGC_SHADER_MAX_METADATA_BYTES 65536u
 #define OPENAGC_SHADER_MAX_BINDINGS 8u
 #define OPENAGC_SHADER_MAX_ARTIFACTS 64u
 #define OPENAGC_SHADER_MAX_PIPELINE_PLANS 32u
@@ -20,10 +23,12 @@
 struct openagc_shader_artifact {
     openagc_gpu_device *device;
     uint8_t *code;
+    uint8_t *compiler_metadata;
     openagc_shader_binding_decl *bindings;
     openagc_shader_texture_decl *textures;
     uint8_t code_sha256[32];
     uint32_t code_size;
+    uint32_t compiler_metadata_size;
     uint32_t binding_count;
     uint32_t texture_count;
     uint32_t pipeline_references;
@@ -37,6 +42,9 @@ struct openagc_shader_artifact {
     uint32_t workgroup_y;
     uint32_t workgroup_z;
     uint32_t host_store_const;
+    uint32_t host_store_span;
+    /* 1 when intake accepted a pin-checked OPENGNM_PSBC envelope (still not executable). */
+    uint32_t psbc_envelope;
 };
 
 struct openagc_shader_pipeline_plan {
@@ -177,92 +185,14 @@ openagc_result openagc_shader_get_capabilities(
     return OPENAGC_OK;
 }
 
-static int openagc_shader_json_uint(const uint8_t *json, uint32_t size, const char *key,
-                                   uint32_t *out)
-{
-    uint32_t index;
-    uint32_t key_length = 0u;
-    uint32_t value = 0u;
-    int found = 0;
-
-    while (key[key_length] != '\0') {
-        key_length++;
-    }
-    for (index = 0u; index + key_length + 2u < size; ++index) {
-        uint32_t cursor;
-
-        if (json[index] != '"' ||
-            memcmp(json + index + 1u, key, key_length) != 0 ||
-            json[index + 1u + key_length] != '"') {
-            continue;
-        }
-        cursor = index + key_length + 2u;
-        while (cursor < size && (json[cursor] == ' ' || json[cursor] == '\t')) {
-            cursor++;
-        }
-        if (cursor >= size || json[cursor] != ':') {
-            return 0;
-        }
-        cursor++;
-        while (cursor < size && (json[cursor] == ' ' || json[cursor] == '\t')) {
-            cursor++;
-        }
-        if (cursor >= size || json[cursor] < '0' || json[cursor] > '9') {
-            return 0;
-        }
-        if (found != 0) {
-            return 0;
-        }
-        found = 1;
-        while (cursor < size && json[cursor] >= '0' && json[cursor] <= '9') {
-            uint32_t digit = (uint32_t)(json[cursor] - '0');
-
-            if (value > (0xffffffffu - digit) / 10u) {
-                return 0;
-            }
-            value = value * 10u + digit;
-            cursor++;
-        }
-        index = cursor;
-    }
-    if (found == 0) {
-        return 0;
-    }
-    *out = value;
-    return 1;
-}
-
 static openagc_result openagc_shader_psbc_metadata_matches(const uint8_t *metadata, uint32_t size,
                                                            openagc_shader_stage stage,
                                                            uint32_t code_size)
 {
-    uint32_t version = 0u;
-    uint32_t target = 0u;
-    uint32_t source_stage = 0u;
-    uint32_t machine_code_size = 0u;
-    uint32_t hardware_stage = 0u;
-    uint32_t unresolved_fields = 0u;
+    openagc_psbc_reflection reflection;
     uint32_t expected_stage;
+    openagc_result result;
 
-    if (metadata == NULL || size < 2u) {
-        return OPENAGC_ERROR_INVALID_ARGUMENT;
-    }
-    {
-        uint32_t begin = 0u;
-        uint32_t end = size;
-
-        while (begin < end && (metadata[begin] == ' ' || metadata[begin] == '\n' ||
-                               metadata[begin] == '\r' || metadata[begin] == '\t')) {
-            begin++;
-        }
-        while (end > begin && (metadata[end - 1u] == ' ' || metadata[end - 1u] == '\n' ||
-                               metadata[end - 1u] == '\r' || metadata[end - 1u] == '\t')) {
-            end--;
-        }
-        if (begin >= end || metadata[begin] != '{' || metadata[end - 1u] != '}') {
-            return OPENAGC_ERROR_INVALID_ARGUMENT;
-        }
-    }
     if (stage == OPENAGC_SHADER_STAGE_VERTEX) {
         expected_stage = 1u;
     } else if (stage == OPENAGC_SHADER_STAGE_PIXEL) {
@@ -270,19 +200,41 @@ static openagc_result openagc_shader_psbc_metadata_matches(const uint8_t *metada
     } else {
         return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
     }
-    if (openagc_shader_json_uint(metadata, size, "version", &version) == 0 ||
-        openagc_shader_json_uint(metadata, size, "target", &target) == 0 ||
-        openagc_shader_json_uint(metadata, size, "source_stage", &source_stage) == 0 ||
-        openagc_shader_json_uint(metadata, size, "machine_code_size", &machine_code_size) == 0 ||
-        openagc_shader_json_uint(metadata, size, "hardware_stage", &hardware_stage) == 0 ||
-        openagc_shader_json_uint(metadata, size, "unresolved_fields", &unresolved_fields) == 0) {
+    result = openagc_psbc_metadata_parse_reflection(metadata, size, &reflection);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_reflection_validate(&reflection, expected_stage, code_size);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (stage == OPENAGC_SHADER_STAGE_VERTEX && reflection.has_linkage == 0u) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
-    if (version != OPENAGC_SHADER_PINNED_PSBC_METADATA_VERSION || target != 2u ||
-        source_stage != expected_stage || machine_code_size != code_size) {
-        return OPENAGC_ERROR_INTEGRITY;
+    if (stage == OPENAGC_SHADER_STAGE_PIXEL && reflection.has_linkage != 0u) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
     return OPENAGC_OK;
+}
+
+static openagc_result openagc_shader_psbc_envelope_matches(
+    const openagc_shader_artifact_desc *desc)
+{
+    openagc_psbc_reflection reflection;
+    openagc_result result;
+
+    result = openagc_shader_psbc_metadata_matches(desc->compiler_metadata,
+                                                 desc->compiler_metadata_size, desc->stage,
+                                                 desc->code_size);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_metadata_parse_reflection(desc->compiler_metadata,
+                                                   desc->compiler_metadata_size, &reflection);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    return openagc_psbc_reflection_check_artifact_desc(&reflection, desc);
 }
 
 openagc_result openagc_shader_artifact_intake_host(
@@ -330,10 +282,14 @@ openagc_result openagc_shader_artifact_intake_host(
             snapshot.toolchain_release_minor != 0u ||
             snapshot.toolchain_release_patch != 0u ||
             !openagc_shader_revision_is_zero(snapshot.compiler_source_revision) ||
-            !openagc_shader_digest_is_zero(snapshot.compiler_binary_sha256)) {
+            !openagc_shader_digest_is_zero(snapshot.compiler_binary_sha256) ||
+            snapshot.compiler_metadata != NULL || snapshot.compiler_metadata_size != 0u) {
             return OPENAGC_ERROR_INVALID_ARGUMENT;
         }
-    } else if (snapshot.compiler_metadata_version !=
+    } else if (snapshot.compiler_metadata == NULL ||
+               snapshot.compiler_metadata_size < 2u ||
+               snapshot.compiler_metadata_size > OPENAGC_SHADER_MAX_METADATA_BYTES ||
+               snapshot.compiler_metadata_version !=
                    OPENAGC_SHADER_PINNED_PSBC_METADATA_VERSION ||
                snapshot.toolchain_release_major != 0u ||
                snapshot.toolchain_release_minor != 3u ||
@@ -343,6 +299,14 @@ openagc_result openagc_shader_artifact_intake_host(
                       sizeof(snapshot.compiler_source_revision)) != 0 ||
                openagc_shader_digest_is_zero(snapshot.compiler_binary_sha256)) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
+    } else {
+        uint8_t pinned_digest[32];
+
+        if (openagc_psbc_decode_sha256_hex(OPENAGC_SHADER_PINNED_PSBC_EXECUTABLE_SHA256,
+                                           pinned_digest) == 0 ||
+            memcmp(snapshot.compiler_binary_sha256, pinned_digest, 32) != 0) {
+            return OPENAGC_ERROR_INTEGRITY;
+        }
     }
     if (device->shader_artifact_count >= OPENAGC_SHADER_MAX_ARTIFACTS) {
         return OPENAGC_ERROR_CAPACITY;
@@ -353,6 +317,10 @@ openagc_result openagc_shader_artifact_intake_host(
         return OPENAGC_ERROR_OUT_OF_MEMORY;
     }
     artifact->code = (uint8_t *)malloc((size_t)snapshot.code_size);
+    if (snapshot.compiler == OPENAGC_SHADER_COMPILER_OPENGNM_PSBC) {
+        artifact->compiler_metadata =
+            (uint8_t *)malloc((size_t)snapshot.compiler_metadata_size);
+    }
     if (snapshot.binding_count != 0u) {
         artifact->bindings = (openagc_shader_binding_decl *)calloc(
             (size_t)snapshot.binding_count, sizeof(*artifact->bindings));
@@ -362,12 +330,19 @@ openagc_result openagc_shader_artifact_intake_host(
             (size_t)snapshot.texture_count, sizeof(*artifact->textures));
     }
     if (artifact->code == NULL ||
+        (snapshot.compiler == OPENAGC_SHADER_COMPILER_OPENGNM_PSBC &&
+         artifact->compiler_metadata == NULL) ||
         (snapshot.binding_count != 0u && artifact->bindings == NULL) ||
         (snapshot.texture_count != 0u && artifact->textures == NULL)) {
         result = OPENAGC_ERROR_OUT_OF_MEMORY;
         goto fail;
     }
     memcpy(artifact->code, snapshot.code, snapshot.code_size);
+    if (snapshot.compiler == OPENAGC_SHADER_COMPILER_OPENGNM_PSBC) {
+        memcpy(artifact->compiler_metadata, snapshot.compiler_metadata,
+               snapshot.compiler_metadata_size);
+        artifact->compiler_metadata_size = snapshot.compiler_metadata_size;
+    }
     if (snapshot.binding_count != 0u) {
         memcpy(artifact->bindings, snapshot.bindings,
                (size_t)snapshot.binding_count * sizeof(*artifact->bindings));
@@ -387,14 +362,10 @@ openagc_result openagc_shader_artifact_intake_host(
         goto fail;
     }
     if (snapshot.compiler == OPENAGC_SHADER_COMPILER_OPENGNM_PSBC) {
-        result = openagc_shader_psbc_metadata_matches(
-            snapshot.compiler_metadata, snapshot.compiler_metadata_size, snapshot.stage,
-            snapshot.code_size);
+        result = openagc_shader_psbc_envelope_matches(&snapshot);
         if (result != OPENAGC_OK) {
             goto fail;
         }
-        result = OPENAGC_ERROR_NOT_READY;
-        goto fail;
     }
     artifact->device = device;
     artifact->code_size = snapshot.code_size;
@@ -410,10 +381,17 @@ openagc_result openagc_shader_artifact_intake_host(
     artifact->workgroup_y = snapshot.workgroup_y;
     artifact->workgroup_z = snapshot.workgroup_z;
     artifact->host_store_const = 0u;
+    artifact->host_store_span = 0u;
+    artifact->psbc_envelope = snapshot.compiler == OPENAGC_SHADER_COMPILER_OPENGNM_PSBC ? 1u : 0u;
     if (snapshot.stage == OPENAGC_SHADER_STAGE_COMPUTE &&
         openagc_store_const_code_matches(artifact->code, artifact->code_size) != 0 &&
         snapshot.binding_count >= 1u && snapshot.bindings[0].min_bytes >= 4u) {
         artifact->host_store_const = 1u;
+    } else if (snapshot.stage == OPENAGC_SHADER_STAGE_COMPUTE &&
+               openagc_store_span_code_matches(artifact->code, artifact->code_size) != 0 &&
+               snapshot.binding_count >= 1u &&
+               snapshot.bindings[0].min_bytes >= OPENAGC_STORE_SPAN_BYTES) {
+        artifact->host_store_span = 1u;
     }
     memcpy(artifact->code_sha256, actual_digest, sizeof(actual_digest));
     device->shader_artifact_count++;
@@ -423,6 +401,7 @@ openagc_result openagc_shader_artifact_intake_host(
 fail:
     free(artifact->textures);
     free(artifact->bindings);
+    free(artifact->compiler_metadata);
     free(artifact->code);
     free(artifact);
     return result;
@@ -445,7 +424,27 @@ openagc_result openagc_shader_artifact_get_info(
     info->compiler_verified = 0u;
     info->gpu_executable = 0u;
     info->host_store_const = artifact->host_store_const;
+    info->host_store_span = artifact->host_store_span;
+    info->psbc_envelope = artifact->psbc_envelope;
     memcpy(info->code_sha256, artifact->code_sha256, sizeof(info->code_sha256));
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_shader_artifact_get_compiler_metadata(
+    const openagc_shader_artifact *artifact, const uint8_t **out_metadata,
+    uint32_t *out_size)
+{
+    if (artifact == NULL || out_metadata == NULL || out_size == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *out_metadata = NULL;
+    *out_size = 0u;
+    if (artifact->psbc_envelope == 0u || artifact->compiler_metadata == NULL ||
+        artifact->compiler_metadata_size == 0u) {
+        return OPENAGC_ERROR_NOT_READY;
+    }
+    *out_metadata = artifact->compiler_metadata;
+    *out_size = artifact->compiler_metadata_size;
     return OPENAGC_OK;
 }
 
@@ -488,6 +487,7 @@ openagc_result openagc_shader_artifact_destroy(openagc_shader_artifact *artifact
     artifact->device->shader_artifact_count--;
     free(artifact->textures);
     free(artifact->bindings);
+    free(artifact->compiler_metadata);
     free(artifact->code);
     free(artifact);
     return OPENAGC_OK;

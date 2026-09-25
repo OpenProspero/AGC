@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/shader.h"
+#include "openagc/psbc_metadata.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -216,12 +217,40 @@ static int test_intake_and_integrity(void)
     EXPECT(openagc_shader_artifact_intake_host(device, &desc, &candidate),
            OPENAGC_ERROR_INVALID_ARGUMENT);
     {
+        uint8_t pinned[32];
+        uint32_t i;
+
+        CHECK(openagc_psbc_decode_sha256_hex(OPENAGC_SHADER_PINNED_PSBC_EXECUTABLE_SHA256,
+                                             pinned) == 1);
+        for (i = 0u; i < 32u; ++i) {
+            desc.compiler_binary_sha256[i] = pinned[i];
+        }
+    }
+    EXPECT(openagc_shader_artifact_intake_host(device, &desc, &candidate),
+           OPENAGC_ERROR_INVALID_ARGUMENT);
+    {
         static const char metadata[] =
             "{\"version\":14,\"target\":2,\"source_stage\":1,\"machine_code_size\":4,"
-            "\"hardware_stage\":0,\"unresolved_fields\":0}";
+            "\"hardware_stage\":0,\"unresolved_fields\":0,\"address32_hi\":0,"
+            "\"user_sgpr_count\":4,"
+            "\"context_registers\":[{\"offset\":433,\"value\":128}],"
+            "\"shader_registers\":[{\"offset\":72,\"value\":0}],"
+            "\"input_semantics\":[],\"output_semantics\":[],\"descriptor_bindings\":[],"
+            "\"base_vertex_user_data_dword\":2,\"is_indexed_draw_user_data_dword\":3,"
+            "\"linkage\":{\"ge_cntl\":{\"offset\":603,\"value\":131200},"
+            "\"stages_en\":{\"offset\":725,\"value\":65536},"
+            "\"user_vgpr_en\":{\"offset\":610,\"value\":0}}}";
         static const char wrong_size[] =
             "{\"version\":14,\"target\":2,\"source_stage\":1,\"machine_code_size\":8,"
-            "\"hardware_stage\":0,\"unresolved_fields\":0}";
+            "\"hardware_stage\":0,\"unresolved_fields\":0,\"address32_hi\":0,"
+            "\"user_sgpr_count\":4,"
+            "\"context_registers\":[{\"offset\":433,\"value\":128}],"
+            "\"shader_registers\":[{\"offset\":72,\"value\":0}],"
+            "\"input_semantics\":[],\"output_semantics\":[],\"descriptor_bindings\":[],"
+            "\"base_vertex_user_data_dword\":2,\"is_indexed_draw_user_data_dword\":3,"
+            "\"linkage\":{\"ge_cntl\":{\"offset\":603,\"value\":131200},"
+            "\"stages_en\":{\"offset\":725,\"value\":65536},"
+            "\"user_vgpr_en\":{\"offset\":610,\"value\":0}}}";
 
         desc.compiler_metadata = (const uint8_t *)wrong_size;
         desc.compiler_metadata_size = (uint32_t)(sizeof(wrong_size) - 1u);
@@ -231,22 +260,64 @@ static int test_intake_and_integrity(void)
         desc.compiler_metadata = (const uint8_t *)metadata;
         desc.compiler_metadata_size = (uint32_t)(sizeof(metadata) - 1u);
     }
+    desc.bindings = NULL;
+    desc.binding_count = 0u;
     EXPECT(openagc_shader_artifact_intake_host(device, &desc, &candidate),
-           OPENAGC_ERROR_NOT_READY);
-    CHECK(candidate == NULL);
+           OPENAGC_OK);
+    CHECK(candidate != NULL);
+    {
+        openagc_shader_artifact_info info = OPENAGC_SHADER_ARTIFACT_INFO_INIT;
+
+        EXPECT(openagc_shader_artifact_get_info(candidate, &info), OPENAGC_OK);
+        CHECK(info.psbc_envelope == 1u);
+        CHECK(info.compiler_verified == 0u && info.gpu_executable == 0u);
+        EXPECT(openagc_shader_artifact_require_compiler(candidate), OPENAGC_ERROR_NOT_READY);
+        {
+            const uint8_t *retained = NULL;
+            uint32_t retained_size = 0u;
+
+            EXPECT(openagc_shader_artifact_get_compiler_metadata(candidate, &retained,
+                                                                &retained_size),
+                   OPENAGC_OK);
+            CHECK(retained != NULL && retained_size == desc.compiler_metadata_size);
+            CHECK(memcmp(retained, desc.compiler_metadata, retained_size) == 0);
+        }
+    }
+    EXPECT(openagc_shader_artifact_destroy(candidate), OPENAGC_OK);
+    candidate = NULL;
     {
         openagc_shader_artifact_desc pixel = fixture_desc(OPENAGC_SHADER_STAGE_PIXEL, code);
         static const char pixel_metadata[] =
             "{\"version\":14,\"target\":2,\"source_stage\":5,\"machine_code_size\":4,"
-            "\"hardware_stage\":1,\"unresolved_fields\":0}";
+            "\"hardware_stage\":1,\"unresolved_fields\":0,\"address32_hi\":0,"
+            "\"user_sgpr_count\":2,"
+            "\"context_registers\":[{\"offset\":452,\"value\":0}],"
+            "\"shader_registers\":[{\"offset\":8,\"value\":0}],"
+            "\"input_semantics\":[],\"output_semantics\":[],\"descriptor_bindings\":[],"
+            "\"base_vertex_user_data_dword\":null,\"is_indexed_draw_user_data_dword\":null,"
+            "\"linkage\":null}";
         static const char vertex_stage_on_pixel[] =
             "{\"version\":14,\"target\":2,\"source_stage\":1,\"machine_code_size\":4,"
-            "\"hardware_stage\":1,\"unresolved_fields\":0}";
+            "\"hardware_stage\":1,\"unresolved_fields\":0,\"address32_hi\":0,"
+            "\"user_sgpr_count\":4,"
+            "\"context_registers\":[{\"offset\":433,\"value\":128}],"
+            "\"shader_registers\":[{\"offset\":72,\"value\":0}],"
+            "\"input_semantics\":[],\"output_semantics\":[],\"descriptor_bindings\":[],"
+            "\"base_vertex_user_data_dword\":2,\"is_indexed_draw_user_data_dword\":3,"
+            "\"linkage\":{\"ge_cntl\":{\"offset\":603,\"value\":131200},"
+            "\"stages_en\":{\"offset\":725,\"value\":65536},"
+            "\"user_vgpr_en\":{\"offset\":610,\"value\":0}}}";
+        uint8_t pinned[32];
+        uint32_t i;
 
+        CHECK(openagc_psbc_decode_sha256_hex(OPENAGC_SHADER_PINNED_PSBC_EXECUTABLE_SHA256,
+                                             pinned) == 1);
         pixel.compiler = OPENAGC_SHADER_COMPILER_OPENGNM_PSBC;
         pixel.compiler_metadata_version = OPENAGC_SHADER_PINNED_PSBC_METADATA_VERSION;
         pixel.toolchain_release_minor = 3u;
-        pixel.compiler_binary_sha256[0] = 1u;
+        for (i = 0u; i < 32u; ++i) {
+            pixel.compiler_binary_sha256[i] = pinned[i];
+        }
         memcpy(pixel.compiler_source_revision, OPENAGC_SHADER_PINNED_PSBC_REVISION,
                sizeof(pixel.compiler_source_revision));
         pixel.compiler_metadata = (const uint8_t *)vertex_stage_on_pixel;
@@ -256,8 +327,24 @@ static int test_intake_and_integrity(void)
         pixel.compiler_metadata = (const uint8_t *)pixel_metadata;
         pixel.compiler_metadata_size = (uint32_t)(sizeof(pixel_metadata) - 1u);
         EXPECT(openagc_shader_artifact_intake_host(device, &pixel, &candidate),
-               OPENAGC_ERROR_NOT_READY);
-        CHECK(candidate == NULL);
+               OPENAGC_OK);
+        CHECK(candidate != NULL);
+        EXPECT(openagc_shader_artifact_require_compiler(candidate), OPENAGC_ERROR_NOT_READY);
+        EXPECT(openagc_shader_artifact_destroy(candidate), OPENAGC_OK);
+        candidate = NULL;
+        {
+            openagc_shader_binding_decl bogus = {
+                0u, 0u, OPENAGC_SHADER_BINDING_UNIFORM_BUFFER, 16u
+            };
+
+            pixel.bindings = &bogus;
+            pixel.binding_count = 1u;
+            EXPECT(openagc_shader_artifact_intake_host(device, &pixel, &candidate),
+                   OPENAGC_ERROR_INTEGRITY);
+            CHECK(candidate == NULL);
+            pixel.bindings = NULL;
+            pixel.binding_count = 0u;
+        }
     }
 
     EXPECT(openagc_shader_artifact_destroy(artifact), OPENAGC_OK);

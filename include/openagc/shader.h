@@ -13,6 +13,14 @@ extern "C" {
 #define OPENAGC_SHADER_TARGET_GFX1013 1013u
 #define OPENAGC_SHADER_PINNED_PSBC_REVISION "a92a1228ea3a64e4be9f0e61c2a65a5aa7ffed92"
 #define OPENAGC_SHADER_PINNED_PSBC_METADATA_VERSION 14u
+/*
+ * Verified build-time opengnm-psbc executable digest from the private
+ * Actions artifact (manifest verified=true, hardware_qualified=false,
+ * openagc_runtime_compiler_enabled=false). Recording the pin does not
+ * enable OPENGNM_PSBC intake or gpu_executable by itself.
+ */
+#define OPENAGC_SHADER_PINNED_PSBC_EXECUTABLE_SHA256 \
+    "2f2cbab5a971742fa3b09e4e3f4e104455c85f569bd3925897c6a00112233fa9"
 
 typedef struct openagc_shader_artifact openagc_shader_artifact;
 typedef struct openagc_shader_pipeline_plan openagc_shader_pipeline_plan;
@@ -111,6 +119,10 @@ typedef struct openagc_shader_artifact_info {
     uint32_t gpu_executable;
     /* 1 when code is the console-proven store-const blob; host CPU may simulate it. */
     uint32_t host_store_const;
+    /* 1 when code is the console-proven 8-lane store-span blob (Step I). */
+    uint32_t host_store_span;
+    /* 1 when the artifact is a pin-checked OPENGNM_PSBC envelope; still not gpu_executable. */
+    uint32_t psbc_envelope;
     uint8_t code_sha256[32];
 } openagc_shader_artifact_info;
 
@@ -166,7 +178,7 @@ typedef struct openagc_shader_pipeline_info {
       (const uint8_t *)0, 0u }
 #define OPENAGC_SHADER_ARTIFACT_INFO_INIT \
     { (uint32_t)sizeof(openagc_shader_artifact_info), 0u, 0u, 0u, 0u, \
-      0u, 0u, 0u, 0u, { 0 } }
+      0u, 0u, 0u, 0u, 0u, 0u, { 0 } }
 #define OPENAGC_SHADER_PIPELINE_DESC_INIT \
     { (uint32_t)sizeof(openagc_shader_pipeline_desc), OPENAGC_SHADER_API_VERSION, \
       0u, (openagc_shader_artifact *)0, (openagc_shader_artifact *)0, \
@@ -192,6 +204,14 @@ openagc_result openagc_shader_artifact_get_binding(
 openagc_result openagc_shader_artifact_get_texture(
     const openagc_shader_artifact *artifact, uint32_t index,
     openagc_shader_texture_decl *out_texture);
+/*
+ * Retained PSBC metadata for a pin-checked envelope. Pointers are owned by
+ * the artifact until destroy. NOT_READY when the artifact is not a PSBC
+ * envelope. Does not imply compiler_verified or gpu_executable.
+ */
+openagc_result openagc_shader_artifact_get_compiler_metadata(
+    const openagc_shader_artifact *artifact, const uint8_t **out_metadata,
+    uint32_t *out_size);
 openagc_result openagc_shader_artifact_destroy(openagc_shader_artifact *artifact);
 /* No pinned compiler is installed; never upgrades a fixture to executable. */
 openagc_result openagc_shader_artifact_require_compiler(
