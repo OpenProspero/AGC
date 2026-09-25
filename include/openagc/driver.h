@@ -264,6 +264,12 @@ openagc_result openagc_gpu_host_graphics_register_eop(openagc_gpu_device *device
 openagc_result openagc_gpu_device_reserve_synthetic_va(openagc_gpu_device *device,
                                                        uint64_t size_bytes,
                                                        uint64_t *out_va);
+/*
+ * Host-only synthetic device address for a bound memory span. offset must fit
+ * in the allocation. Never maps console memory.
+ */
+openagc_result openagc_gpu_memory_get_device_address(const openagc_gpu_memory *memory,
+                                                     uint64_t offset, uint64_t *out_va);
 
 openagc_result openagc_gpu_buffer_create(openagc_gpu_device *device,
                                          const openagc_gpu_buffer_desc *desc,

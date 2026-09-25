@@ -212,6 +212,13 @@ openagc_result openagc_shader_artifact_get_texture(
 openagc_result openagc_shader_artifact_get_compiler_metadata(
     const openagc_shader_artifact *artifact, const uint8_t **out_metadata,
     uint32_t *out_size);
+/*
+ * Retained machine code for any accepted artifact. Pointer owned by the
+ * artifact until destroy. Does not imply compiler_verified or gpu_executable.
+ */
+openagc_result openagc_shader_artifact_get_code(const openagc_shader_artifact *artifact,
+                                                const uint8_t **out_code,
+                                                uint32_t *out_size);
 openagc_result openagc_shader_artifact_destroy(openagc_shader_artifact *artifact);
 /* No pinned compiler is installed; never upgrades a fixture to executable. */
 openagc_result openagc_shader_artifact_require_compiler(

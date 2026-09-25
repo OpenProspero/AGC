@@ -614,6 +614,13 @@ openagc_result openagc_frontend_pipeline_record_psbc_register_eop(
 openagc_result openagc_frontend_pipeline_get_psbc_code_vas(
     const openagc_frontend_pipeline *pipeline, uint64_t *vertex_code_va,
     uint64_t *pixel_code_va);
+/*
+ * Host-only: place vertex+pixel PSBC machine code on the shared heap
+ * (256-byte blocks), patch SPI_SHADER_PGM_LO/HI from those VAs, and retain
+ * the spans on the plan. Requires an attached register snapshot. Does not
+ * set gpu_executable and never emits DRAW.
+ */
+openagc_result openagc_frontend_pipeline_bind_psbc_code(openagc_frontend_pipeline *pipeline);
 openagc_result openagc_frontend_pipeline_destroy(openagc_frontend_pipeline *pipeline);
 /* Graphics only. Stride must be a non-zero multiple of 4. Required before
    a draw that fetches vertices (vertex_input_mask != 0). */

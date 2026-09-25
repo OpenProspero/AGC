@@ -448,6 +448,23 @@ openagc_result openagc_shader_artifact_get_compiler_metadata(
     return OPENAGC_OK;
 }
 
+openagc_result openagc_shader_artifact_get_code(const openagc_shader_artifact *artifact,
+                                                const uint8_t **out_code,
+                                                uint32_t *out_size)
+{
+    if (artifact == NULL || out_code == NULL || out_size == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *out_code = NULL;
+    *out_size = 0u;
+    if (artifact->code == NULL || artifact->code_size == 0u) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    *out_code = artifact->code;
+    *out_size = artifact->code_size;
+    return OPENAGC_OK;
+}
+
 openagc_result openagc_shader_artifact_get_binding(
     const openagc_shader_artifact *artifact, uint32_t index,
     openagc_shader_binding_decl *out_binding)

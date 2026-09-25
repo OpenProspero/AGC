@@ -1013,6 +1013,20 @@ openagc_result openagc_gpu_device_reserve_synthetic_va(openagc_gpu_device *devic
     return OPENAGC_OK;
 }
 
+openagc_result openagc_gpu_memory_get_device_address(const openagc_gpu_memory *memory,
+                                                     uint64_t offset, uint64_t *out_va)
+{
+    if (memory == NULL || out_va == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *out_va = 0u;
+    if (offset > memory->size_bytes) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    *out_va = memory->synthetic_va + offset;
+    return OPENAGC_OK;
+}
+
 openagc_result openagc_gpu_host_graphics_register_eop(openagc_gpu_device *device,
                                                       const uint32_t *register_words,
                                                       uint32_t register_dword_count)

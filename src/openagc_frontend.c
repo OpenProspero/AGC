@@ -182,7 +182,14 @@ struct openagc_frontend_pipeline {
     uint64_t psbc_vertex_code_va;
     uint64_t psbc_pixel_code_va;
     uint32_t psbc_pgm_patched;
+    uint64_t psbc_vertex_code_offset;
+    uint64_t psbc_pixel_code_offset;
+    uint64_t psbc_vertex_code_bytes;
+    uint64_t psbc_pixel_code_bytes;
+    uint32_t psbc_code_bound;
 };
+
+static void openagc_frontend_pipeline_release_psbc_code(openagc_frontend_pipeline *pipeline);
 
 static openagc_result openagc_frontend_reset_transitions(
     openagc_frontend_device *frontend)
@@ -3682,6 +3689,7 @@ openagc_result openagc_frontend_pipeline_set_psbc_register_snapshot(
     free(pipeline->host_register_program);
     free(pipeline->psbc_vertex_metadata);
     free(pipeline->psbc_pixel_metadata);
+    openagc_frontend_pipeline_release_psbc_code(pipeline);
     pipeline->host_register_program = words;
     pipeline->host_register_program_dwords = word_count;
     pipeline->psbc_vertex_metadata = vertex_copy;
@@ -3790,6 +3798,11 @@ openagc_result openagc_frontend_pipeline_patch_psbc_pgm_vas(
     }
     free(pipeline->host_register_program);
     pipeline->host_register_program = words;
+    if (pipeline->psbc_code_bound != 0u &&
+        (vertex_code_va != pipeline->psbc_vertex_code_va ||
+         pixel_code_va != pipeline->psbc_pixel_code_va)) {
+        openagc_frontend_pipeline_release_psbc_code(pipeline);
+    }
     pipeline->psbc_vertex_code_va = vertex_code_va;
     pipeline->psbc_pixel_code_va = pixel_code_va;
     pipeline->psbc_pgm_patched = 1u;
@@ -3824,6 +3837,112 @@ openagc_result openagc_frontend_pipeline_get_psbc_code_vas(
     }
     *vertex_code_va = pipeline->psbc_vertex_code_va;
     *pixel_code_va = pipeline->psbc_pixel_code_va;
+    return OPENAGC_OK;
+}
+
+static void openagc_frontend_pipeline_release_psbc_code(openagc_frontend_pipeline *pipeline)
+{
+    if (pipeline == NULL || pipeline->frontend == NULL || pipeline->psbc_code_bound == 0u) {
+        return;
+    }
+    if (pipeline->psbc_vertex_code_bytes != 0u) {
+        openagc_frontend_block_free(pipeline->frontend, pipeline->psbc_vertex_code_offset);
+    }
+    if (pipeline->psbc_pixel_code_bytes != 0u) {
+        openagc_frontend_block_free(pipeline->frontend, pipeline->psbc_pixel_code_offset);
+    }
+    pipeline->psbc_vertex_code_offset = 0u;
+    pipeline->psbc_pixel_code_offset = 0u;
+    pipeline->psbc_vertex_code_bytes = 0u;
+    pipeline->psbc_pixel_code_bytes = 0u;
+    pipeline->psbc_code_bound = 0u;
+}
+
+openagc_result openagc_frontend_pipeline_bind_psbc_code(openagc_frontend_pipeline *pipeline)
+{
+    const uint8_t *vertex_code = NULL;
+    const uint8_t *pixel_code = NULL;
+    uint32_t vertex_code_size = 0u;
+    uint32_t pixel_code_size = 0u;
+    uint64_t vertex_offset = 0u;
+    uint64_t pixel_offset = 0u;
+    uint64_t vertex_va = 0u;
+    uint64_t pixel_va = 0u;
+    openagc_result result;
+
+    if (pipeline == NULL || pipeline->frontend == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (pipeline->host_register_program == NULL || pipeline->psbc_vertex_metadata == NULL ||
+        pipeline->psbc_pixel_metadata == NULL) {
+        return OPENAGC_ERROR_NOT_READY;
+    }
+    if (pipeline->vertex == NULL || pipeline->pixel == NULL || pipeline->frontend->heap == NULL) {
+        return OPENAGC_ERROR_BAD_STATE;
+    }
+    result = openagc_shader_artifact_get_code(pipeline->vertex, &vertex_code, &vertex_code_size);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_shader_artifact_get_code(pipeline->pixel, &pixel_code, &pixel_code_size);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (vertex_code_size == 0u || pixel_code_size == 0u || (vertex_code_size & 3u) != 0u ||
+        (pixel_code_size & 3u) != 0u) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+
+    openagc_frontend_pipeline_release_psbc_code(pipeline);
+
+    result = openagc_frontend_block_alloc(pipeline->frontend, vertex_code_size, &vertex_offset);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_frontend_block_alloc(pipeline->frontend, pixel_code_size, &pixel_offset);
+    if (result != OPENAGC_OK) {
+        openagc_frontend_block_free(pipeline->frontend, vertex_offset);
+        return result;
+    }
+    result = openagc_gpu_memory_write(pipeline->frontend->heap, vertex_offset, vertex_code,
+                                      vertex_code_size);
+    if (result != OPENAGC_OK) {
+        openagc_frontend_block_free(pipeline->frontend, pixel_offset);
+        openagc_frontend_block_free(pipeline->frontend, vertex_offset);
+        return result;
+    }
+    result = openagc_gpu_memory_write(pipeline->frontend->heap, pixel_offset, pixel_code,
+                                      pixel_code_size);
+    if (result != OPENAGC_OK) {
+        openagc_frontend_block_free(pipeline->frontend, pixel_offset);
+        openagc_frontend_block_free(pipeline->frontend, vertex_offset);
+        return result;
+    }
+    result = openagc_gpu_memory_get_device_address(pipeline->frontend->heap, vertex_offset,
+                                                   &vertex_va);
+    if (result != OPENAGC_OK) {
+        openagc_frontend_block_free(pipeline->frontend, pixel_offset);
+        openagc_frontend_block_free(pipeline->frontend, vertex_offset);
+        return result;
+    }
+    result = openagc_gpu_memory_get_device_address(pipeline->frontend->heap, pixel_offset,
+                                                   &pixel_va);
+    if (result != OPENAGC_OK) {
+        openagc_frontend_block_free(pipeline->frontend, pixel_offset);
+        openagc_frontend_block_free(pipeline->frontend, vertex_offset);
+        return result;
+    }
+    result = openagc_frontend_pipeline_patch_psbc_pgm_vas(pipeline, vertex_va, pixel_va);
+    if (result != OPENAGC_OK) {
+        openagc_frontend_block_free(pipeline->frontend, pixel_offset);
+        openagc_frontend_block_free(pipeline->frontend, vertex_offset);
+        return result;
+    }
+    pipeline->psbc_vertex_code_offset = vertex_offset;
+    pipeline->psbc_pixel_code_offset = pixel_offset;
+    pipeline->psbc_vertex_code_bytes = vertex_code_size;
+    pipeline->psbc_pixel_code_bytes = pixel_code_size;
+    pipeline->psbc_code_bound = 1u;
     return OPENAGC_OK;
 }
 
@@ -4302,6 +4421,7 @@ openagc_result openagc_frontend_pipeline_destroy(openagc_frontend_pipeline *pipe
     free(pipeline->host_register_program);
     free(pipeline->psbc_vertex_metadata);
     free(pipeline->psbc_pixel_metadata);
+    openagc_frontend_pipeline_release_psbc_code(pipeline);
     pipeline->frontend->pipeline_count--;
     free(pipeline->layout);
     free(pipeline);
