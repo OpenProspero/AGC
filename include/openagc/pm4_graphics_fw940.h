@@ -227,4 +227,52 @@ static inline uint32_t openagc_pm4_encode_graphics_context_sh_linkage_eop(
     return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
 }
 
+/*
+ * Combined vert + frag host register program + EOP (Step U vehicle):
+ * smoke.vert context + SH + linkage (Step S body) then smoke.frag context
+ * + SH (Step T body), matching host
+ * openagc_psbc_reflection_encode_register_program(vert) then (frag).
+ * One shared EOP+NOP trailer. No DRAW, no CB/DB.
+ * words must hold 3*(v_ctx+v_sh+3+f_ctx+f_sh) + EOP dwords.
+ */
+#define OPENAGC_PM4_GRAPHICS_VERT_FRAG_EOP_WORDS(v_ctx, v_sh, f_ctx, f_sh) \
+    ((uint32_t)(3u * ((v_ctx) + (v_sh) + 3u + (f_ctx) + (f_sh)) +       \
+                OPENAGC_PM4_EOP_WITH_NOP_WORDS))
+
+static inline uint32_t openagc_pm4_encode_graphics_vert_frag_eop(
+    const uint32_t *vert_ctx_offsets, const uint32_t *vert_ctx_values,
+    uint32_t vert_ctx_count, const uint32_t *vert_sh_offsets,
+    const uint32_t *vert_sh_values, uint32_t vert_sh_count,
+    uint32_t ge_cntl_offset, uint32_t ge_cntl_value, uint32_t stages_en_offset,
+    uint32_t stages_en_value, uint32_t user_vgpr_en_offset,
+    uint32_t user_vgpr_en_value, const uint32_t *frag_ctx_offsets,
+    const uint32_t *frag_ctx_values, uint32_t frag_ctx_count,
+    const uint32_t *frag_sh_offsets, const uint32_t *frag_sh_values,
+    uint32_t frag_sh_count, uint32_t sequence, uint64_t marker_va,
+    uint32_t *words)
+{
+    uint32_t link_offsets[3];
+    uint32_t link_values[3];
+    uint32_t cursor;
+
+    link_offsets[0] = ge_cntl_offset;
+    link_offsets[1] = stages_en_offset;
+    link_offsets[2] = user_vgpr_en_offset;
+    link_values[0] = ge_cntl_value;
+    link_values[1] = stages_en_value;
+    link_values[2] = user_vgpr_en_value;
+    cursor = openagc_pm4_encode_psbc_context_pairs(vert_ctx_offsets, vert_ctx_values,
+                                                   vert_ctx_count, words);
+    cursor += openagc_pm4_encode_psbc_shader_pairs(vert_sh_offsets, vert_sh_values,
+                                                   vert_sh_count, words + cursor);
+    cursor += openagc_pm4_encode_psbc_context_pairs(link_offsets, link_values, 3u,
+                                                    words + cursor);
+    cursor += openagc_pm4_encode_psbc_context_pairs(frag_ctx_offsets, frag_ctx_values,
+                                                    frag_ctx_count, words + cursor);
+    cursor += openagc_pm4_encode_psbc_shader_pairs(frag_sh_offsets, frag_sh_values,
+                                                   frag_sh_count, words + cursor);
+    openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
+    return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+}
+
 #endif /* OPENAGC_PM4_GRAPHICS_FW940_H */
