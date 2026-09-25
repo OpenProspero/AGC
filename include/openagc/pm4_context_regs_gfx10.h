@@ -19,7 +19,9 @@
  * are owned via PSBC fixtures + Steps P–U; CB_COLOR*_BASE/PITCH/… values
  * are not present in smoke and must come from an independently owned
  * console readback/capture. Step W (relative COPY_DATA src) was
- * console-negative; Step X probes absolute CONTEXT_REG_START+offset.
+ * console-negative; Step X proved absolute CONTEXT_REG_START+offset;
+ * Step Y uses that proven abs path after SET_CONTEXT of smoke-owned
+ * SPI/PA/DB_SHADER/CB_SHADER_MASK values (round-trip; not COLOR_BASE).
  * hardware_qualified stays false.
  */
 
@@ -85,6 +87,25 @@ static const uint32_t openagc_gfx10_cb_probe_offsets[OPENAGC_GFX10_CB_PROBE_COUN
     OPENAGC_GFX10_CB_COLOR0_SLICE,  OPENAGC_GFX10_CB_COLOR0_VIEW,
     OPENAGC_GFX10_CB_COLOR0_INFO,   OPENAGC_GFX10_CB_COLOR0_ATTRIB,
     OPENAGC_GFX10_CB_TARGET_MASK,   OPENAGC_GFX10_CB_SHADER_MASK
+};
+
+/*
+ * Step Y round-trip probe: smoke.frag context pairs with non-zero values
+ * from tests/fixtures/psbc_smoke/smoke.frag.metadata.json. Deliberately
+ * excludes zeros (ambiguous vs. clear) and COLOR_BASE-class offsets.
+ * CB_SHADER_MASK=15 is distinct from Step X live residue (0xffffffff).
+ */
+#define OPENAGC_GFX10_CTXREG_RT_COUNT 6u
+
+static const uint32_t openagc_gfx10_ctxreg_rt_offsets[OPENAGC_GFX10_CTXREG_RT_COUNT] = {
+    OPENAGC_GFX10_SPI_SHADER_COL_FORMAT, OPENAGC_GFX10_SPI_PS_INPUT_ENA,
+    OPENAGC_GFX10_SPI_PS_INPUT_ADDR,     OPENAGC_GFX10_SPI_PS_IN_CONTROL,
+    OPENAGC_GFX10_DB_SHADER_CONTROL,     OPENAGC_GFX10_CB_SHADER_MASK
+};
+
+/* Owned smoke.frag values — do not invent; cite the fixture JSON. */
+static const uint32_t openagc_gfx10_ctxreg_rt_values[OPENAGC_GFX10_CTXREG_RT_COUNT] = {
+    9u, 128u, 128u, 32768u, 16u, 15u
 };
 
 static const openagc_gfx10_reg_name openagc_gfx10_psbc_smoke_regs[] = {

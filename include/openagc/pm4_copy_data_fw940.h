@@ -5,6 +5,7 @@
 
 #include "openagc/pm4_context_regs_gfx10.h"
 #include "openagc/pm4_fw940.h"
+#include "openagc/pm4_graphics_fw940.h"
 
 #include <stdint.h>
 
@@ -27,6 +28,9 @@
  *   (e.g. CB_COLOR0_BASE=792). completed=0 / poison — encoding not proven.
  * Step X: src_lo = OPENAGC_PM4_CONTEXT_REG_START + relative offset (e.g.
  *   0xA000+792). Distinct offset encoding; same control word as emit_rreg.
+ *   Console-proven completed=1 (COLOR_BASE-class zeros; masks ffffffff).
+ * Step Y: SET_CONTEXT smoke-owned SPI/PA/DB_SHADER/CB_SHADER_MASK values,
+ *   then absolute COPY_DATA readback (round-trip). Not a COLOR_BASE bind.
  *
  * Does not SET color binds and does not invent CB values.
  * hardware_qualified / gpu_executable stay false.
@@ -49,6 +53,16 @@
                 OPENAGC_PM4_EOP_WITH_NOP_WORDS))
 #define OPENAGC_PM4_COPY_DATA_CB_PROBE_EOP_WORDS                            \
     OPENAGC_PM4_COPY_DATA_EOP_WORDS(OPENAGC_GFX10_CB_PROBE_COUNT)
+
+/* Step Y: SET_CONTEXT pairs + abs COPY_DATA readback + EOP. */
+#define OPENAGC_PM4_CTXREG_RT_SET_WORDS                                     \
+    ((uint32_t)(OPENAGC_GFX10_CTXREG_RT_COUNT *                             \
+                OPENAGC_PM4_SET_CONTEXT_WORDS(1u)))
+#define OPENAGC_PM4_CTXREG_RT_COPY_WORDS                                    \
+    ((uint32_t)(OPENAGC_GFX10_CTXREG_RT_COUNT * OPENAGC_PM4_COPY_DATA_WORDS))
+#define OPENAGC_PM4_CTXREG_RT_EOP_WORDS                                     \
+    (OPENAGC_PM4_CTXREG_RT_SET_WORDS + OPENAGC_PM4_CTXREG_RT_COPY_WORDS +  \
+     OPENAGC_PM4_EOP_WITH_NOP_WORDS)
 
 /* Absolute COPY_DATA src for a SET_CONTEXT_REG relative offset. */
 static inline uint32_t openagc_pm4_copy_data_src_context_abs(uint32_t relative_offset)
@@ -105,6 +119,31 @@ static inline uint32_t openagc_pm4_encode_copy_data_cb_probe_abs_eop(
     for (i = 0u; i < OPENAGC_GFX10_CB_PROBE_COUNT; ++i) {
         openagc_pm4_encode_copy_data_reg_to_mem(
             openagc_pm4_copy_data_src_context_abs(openagc_gfx10_cb_probe_offsets[i]),
+            dst_base_va + (uint64_t)i * 4u, words + cursor);
+        cursor += OPENAGC_PM4_COPY_DATA_WORDS;
+    }
+    openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
+    return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+}
+
+/*
+ * Step Y vehicle: SET_CONTEXT smoke-owned RT pairs, then absolute COPY_DATA
+ * register→memory of the same offsets, then EOP. words must hold
+ * OPENAGC_PM4_CTXREG_RT_EOP_WORDS. Values are the owned smoke fixture
+ * constants — not COLOR_BASE invent.
+ */
+static inline uint32_t openagc_pm4_encode_ctxreg_rt_abs_eop(
+    uint64_t dst_base_va, uint32_t sequence, uint64_t marker_va, uint32_t *words)
+{
+    uint32_t i;
+    uint32_t cursor;
+
+    cursor = openagc_pm4_encode_psbc_context_pairs(
+        openagc_gfx10_ctxreg_rt_offsets, openagc_gfx10_ctxreg_rt_values,
+        OPENAGC_GFX10_CTXREG_RT_COUNT, words);
+    for (i = 0u; i < OPENAGC_GFX10_CTXREG_RT_COUNT; ++i) {
+        openagc_pm4_encode_copy_data_reg_to_mem(
+            openagc_pm4_copy_data_src_context_abs(openagc_gfx10_ctxreg_rt_offsets[i]),
             dst_base_va + (uint64_t)i * 4u, words + cursor);
         cursor += OPENAGC_PM4_COPY_DATA_WORDS;
     }
