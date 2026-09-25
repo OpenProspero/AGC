@@ -188,4 +188,42 @@ static inline uint32_t openagc_pm4_encode_graphics_context_sh_eop(
     return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
 }
 
+/*
+ * Full host-aligned register program + EOP (Step S vehicle): SET_CONTEXT
+ * (context_registers) then graphics SET_SH then linkage SET_CONTEXT ×3,
+ * matching openagc_psbc_reflection_encode_register_program order. Same
+ * proven pair sources as Steps Q and R. No DRAW, no CB/DB.
+ * words must hold 3*(ctx_count+sh_count+3) + EOP dwords.
+ */
+#define OPENAGC_PM4_GRAPHICS_CONTEXT_SH_LINKAGE_EOP_WORDS(ctx_count, sh_count) \
+    ((uint32_t)(3u * ((ctx_count) + (sh_count) + 3u) + OPENAGC_PM4_EOP_WITH_NOP_WORDS))
+
+static inline uint32_t openagc_pm4_encode_graphics_context_sh_linkage_eop(
+    const uint32_t *ctx_offsets, const uint32_t *ctx_values, uint32_t ctx_count,
+    const uint32_t *sh_offsets, const uint32_t *sh_values, uint32_t sh_count,
+    uint32_t ge_cntl_offset, uint32_t ge_cntl_value, uint32_t stages_en_offset,
+    uint32_t stages_en_value, uint32_t user_vgpr_en_offset,
+    uint32_t user_vgpr_en_value, uint32_t sequence, uint64_t marker_va,
+    uint32_t *words)
+{
+    uint32_t link_offsets[3];
+    uint32_t link_values[3];
+    uint32_t cursor;
+
+    link_offsets[0] = ge_cntl_offset;
+    link_offsets[1] = stages_en_offset;
+    link_offsets[2] = user_vgpr_en_offset;
+    link_values[0] = ge_cntl_value;
+    link_values[1] = stages_en_value;
+    link_values[2] = user_vgpr_en_value;
+    cursor = openagc_pm4_encode_psbc_context_pairs(ctx_offsets, ctx_values, ctx_count,
+                                                   words);
+    cursor += openagc_pm4_encode_psbc_shader_pairs(sh_offsets, sh_values, sh_count,
+                                                   words + cursor);
+    cursor += openagc_pm4_encode_psbc_context_pairs(link_offsets, link_values, 3u,
+                                                    words + cursor);
+    openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
+    return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+}
+
 #endif /* OPENAGC_PM4_GRAPHICS_FW940_H */
