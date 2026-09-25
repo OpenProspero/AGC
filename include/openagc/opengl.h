@@ -68,6 +68,9 @@ typedef struct openagc_gl_capabilities {
 openagc_result openagc_gl_context_create(const openagc_gl_context_desc *desc,
                                          openagc_gl_context **out_context);
 openagc_result openagc_gl_context_destroy(openagc_gl_context *context);
+/* Host-only last WRITE_DATA / Step-U register+EOP snapshot (gpu_submitted=0). */
+openagc_result openagc_gl_context_get_last_write(const openagc_gl_context *context,
+                                                  openagc_gpu_submission_view *view);
 openagc_result openagc_gl_get_capabilities(const openagc_gl_context *context,
                                            openagc_gl_capabilities *capabilities);
 openagc_result openagc_gl_get_format(const openagc_gl_context *context, uint32_t index,

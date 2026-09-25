@@ -76,7 +76,9 @@ typedef enum openagc_vk_command_kind {
     OPENAGC_VK_COMMAND_DISPATCH = 9u,
     OPENAGC_VK_COMMAND_BEGIN_RENDER_PASS = 10u,
     OPENAGC_VK_COMMAND_CLEAR_ATTACHMENTS = 11u,
-    OPENAGC_VK_COMMAND_CLEAR_DEPTH = 12u
+    OPENAGC_VK_COMMAND_CLEAR_DEPTH = 12u,
+    /* Host-only: record bound PSBC register program + EOP (Step U shape). */
+    OPENAGC_VK_COMMAND_PSBC_REGISTER_EOP = 13u
 } openagc_vk_command_kind;
 
 typedef struct openagc_vk_command {
@@ -343,6 +345,15 @@ openagc_result openagc_vk_device_destroy(openagc_vk_device *device)
     }
     openagc_vk_release_device(device);
     return OPENAGC_OK;
+}
+
+openagc_result openagc_vk_device_get_last_write(const openagc_vk_device *device,
+                                                 openagc_gpu_submission_view *view)
+{
+    if (device == NULL || view == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_device_get_last_write(device->frontend, view);
 }
 
 openagc_result openagc_vk_allocate_memory(openagc_vk_device *device, uint64_t size_bytes,
@@ -1602,6 +1613,13 @@ openagc_result openagc_vk_queue_submit_commands(openagc_vk_device *device,
                     command->destination_x, command->destination_y, command->width,
                     command->height);
             }
+        } else if (command->kind == OPENAGC_VK_COMMAND_PSBC_REGISTER_EOP) {
+            if (command->compute == NULL || command->compute->pipeline == NULL) {
+                result = OPENAGC_ERROR_BAD_STATE;
+            } else {
+                result = openagc_frontend_pipeline_record_psbc_register_eop_if_bound(
+                    command->compute->pipeline);
+            }
         } else {
             openagc_graphics_image_state state;
             openagc_graphics_owner owner;
@@ -2593,6 +2611,7 @@ openagc_result openagc_vk_cmd_set_viewport(openagc_vk_command_buffer *command_bu
 openagc_result openagc_vk_cmd_bind_pipeline(openagc_vk_command_buffer *command_buffer,
                                              openagc_vk_pipeline *pipeline)
 {
+    openagc_frontend_pipeline_info info = OPENAGC_FRONTEND_PIPELINE_INFO_INIT;
     openagc_result result;
 
     if (command_buffer == NULL || pipeline == NULL) {
@@ -2606,10 +2625,27 @@ openagc_result openagc_vk_cmd_bind_pipeline(openagc_vk_command_buffer *command_b
     }
     result = openagc_frontend_render_pass_bind_pipeline(command_buffer->pass->pass,
                                                        pipeline->pipeline);
-    if (result == OPENAGC_OK) {
-        command_buffer->graphics = pipeline;
+    if (result != OPENAGC_OK) {
+        return result;
     }
-    return result;
+    command_buffer->graphics = pipeline;
+    result = openagc_frontend_pipeline_get_info(pipeline->pipeline, &info);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (info.psbc_code_bound != 0u) {
+        openagc_vk_command command;
+
+        memset(&command, 0, sizeof(command));
+        command.kind = OPENAGC_VK_COMMAND_PSBC_REGISTER_EOP;
+        /* Reuse compute slot: holds the graphics pipeline for deferred record. */
+        command.compute = pipeline;
+        result = openagc_vk_push(command_buffer, &command);
+        if (result != OPENAGC_OK) {
+            return result;
+        }
+    }
+    return OPENAGC_OK;
 }
 
 openagc_result openagc_vk_cmd_bind_index_buffer(openagc_vk_command_buffer *command_buffer,

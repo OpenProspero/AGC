@@ -195,6 +195,15 @@ openagc_result openagc_gl_context_destroy(openagc_gl_context *context)
     return OPENAGC_OK;
 }
 
+openagc_result openagc_gl_context_get_last_write(const openagc_gl_context *context,
+                                                  openagc_gpu_submission_view *view)
+{
+    if (context == NULL || view == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_device_get_last_write(context->frontend, view);
+}
+
 openagc_result openagc_gl_get_capabilities(const openagc_gl_context *context,
                                            openagc_gl_capabilities *capabilities)
 {
@@ -677,6 +686,8 @@ openagc_result openagc_gl_viewport(openagc_gl_framebuffer *framebuffer, uint32_t
 openagc_result openagc_gl_bind_program(openagc_gl_framebuffer *framebuffer,
                                         openagc_gl_program *program)
 {
+    openagc_result result;
+
     if (framebuffer == NULL || program == NULL) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
@@ -686,7 +697,12 @@ openagc_result openagc_gl_bind_program(openagc_gl_framebuffer *framebuffer,
     if (program->context != framebuffer->context) {
         return OPENAGC_ERROR_OWNERSHIP;
     }
-    return openagc_frontend_render_pass_bind_pipeline(framebuffer->pass, program->pipeline);
+    result = openagc_frontend_render_pass_bind_pipeline(framebuffer->pass, program->pipeline);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    /* Immediate host record of Step-U register+EOP when PSBC code is heap-bound. */
+    return openagc_frontend_pipeline_record_psbc_register_eop_if_bound(program->pipeline);
 }
 
 openagc_result openagc_gl_bind_index_buffer(openagc_gl_framebuffer *framebuffer,

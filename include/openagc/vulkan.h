@@ -157,6 +157,9 @@ openagc_result openagc_vk_device_create(openagc_vk_instance *instance,
                                         const openagc_vk_device_desc *desc,
                                         openagc_vk_device **out_device);
 openagc_result openagc_vk_device_destroy(openagc_vk_device *device);
+/* Host-only last WRITE_DATA / Step-U register+EOP snapshot (gpu_submitted=0). */
+openagc_result openagc_vk_device_get_last_write(const openagc_vk_device *device,
+                                                 openagc_gpu_submission_view *view);
 
 openagc_result openagc_vk_allocate_memory(openagc_vk_device *device, uint64_t size_bytes,
                                           openagc_vk_memory **out_memory);

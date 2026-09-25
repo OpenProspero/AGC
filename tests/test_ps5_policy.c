@@ -502,6 +502,11 @@ int main(void)
         openagc_frontend_pipeline_patch_psbc_pgm_vas(0, 0u, 0u) !=
             OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_frontend_pipeline_record_psbc_register_eop(0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_frontend_pipeline_record_psbc_register_eop_if_bound(0) !=
+            OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_frontend_device_get_last_write(0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_vk_device_get_last_write(0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
+        openagc_gl_context_get_last_write(0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_frontend_pipeline_bind_psbc_code(0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gpu_memory_get_device_address(0, 0u, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_shader_artifact_get_code(0, 0, 0) != OPENAGC_ERROR_INVALID_ARGUMENT ||
