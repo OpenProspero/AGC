@@ -294,9 +294,10 @@ openagc_result openagc_gpu_device_get_cb_capture_info(const openagc_gpu_device *
                                                      openagc_cb_capture_info *info);
 /*
  * Host-only: parse a console IB dump log (openagc-ib-dump: ...) into words.
- * Accepts tag=step-u (REGISTER_EOP) and tag=ctxreg-cb (CTXREG_CB readback).
- * Never sets evidence_qualified. Does not invent CB/DB/DRAW packets and
- * does not submit.
+ * Accepts tag=step-u, ctxreg-cb, ctxreg-abs, ctxreg-rt, ctxreg-cb-bind.
+ * Never sets evidence_qualified. Owned BASE match is a separate helper
+ * (openagc_ib_dump_cb_bind_owned_base_match). Does not invent CB/DB/DRAW
+ * packets and does not submit.
  */
 openagc_result openagc_ib_dump_parse(const char *text, uint32_t *words,
                                      uint32_t max_words, openagc_ib_dump_info *info);

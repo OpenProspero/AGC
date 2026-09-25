@@ -1279,6 +1279,12 @@ openagc_result openagc_ib_dump_parse(const char *text, uint32_t *words,
                         strlen(OPENAGC_IB_DUMP_TAG_STEP_U)) == 0) {
                 kind = OPENAGC_IB_DUMP_KIND_REGISTER_EOP;
             } else if (tag != NULL &&
+                       (size_t)(p - tag) == strlen(OPENAGC_IB_DUMP_TAG_CTXREG_CB_BIND) &&
+                       strncmp(tag, OPENAGC_IB_DUMP_TAG_CTXREG_CB_BIND,
+                               strlen(OPENAGC_IB_DUMP_TAG_CTXREG_CB_BIND)) == 0) {
+                /* Longer tag before ctxreg-cb prefix. */
+                kind = OPENAGC_IB_DUMP_KIND_CTXREG_CB_BIND;
+            } else if (tag != NULL &&
                        (size_t)(p - tag) == strlen(OPENAGC_IB_DUMP_TAG_CTXREG_CB) &&
                        strncmp(tag, OPENAGC_IB_DUMP_TAG_CTXREG_CB,
                                strlen(OPENAGC_IB_DUMP_TAG_CTXREG_CB)) == 0) {

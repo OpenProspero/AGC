@@ -5,6 +5,7 @@
 
 #include "openagc/pm4_context_regs_gfx10.h"
 
+#include <stddef.h>
 #include <stdint.h>
 
 /*

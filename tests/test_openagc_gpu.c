@@ -1071,9 +1071,14 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     uint32_t words[8];
     uint32_t probe_words[OPENAGC_PM4_COPY_DATA_CB_PROBE_EOP_WORDS];
     uint32_t rt_words[OPENAGC_PM4_CTXREG_RT_EOP_WORDS];
+    uint32_t bind_words[OPENAGC_PM4_CTXREG_CB_BIND_EOP_WORDS];
     uint32_t probe_count;
     uint32_t rt_count;
+    uint32_t bind_count;
+    uint32_t expected_base_lo;
+    uint32_t expected_base_ext;
     const openagc_gfx10_reg_name *named;
+    static const uint64_t owned_color_va = 0x123456789000ull;
     static const char dump_text[] =
         "openagc-ib-dump: tag=step-u fw=0x9400008 completed=1 words=4\n"
         "ib c0001000 00000000 c0001000 00000000\n";
@@ -1086,6 +1091,13 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     static const char ctxreg_rt_text[] =
         "openagc-ib-dump: tag=ctxreg-rt fw=0x9400008 completed=1 words=6\n"
         "ib 00000009 00000080 00000080 00008000 00000010 0000000f\n";
+    /* owned_color_va>>8 = 0x1234567890 → BASE=0x34567890 BASE_EXT=0x12 */
+    static const char ctxreg_cb_bind_text[] =
+        "openagc-ib-dump: tag=ctxreg-cb-bind fw=0x9400008 completed=1 words=8\n"
+        "ib 34567890 00000012 00000000 00000000 00000000 00000000 ffffffff 0000000f\n";
+    static const char ctxreg_cb_bind_zero[] =
+        "openagc-ib-dump: tag=ctxreg-cb-bind fw=0x9400008 completed=1 words=8\n"
+        "ib 00000000 00000000 00000000 00000000 00000000 00000000 ffffffff 0000000f\n";
     static const char bad_tag[] =
         "openagc-ib-dump: tag=cb-invent fw=0x9400008 completed=1 words=1\n"
         "ib deadbeef\n";
@@ -1105,14 +1117,19 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     named = openagc_gfx10_lookup_reg(792u, 1u);
     CHECK(named != NULL && strcmp(named->name, "CB_COLOR0_BASE") == 0 &&
           named->smoke_owned == 0u);
+    named = openagc_gfx10_lookup_reg(793u, 1u);
+    CHECK(named != NULL && strcmp(named->name, "CB_COLOR0_BASE_EXT") == 0);
     named = openagc_gfx10_lookup_reg(72u, 0u);
     CHECK(named != NULL && strcmp(named->name, "SPI_SHADER_PGM_LO_VS") == 0);
     CHECK(openagc_gfx10_cb_probe_offsets[0] == OPENAGC_GFX10_CB_COLOR0_BASE);
+    CHECK(openagc_gfx10_cb_probe_offsets[1] == OPENAGC_GFX10_CB_COLOR0_BASE_EXT);
     CHECK(openagc_pm4_copy_data_src_context_abs(OPENAGC_GFX10_CB_COLOR0_BASE) ==
           (OPENAGC_PM4_CONTEXT_REG_START + OPENAGC_GFX10_CB_COLOR0_BASE));
     CHECK(OPENAGC_GFX10_CTXREG_RT_COUNT == 6u);
     CHECK(openagc_gfx10_ctxreg_rt_offsets[5] == OPENAGC_GFX10_CB_SHADER_MASK);
-    CHECK(openagc_gfx10_ctxreg_rt_values[5] == 15u);
+    CHECK(openagc_gfx10_ctxreg_rt_values[5] == OPENAGC_GFX10_CB_SHADER_MASK_OWNED);
+    CHECK(openagc_pm4_cb_color0_base_lo(owned_color_va) == 0x34567890u);
+    CHECK(openagc_pm4_cb_color0_base_ext(owned_color_va) == 0x00000012u);
 
     probe_count = openagc_pm4_encode_copy_data_cb_probe_eop(0x1000u, 1u, 0x2000u,
                                                             probe_words);
@@ -1140,6 +1157,23 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     CHECK(rt_words[OPENAGC_PM4_CTXREG_RT_SET_WORDS + 1u] == OPENAGC_PM4_COPY_DATA_CONTROL);
     CHECK(rt_words[OPENAGC_PM4_CTXREG_RT_SET_WORDS + 2u] ==
           openagc_pm4_copy_data_src_context_abs(OPENAGC_GFX10_SPI_SHADER_COL_FORMAT));
+
+    expected_base_lo = openagc_pm4_cb_color0_base_lo(owned_color_va);
+    expected_base_ext = openagc_pm4_cb_color0_base_ext(owned_color_va);
+    bind_count = openagc_pm4_encode_ctxreg_cb_bind_abs_eop(
+        owned_color_va, 0x1000u, 1u, 0x2000u, bind_words);
+    CHECK(bind_count == OPENAGC_PM4_CTXREG_CB_BIND_EOP_WORDS);
+    CHECK(bind_words[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+    CHECK(bind_words[1] == OPENAGC_GFX10_CB_COLOR0_BASE);
+    CHECK(bind_words[2] == expected_base_lo);
+    CHECK(bind_words[4] == OPENAGC_GFX10_CB_COLOR0_BASE_EXT);
+    CHECK(bind_words[5] == expected_base_ext);
+    CHECK(bind_words[7] == OPENAGC_GFX10_CB_SHADER_MASK);
+    CHECK(bind_words[8] == OPENAGC_GFX10_CB_SHADER_MASK_OWNED);
+    CHECK(bind_words[OPENAGC_PM4_CTXREG_CB_BIND_SET_WORDS] ==
+          openagc_pm4_header3(OPENAGC_PM4_OP_COPY_DATA, 6u, 0u));
+    CHECK(bind_words[OPENAGC_PM4_CTXREG_CB_BIND_SET_WORDS + 2u] ==
+          openagc_pm4_copy_data_src_context_abs(OPENAGC_GFX10_CB_COLOR0_BASE));
 
     EXPECT(openagc_ib_dump_parse(NULL, words, 8u, &info), OPENAGC_ERROR_INVALID_ARGUMENT);
     EXPECT(openagc_ib_dump_parse(dump_text, words, 8u, &info), OPENAGC_OK);
@@ -1174,6 +1208,29 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     CHECK(info.completed == 1u);
     CHECK(info.word_count == 6u);
     CHECK(words[0] == 0x00000009u && words[5] == 0x0000000fu);
+
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(ctxreg_cb_bind_text, words, 8u, &info), OPENAGC_OK);
+    CHECK(info.kind == OPENAGC_IB_DUMP_KIND_CTXREG_CB_BIND);
+    CHECK(info.evidence_qualified == 0u);
+    CHECK(info.completed == 1u);
+    CHECK(info.word_count == 8u);
+    CHECK(openagc_ib_dump_cb_bind_owned_base_match(
+              &info, words, expected_base_lo, expected_base_ext,
+              OPENAGC_GFX10_CB_SHADER_MASK_OWNED) == 1u);
+    CHECK(openagc_ib_dump_cb_bind_owned_base_match(&info, words, 0u, 0u,
+                                                   OPENAGC_GFX10_CB_SHADER_MASK_OWNED) ==
+          0u);
+    CHECK(openagc_ib_dump_cb_bind_owned_base_match(&info, words, expected_base_lo, 0u,
+                                                   OPENAGC_GFX10_CB_SHADER_MASK_OWNED) ==
+          0u);
+
+    info = OPENAGC_IB_DUMP_INFO_INIT;
+    EXPECT(openagc_ib_dump_parse(ctxreg_cb_bind_zero, words, 8u, &info), OPENAGC_OK);
+    CHECK(info.kind == OPENAGC_IB_DUMP_KIND_CTXREG_CB_BIND);
+    CHECK(openagc_ib_dump_cb_bind_owned_base_match(
+              &info, words, expected_base_lo, expected_base_ext,
+              OPENAGC_GFX10_CB_SHADER_MASK_OWNED) == 0u);
 
     info = OPENAGC_IB_DUMP_INFO_INIT;
     EXPECT(openagc_ib_dump_parse(bad_tag, words, 8u, &info),
