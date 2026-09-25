@@ -2247,6 +2247,43 @@ static int test_psbc_register_snapshot_equivalence(void)
         EXPECT(openagc_gl_program_record_psbc_register_eop(gl_graphics), OPENAGC_OK);
     }
 
+    /* Heap-backed code bind patches PGM from real synthetic VAs (still not gpu_executable). */
+    {
+        uint64_t vk_v = 0u;
+        uint64_t vk_p = 0u;
+        uint64_t gl_v = 0u;
+        uint64_t gl_p = 0u;
+
+        EXPECT(openagc_vk_pipeline_bind_psbc_code(vk_graphics), OPENAGC_OK);
+        EXPECT(openagc_gl_program_bind_psbc_code(gl_graphics), OPENAGC_OK);
+        EXPECT(openagc_vk_pipeline_get_info(vk_graphics, &vk_info), OPENAGC_OK);
+        EXPECT(openagc_gl_program_get_info(gl_graphics, &gl_info), OPENAGC_OK);
+        CHECK(vk_info.psbc_pgm_patched == 1u && gl_info.psbc_pgm_patched == 1u);
+        CHECK(vk_info.gpu_executable == 0u && gl_info.gpu_executable == 0u);
+        EXPECT(openagc_vk_pipeline_get_psbc_code_vas(vk_graphics, &vk_v, &vk_p), OPENAGC_OK);
+        EXPECT(openagc_gl_program_get_psbc_code_vas(gl_graphics, &gl_v, &gl_p), OPENAGC_OK);
+        CHECK((vk_v & 0xffu) == 0u && (vk_p & 0xffu) == 0u);
+        CHECK((gl_v & 0xffu) == 0u && (gl_p & 0xffu) == 0u);
+        EXPECT(openagc_vk_pipeline_get_host_register_program(vk_graphics, vk_words, 128u,
+                                                             &vk_count),
+               OPENAGC_OK);
+        CHECK(vk_words[11] == (uint32_t)(vk_v >> 8));
+        CHECK(vk_words[14] == (uint32_t)(vk_v >> 40));
+        EXPECT(openagc_gl_program_get_host_register_program(gl_graphics, gl_words, 128u,
+                                                            &gl_count),
+               OPENAGC_OK);
+        CHECK(vk_count == 69u && gl_count == 69u);
+        CHECK(vk_words[11] == (uint32_t)(vk_v >> 8));
+        CHECK(vk_words[14] == (uint32_t)(vk_v >> 40));
+        CHECK(gl_words[11] == (uint32_t)(gl_v >> 8));
+        CHECK(gl_words[14] == (uint32_t)(gl_v >> 40));
+        /* Vertex block 30 dwords; pixel has 9 context pairs (27) then shader PGM. */
+        CHECK(vk_words[57] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_SH_REG, 3u, 0u));
+        CHECK(vk_words[58] == 8u);
+        CHECK(vk_words[59] == (uint32_t)(vk_p >> 8));
+        CHECK(gl_words[59] == (uint32_t)(gl_p >> 8));
+    }
+
     EXPECT(openagc_vk_destroy_pipeline(vk_graphics), OPENAGC_OK);
     EXPECT(openagc_gl_destroy_program(gl_graphics), OPENAGC_OK);
     EXPECT(openagc_gl_destroy_renderbuffer(renderbuffer), OPENAGC_OK);

@@ -384,6 +384,17 @@ openagc_result openagc_gpu_device_reserve_synthetic_va(openagc_gpu_device *devic
                                       : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
+openagc_result openagc_gpu_memory_get_device_address(const openagc_gpu_memory *memory,
+                                                     uint64_t offset, uint64_t *out_va)
+{
+    (void)offset;
+    if (out_va != 0) {
+        *out_va = 0u;
+    }
+    return memory == 0 || out_va == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                      : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
 openagc_result openagc_gpu_buffer_create(openagc_gpu_device *device,
                                          const openagc_gpu_buffer_desc *desc,
                                          openagc_gpu_buffer **out_buffer)
@@ -784,6 +795,21 @@ openagc_result openagc_shader_artifact_get_compiler_metadata(
         *out_size = 0u;
     }
     return artifact == 0 || out_metadata == 0 || out_size == 0
+               ? OPENAGC_ERROR_INVALID_ARGUMENT
+               : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_shader_artifact_get_code(const openagc_shader_artifact *artifact,
+                                                const uint8_t **out_code,
+                                                uint32_t *out_size)
+{
+    if (out_code != 0) {
+        *out_code = 0;
+    }
+    if (out_size != 0) {
+        *out_size = 0u;
+    }
+    return artifact == 0 || out_code == 0 || out_size == 0
                ? OPENAGC_ERROR_INVALID_ARGUMENT
                : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
@@ -1502,6 +1528,11 @@ openagc_result openagc_frontend_pipeline_get_psbc_code_vas(
     return pipeline == 0 || vertex_code_va == 0 || pixel_code_va == 0
                ? OPENAGC_ERROR_INVALID_ARGUMENT
                : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_pipeline_bind_psbc_code(openagc_frontend_pipeline *pipeline)
+{
+    return pipeline == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
 openagc_result openagc_frontend_resources_present(uint32_t has_buffer, uint32_t has_image,
@@ -2684,6 +2715,11 @@ openagc_result openagc_vk_pipeline_get_psbc_code_vas(const openagc_vk_pipeline *
     return pipeline == 0 || vertex_code_va == 0 || pixel_code_va == 0
                ? OPENAGC_ERROR_INVALID_ARGUMENT
                : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_vk_pipeline_bind_psbc_code(openagc_vk_pipeline *pipeline)
+{
+    return pipeline == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
 openagc_result openagc_vk_destroy_pipeline(openagc_vk_pipeline *pipeline)
@@ -4035,6 +4071,11 @@ openagc_result openagc_gl_program_get_psbc_code_vas(const openagc_gl_program *pr
     return program == 0 || vertex_code_va == 0 || pixel_code_va == 0
                ? OPENAGC_ERROR_INVALID_ARGUMENT
                : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gl_program_bind_psbc_code(openagc_gl_program *program)
+{
+    return program == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
 openagc_result openagc_gl_use_program(openagc_gl_context *context, openagc_gl_program *program)

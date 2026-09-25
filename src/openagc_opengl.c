@@ -1663,6 +1663,14 @@ openagc_result openagc_gl_program_get_psbc_code_vas(const openagc_gl_program *pr
                                                        pixel_code_va);
 }
 
+openagc_result openagc_gl_program_bind_psbc_code(openagc_gl_program *program)
+{
+    if (program == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_bind_psbc_code(program->pipeline);
+}
+
 openagc_result openagc_gl_use_program(openagc_gl_context *context, openagc_gl_program *program)
 {
     if (context == NULL) {

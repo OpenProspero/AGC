@@ -2114,6 +2114,14 @@ openagc_result openagc_vk_pipeline_get_psbc_code_vas(const openagc_vk_pipeline *
                                                        pixel_code_va);
 }
 
+openagc_result openagc_vk_pipeline_bind_psbc_code(openagc_vk_pipeline *pipeline)
+{
+    if (pipeline == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_bind_psbc_code(pipeline->pipeline);
+}
+
 openagc_result openagc_vk_destroy_pipeline(openagc_vk_pipeline *pipeline)
 {
     openagc_result result;

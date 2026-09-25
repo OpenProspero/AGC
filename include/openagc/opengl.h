@@ -298,6 +298,7 @@ openagc_result openagc_gl_program_record_psbc_register_eop(openagc_gl_program *p
 openagc_result openagc_gl_program_get_psbc_code_vas(const openagc_gl_program *program,
                                                     uint64_t *vertex_code_va,
                                                     uint64_t *pixel_code_va);
+openagc_result openagc_gl_program_bind_psbc_code(openagc_gl_program *program);
 openagc_result openagc_gl_use_program(openagc_gl_context *context,
                                       openagc_gl_program *program);
 openagc_result openagc_gl_destroy_program(openagc_gl_program *program);

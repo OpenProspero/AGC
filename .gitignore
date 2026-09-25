@@ -1,6 +1,7 @@
 /build/
 /out/
 /tools/payload/out/
+/Testing/
 /CMakeUserPresets.json
 /.commandcode
 *.pyc
