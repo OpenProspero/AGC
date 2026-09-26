@@ -1919,6 +1919,60 @@ are a comparison lead, not proof that either difference caused the FW9.40
 zero-pixel result. A FW9.40 linker capture, a confirmed pixel, and a completed
 fence are still missing; draw execution remains refused.
 
+## What the two public PS5 drivers do that this submission does not
+
+Reviewed on 2026-09-26 against PS5_Vulkan (`mihawk-99/PS5_Vulkan`, `main`:
+`driver/ps5vk_draw.c`, `driver/ps5vk_queue.c`, `docs/HARDWARE_FINDINGS.md`,
+`docs/PROBE_MILESTONES.md`) and ps5-opengl (`blackbearreloaded/ps5-opengl`,
+`6cb291ab`). Their frames render exact pixels on a console, so the
+differences below are the candidate causes of the Step AL/AM stall.
+
+**Their draw stream.** PS5_Vulkan's per-draw words are one indirect context
+table - the 16 `CB_COLOR0` registers, 15 viewport/guard-band/scissor/
+target-mask registers, the AGC linker's 34 context records and both shaders'
+context registers - then the linked uniform table, one SH table and
+`DRAW_INDEX_AUTO`. That is the shape this repository already encodes (Steps
+AD-AL), and their register *values* for a single-sample target match ours
+exactly: `PA_SC_MODE_CNTL_0` 0x23, `PA_SC_AA_CONFIG` 0xc000, `DB_EQAA`
+0x310000, the 4x sample locations, the centroid priorities, the full AA
+masks, `PA_SU_VTX_CNTL` 0x2d, `CB_COLOR_CONTROL` 0x00cc0011 and
+`CB_TARGET_MASK` 0xf. The one value they differ on is the guard band: they
+write 1.0 into all four `PA_CL_GB_*_ADJ` registers where this repository
+writes what Mesa's `ac_compute_guardband` produces (4094.0 clip, 1.0
+discard). **Writing 1.0 changed nothing** (one push, `completed=0`), so a
+guard band that lets the rasterizer walk 4096x the viewport is not the
+stall.
+
+**Their submission.** `driver/ps5vk_queue.c` submits with
+`sceAgcDriverSubmitDcb` and passes `sceAgcSuspendPoint` (its own comments:
+"submit with sceAgcDriverSubmitDcb and pass sceAgcSuspendPoint", a suspend
+point taking ~125 us), and its description carries a flag byte whose effect
+varies with the submission mode. Every OpenAGC payload, and every
+console-proven step in this repository, submits with the raw `0xC0108102`
+ioctl and a 16-byte `{queue_type, num_cbs, cb_array}` description instead.
+Compute and copy submissions through that raw path execute and retire, and
+so do draws without the viewport transform, but no draw with fragments has
+ever retired through it.
+
+**Their wait-until-safe packet.** AGC's own stream (the C1 capture, decoded
+in Steps AG-AI) begins with `PKT3 0x93`, and PS5_Vulkan emits the same
+packet form (`ps5vk_marker_wait_words`: control `0x06000113`, address, value,
+mask `0xffffffff`, poll interval `0x40`) after its colour-buffer barrier. Its
+`HARDWARE_FINDINGS.md` records the one thing that packet must get right: "the
+wait-until-safe packet must name the buffer the frame renders into". OpenAGC
+submissions carry no such packet at all: every payload starts with state
+writes. That is the cleanest structural difference left between a working
+stream and ours.
+
+**Next instruments, in order.** (1) Submit a raster draw through the AGC
+driver path (`sceAgcDriverSubmitDcb` plus `sceAgcSuspendPoint`, resolved the
+way ps5-opengl resolves its AGC entry points) instead of the raw ioctl, with
+the same IB. (2) Add the `PKT3 0x93` wait-until-safe packet in the recorded
+form, naming the target. (3) Only then revisit register values: with the
+multisample block, the rasterizer state and the colour control already
+matching a working driver word for word, what is left is packets and
+submission, not registers.
+
 ## Step AM: NGG stalls with viewport transform; legacy retires
 
 Three more single pushes, each with a 1x1 viewport and `PA_CL_VTE_CNTL` set:
