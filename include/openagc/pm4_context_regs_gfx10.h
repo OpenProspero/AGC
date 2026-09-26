@@ -3,6 +3,7 @@
 #ifndef OPENAGC_PM4_CONTEXT_REGS_GFX10_H
 #define OPENAGC_PM4_CONTEXT_REGS_GFX10_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /*
@@ -54,9 +55,10 @@ typedef struct openagc_gfx10_reg_name {
 #define OPENAGC_GFX10_SPI_SHADER_Z_FORMAT 452u
 #define OPENAGC_GFX10_SPI_SHADER_COL_FORMAT 453u
 #define OPENAGC_GFX10_SPI_PS_INPUT_ENA 435u
-/* VGT_ESGS_RING_ITEMSIZE: Sony's own NGG triangle draw carries 1 here and
- * the pinned compiler's NGG vertex metadata emits the same record. */
-#define OPENAGC_GFX10_VGT_ESGS_RING_ITEMSIZE 723u
+/* Mesa gfx10.json maps context 0x2ab to VGT_ESGS_RING_ITEMSIZE and 0x2d3
+ * to GE_NGG_SUBGRP_CNTL. Earlier probes read 0x2d3 under the wrong name. */
+#define OPENAGC_GFX10_VGT_ESGS_RING_ITEMSIZE 683u
+#define OPENAGC_GFX10_GE_NGG_SUBGRP_CNTL 723u
 #define OPENAGC_GFX10_SPI_PS_INPUT_ADDR 436u
 #define OPENAGC_GFX10_SPI_PS_IN_CONTROL 438u
 #define OPENAGC_GFX10_SPI_BARYC_CNTL 440u
@@ -225,6 +227,10 @@ static const uint32_t openagc_gfx10_cb_probe_offsets[OPENAGC_GFX10_CB_PROBE_COUN
  * SET_UCONFIG_REG packet offset is (address - base) >> 2 = 0x242 = 578. */
 #define OPENAGC_GFX10_UCONFIG_REG_VGT_PRIMITIVE_TYPE 0x00030908u
 #define OPENAGC_GFX10_UCONFIG_VGT_PRIMITIVE_TYPE 578u
+/* mmVGT_INDEX_TYPE 0x2243 -> uconfig index 0x243. */
+#define OPENAGC_GFX10_UCONFIG_VGT_INDEX_TYPE 579u
+#define OPENAGC_GFX10_UCONFIG_VGT_INDEX_TYPE_INDEX 2u
+#define OPENAGC_PM4_UCONFIG_VGT_INDEX_TYPE_HDR(idx) ((idx) << 28)
 
 /*
  * The uconfig aperture: soc15d.h gives PACKET3_SET_UCONFIG_REG_START
@@ -446,13 +452,16 @@ static const uint32_t openagc_gfx10_draw_probe_offsets[OPENAGC_GFX10_DRAW_PROBE_
 #define OPENAGC_GFX10_VTX_ROUND_TO_EVEN 2u
 #define OPENAGC_GFX10_VTX_QUANT_1_256TH 5u
 #define OPENAGC_GFX10_DI_PT_POINTLIST 1u
+#define OPENAGC_GFX10_DI_PT_LINELIST 2u
 /* amdgfxregs.h in the pinned compiler tree: V_008958_DI_PT_POINTLIST 1,
- * V_008958_DI_PT_TRILIST 4. This is the uconfig VGT_PRIMITIVE_TYPE value. */
+ * V_008958_DI_PT_LINELIST 2, V_008958_DI_PT_TRILIST 4. This is the
+ * uconfig VGT_PRIMITIVE_TYPE value. */
 #define OPENAGC_GFX10_DI_PT_TRILIST 4u
 /* VGT_GS_OUT_PRIM_TYPE's own enum (V_028A6C_*): POINTLIST 0, LINESTRIP 1,
  * TRISTRIP 2. Sony's own NGG triangle draw carries 2 in its context table,
  * so a triangle list is rasterized as a strip. */
 #define OPENAGC_GFX10_GS_OUT_POINTLIST 0u
+#define OPENAGC_GFX10_GS_OUT_LINESTRIP 1u
 #define OPENAGC_GFX10_GS_OUT_TRISTRIP 2u
 /* GE_CNTL's uconfig index. Mesa's gc_10_1_0_offset.h gives mmGE_CNTL 0x225b
  * with BASE_IDX 1, and 0x2242 for VGT_PRIMITIVE_TYPE; the 0x2xxx form is the
@@ -501,6 +510,7 @@ static inline uint32_t openagc_gfx10_draw_point_minmax_8px(void)
 #define OPENAGC_GFX10_CB_ROP3_COPY_SOURCE 0xccu
 
 #define OPENAGC_GFX10_CB_COLOR_CONTROL_DISABLE_DUAL_QUAD_SHIFT 0u
+#define OPENAGC_GFX10_CB_COLOR_CONTROL_NORMAL_WORD 0x00cc0011u
 
 /* MODE(CB_NORMAL) | ROP3(0xcc) | DISABLE_DUAL_QUAD(1): PS5_Vulkan's word
  * (ps5vk_draw.c, PS5VK_COLOR_CONTROL_WORD 0x00cc0011, "colour control with
@@ -670,6 +680,93 @@ static inline uint32_t openagc_gfx10_vport_scissor_br(uint32_t x2, uint32_t y2)
            (y2 << OPENAGC_GFX10_SCREEN_SCISSOR_BR_Y_SHIFT);
 }
 
+/* Registers that gate or discard fragments. A context that inherits them
+ * may have triangle filtering, a depth test against no depth buffer, or a
+ * colour-write override left on, and every one of those drops fragments
+ * without a fault. Each value below is the field layout's neutral form:
+ * every viewport transform enable on, and no disable or override set. */
+#define OPENAGC_GFX10_SPI_PS_INPUT_CNTL_0 401u
+#define OPENAGC_GFX10_SPI_PS_INPUT_CNTL_COUNT 32u
+#define OPENAGC_GFX10_PA_SC_BINNER_CNTL_0 785u
+#define OPENAGC_GFX10_DB_DEPTH_CONTROL 512u
+#define OPENAGC_GFX10_PA_CL_VTE_CNTL 518u
+#define OPENAGC_GFX10_PA_CL_NANINF_CNTL 520u
+#define OPENAGC_GFX10_PA_SU_PRIM_FILTER_CNTL 523u
+#define OPENAGC_GFX10_PA_SU_SMALL_PRIM_FILTER_CNTL 524u
+#define OPENAGC_GFX10_PA_CL_NGG_CNTL 526u
+#define OPENAGC_GFX10_PA_SU_OVER_RASTERIZATION_CNTL 527u
+#define OPENAGC_GFX10_FRAGMENT_GATE_COUNT 11u
+/* CB_DISABLE is useful for a diagnostic draw with color writes suppressed. */
+#define OPENAGC_GFX10_CB_COLOR_CONTROL_DISABLE 0u
+/* MSAA off: a target with no CMASK cannot take the multisample path. */
+#define OPENAGC_GFX10_MODE_CNTL_0_SINGLE_SAMPLE 0x2u
+/* VPORT_X/Y/Z_SCALE_ENA and VPORT_X/Y/Z_OFFSET_ENA. */
+#define OPENAGC_GFX10_VTE_CNTL_VIEWPORT_TRANSFORM 0x3fu
+
+/* One record per pixel-shader input: the capture carries the identity
+ * mapping, and an unset table leaves the parameter cache reading a
+ * reserved input. */
+static inline void openagc_gfx10_ps_input_cntl_defaults(uint32_t *values)
+{
+    uint32_t index;
+
+    for (index = 0u; index < OPENAGC_GFX10_SPI_PS_INPUT_CNTL_COUNT; ++index) {
+        values[index] = index;
+    }
+}
+
+static const uint32_t
+    openagc_gfx10_fragment_gate_offsets[OPENAGC_GFX10_FRAGMENT_GATE_COUNT] = {
+        OPENAGC_GFX10_PA_CL_VTE_CNTL,
+        OPENAGC_GFX10_DB_DEPTH_CONTROL,
+        OPENAGC_GFX10_PA_SU_PRIM_FILTER_CNTL,
+        OPENAGC_GFX10_PA_SU_SMALL_PRIM_FILTER_CNTL,
+        OPENAGC_GFX10_PA_CL_NANINF_CNTL,
+        OPENAGC_GFX10_PA_SU_OVER_RASTERIZATION_CNTL,
+        OPENAGC_GFX10_PA_CL_NGG_CNTL,
+        OPENAGC_GFX10_PA_SC_MODE_CNTL_0,
+        OPENAGC_GFX10_PA_SC_AA_CONFIG,
+        OPENAGC_GFX10_DB_EQAA,
+        OPENAGC_GFX10_CB_COLOR_CONTROL
+    };
+
+static const uint32_t
+    openagc_gfx10_fragment_gate_values[OPENAGC_GFX10_FRAGMENT_GATE_COUNT] = {
+        OPENAGC_GFX10_VTE_CNTL_VIEWPORT_TRANSFORM,
+        0u,
+        0u,
+        0u,
+        0u,
+        0u,
+        0u,
+        OPENAGC_GFX10_MODE_CNTL_0_SINGLE_SAMPLE,
+        0u,
+        0u,
+        /* Keep the target writable. The scalar draw state already selects
+         * CB_NORMAL; writing CB_DISABLE here undid it just before DRAW. */
+        OPENAGC_GFX10_CB_COLOR_CONTROL_NORMAL_WORD
+    };
+
+/* The generic scissor and the depth range the rasterizer also reads.
+ * Mesa programs the generic scissor from the user scissor; the public C1
+ * capture carries TL 0x80000000 (WINDOW_OFFSET_DISABLE, origin 0,0) and
+ * BR (4096,4096) for its full-screen target, plus a 0..1 depth range. */
+#define OPENAGC_GFX10_PA_SC_GENERIC_SCISSOR_TL 144u
+#define OPENAGC_GFX10_PA_SC_GENERIC_SCISSOR_BR 145u
+#define OPENAGC_GFX10_PA_SC_VPORT_ZMIN_0 180u
+#define OPENAGC_GFX10_PA_SC_VPORT_ZMAX_0 181u
+
+static inline uint32_t openagc_gfx10_generic_scissor_tl(uint32_t x, uint32_t y)
+{
+    return openagc_gfx10_screen_scissor_tl(x, y) |
+           (1u << OPENAGC_GFX10_WINDOW_SCISSOR_TL_OFFSET_DISABLE_SHIFT);
+}
+
+static inline uint32_t openagc_gfx10_generic_scissor_br(uint32_t x2, uint32_t y2)
+{
+    return openagc_gfx10_screen_scissor_br(x2, y2);
+}
+
 /* "If CLIPRECT_RULE & (1 << number), the pixel is rasterized"; with no
  * window rectangles Mesa programs 0xffff = every inside/outside case. */
 #define OPENAGC_GFX10_CLIPRECT_RULE_DISABLED 0xffffu
@@ -755,6 +852,96 @@ static const uint32_t openagc_gfx10_cb_bind_offsets[OPENAGC_GFX10_CB_BIND_COUNT]
     OPENAGC_GFX10_CB_COLOR0_ATTRIB3,  OPENAGC_GFX10_CB_TARGET_MASK,
     OPENAGC_GFX10_CB_SHADER_MASK
 };
+
+/*
+ * The 16 COLOR0 records a public AGC target state carries: the same list
+ * the native runtime's append_target_state writes and PS5_Vulkan's C1
+ * capture records (commit 3a6f00df). Names resolved against Mesa
+ * gfx10.json by mm address = 0x28000 + 4 * index:
+ *   0x318 BASE, 0x31b VIEW, 0x31c INFO, 0x31d ATTRIB, 0x31e DCC_CONTROL,
+ *   0x31f CMASK, 0x321 FMASK, 0x323/0x324 CLEAR_WORD0/1, 0x325 DCC_BASE,
+ *   0x390 BASE_EXT, 0x398 CMASK_BASE_EXT, 0x3a0 FMASK_BASE_EXT,
+ *   0x3a8 DCC_BASE_EXT, 0x3b0 ATTRIB2, 0x3b8 ATTRIB3.
+ * (0x31d is CB_COLOR0_ATTRIB, so 0x31e is DCC_CONTROL, not an ATTRIB
+ * alias: Step AB's nine-word set never writes DCC_CONTROL at all.)
+ *
+ * The capture's own words, for its 3840x2160 BGRA8 display surface:
+ *   INFO         0x00008828  FORMAT 8_8_8_8, COMP_SWAP SWAP_ALT, BLEND_CLAMP
+ *   DCC_CONTROL  0x00000048  MAX_UNCOMPRESSED_BLOCK_SIZE(2) |
+ *                            MAX_COMPRESSED_BLOCK_SIZE(2); DCC itself off
+ *   ATTRIB3      0x4dc6c000  RESOURCE_TYPE 2D, COLOR_SW_MODE 27,
+ *                            FMASK_SW_MODE 24, CMASK and DCC pipe aligned
+ *   metadata bases, CMASK/FMASK/DCC and clear words: zero
+ * A linear COLOR_SW_MODE is a host composition; no public driver binds
+ * one, which is why the two-target A/B exists.
+ */
+#define OPENAGC_GFX10_CB_COLOR0_DCC_CONTROL 798u
+#define OPENAGC_GFX10_CB_COLOR0_CMASK 799u
+#define OPENAGC_GFX10_CB_COLOR0_FMASK 801u
+#define OPENAGC_GFX10_CB_COLOR0_CLEAR_WORD0 803u
+#define OPENAGC_GFX10_CB_COLOR0_CLEAR_WORD1 804u
+#define OPENAGC_GFX10_CB_COLOR0_DCC_BASE 805u
+#define OPENAGC_GFX10_CB_COLOR0_CMASK_BASE_EXT 902u
+#define OPENAGC_GFX10_CB_COLOR0_FMASK_BASE_EXT 904u
+#define OPENAGC_GFX10_CB_COLOR0_DCC_BASE_EXT 906u
+#define OPENAGC_GFX10_CB_CAPTURE_COUNT 16u
+#define OPENAGC_GFX10_CB_CAPTURE_INFO 0x00008828u
+#define OPENAGC_GFX10_CB_CAPTURE_DCC_CONTROL 0x00000048u
+#define OPENAGC_GFX10_CB_CAPTURE_ATTRIB3 0x4dc6c000u
+
+static const uint32_t
+    openagc_gfx10_cb_capture_offsets[OPENAGC_GFX10_CB_CAPTURE_COUNT] = {
+        OPENAGC_GFX10_CB_COLOR0_BASE,
+        OPENAGC_GFX10_CB_COLOR0_VIEW,
+        OPENAGC_GFX10_CB_COLOR0_INFO,
+        OPENAGC_GFX10_CB_COLOR0_ATTRIB,
+        OPENAGC_GFX10_CB_COLOR0_DCC_CONTROL,
+        OPENAGC_GFX10_CB_COLOR0_CMASK,
+        OPENAGC_GFX10_CB_COLOR0_FMASK,
+        OPENAGC_GFX10_CB_COLOR0_CLEAR_WORD0,
+        OPENAGC_GFX10_CB_COLOR0_CLEAR_WORD1,
+        OPENAGC_GFX10_CB_COLOR0_DCC_BASE,
+        OPENAGC_GFX10_CB_COLOR0_BASE_EXT,
+        OPENAGC_GFX10_CB_COLOR0_CMASK_BASE_EXT,
+        OPENAGC_GFX10_CB_COLOR0_FMASK_BASE_EXT,
+        OPENAGC_GFX10_CB_COLOR0_DCC_BASE_EXT,
+        OPENAGC_GFX10_CB_COLOR0_ATTRIB2,
+        OPENAGC_GFX10_CB_COLOR0_ATTRIB3
+    };
+
+/*
+ * The capture's record set with the caller's base and geometry: BASE /
+ * BASE_EXT from the 256-byte VA encoding, ATTRIB2 from width and height,
+ * INFO and ATTRIB3 exactly as the capture carries them. values must hold
+ * OPENAGC_GFX10_CB_CAPTURE_COUNT words. Returns 1, or 0 when the target
+ * is not 256-byte aligned or its dimensions are zero.
+ */
+static inline uint32_t openagc_gfx10_cb_capture_words(uint64_t va, uint32_t width,
+                                                      uint32_t height,
+                                                      uint32_t *values)
+{
+    if (values == NULL || width == 0u || height == 0u ||
+        (va & 0xffull) != 0ull) {
+        return 0u;
+    }
+    values[0] = (uint32_t)(va >> 8);
+    values[1] = 0u;
+    values[2] = OPENAGC_GFX10_CB_CAPTURE_INFO;
+    values[3] = 0u;
+    values[4] = OPENAGC_GFX10_CB_CAPTURE_DCC_CONTROL;
+    values[5] = 0u;
+    values[6] = 0u;
+    values[7] = 0u;
+    values[8] = 0u;
+    values[9] = 0u;
+    values[10] = (uint32_t)(va >> 40);
+    values[11] = 0u;
+    values[12] = 0u;
+    values[13] = 0u;
+    values[14] = (height - 1u) | ((width - 1u) << 14);
+    values[15] = OPENAGC_GFX10_CB_CAPTURE_ATTRIB3;
+    return 1u;
+}
 
 /*
  * Cited field encodings for one GFX10 linear 8_8_8_8 color target.

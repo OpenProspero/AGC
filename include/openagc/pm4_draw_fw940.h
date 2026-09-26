@@ -59,6 +59,13 @@
  * zero with and without this bit; indexed-register readback is unresolved.
  */
 #define OPENAGC_PM4_DI_SRC_SEL_AUTO_INDEX 2u
+/* VGT_DRAW_INITIATOR.SOURCE_SELECT: the VGT fetches indices itself. */
+#define OPENAGC_PM4_DI_SRC_SEL_DMA 0u
+#define OPENAGC_PM4_OP_DRAW_INDEX_2 0x27u
+/* max_size, index VA low, index VA high, index count, draw initiator. */
+#define OPENAGC_PM4_DRAW_INDEX_2_WORDS 6u
+#define OPENAGC_PM4_DRAW_INDEX_2_HDR \
+    (openagc_pm4_header3(OPENAGC_PM4_OP_DRAW_INDEX_2, OPENAGC_PM4_DRAW_INDEX_2_WORDS, 0u))
 /* One instance: Mesa emits PKT3_NUM_INSTANCES before a draw whenever the
  * count changes, and a context that never had one has no instance count at
  * all, so the VGT would assemble nothing. */
@@ -135,7 +142,7 @@ typedef struct openagc_pm4_draw_point_state {
 } openagc_pm4_draw_point_state;
 
 /* Scalar draw-state registers, emitted one SET_CONTEXT_REG packet each. */
-#define OPENAGC_PM4_DRAW_POINT_STATE_COUNT 28u
+#define OPENAGC_PM4_DRAW_POINT_STATE_COUNT 29u
 
 /*
  * Fill the scalar draw-state register pairs in probe order. offsets/values
@@ -227,6 +234,10 @@ static inline uint32_t openagc_pm4_draw_point_state_pairs(
      * default, a triangle strip when the caller asks for one. */
     offsets[i] = OPENAGC_GFX10_VGT_GS_OUT_PRIM_TYPE;
     values[i++] = state->gs_out_prim_type;
+    /* Binning is off for a plain draw; a context that inherits a binning
+     * mode never drains its bins. */
+    offsets[i] = OPENAGC_GFX10_PA_SC_BINNER_CNTL_0;
+    values[i++] = 0u;
     return i;
 }
 

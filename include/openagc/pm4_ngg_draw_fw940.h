@@ -46,8 +46,9 @@
  * ES PGM LO (SH), the GS user-data dword that carries the LDS layout (SH),
  * VGT_PRIMITIVE_TYPE (uconfig), GE_CNTL (context aperture), then three
  * registers that come from the context *table*: SPI_SHADER_COL_FORMAT,
- * SPI_PS_INPUT_ENA and VGT_ESGS_RING_ITEMSIZE. The last three are what say
- * whether the table load landed at all. */
+ * SPI_PS_INPUT_ENA and VGT_ESGS_RING_ITEMSIZE (context 0x2ab). The last
+ * three say whether the table load landed; older logs probed 0x2d3, which
+ * is GE_NGG_SUBGRP_CNTL, under the ring-item-size name. */
 #define OPENAGC_PM4_NGG_PROBE_COUNT 9u
 /* The context register table: what Sony's own helpers load, and the form
  * this console accepted for every context register Step-AC probes. One

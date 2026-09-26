@@ -9,6 +9,7 @@ if(NOT OPENAGC_PS5_POLICY_ONLY)
         src/openagc_gpu.c
         src/openagc_graphics.c
         src/openagc_frontend.c
+        src/openagc_raster.c
         src/openagc_vulkan.c
         src/openagc_opengl.c
         src/openagc_sha256.c
@@ -96,6 +97,14 @@ if(NOT OPENAGC_PS5_POLICY_ONLY)
         set_target_properties(openagc_frontend_tests PROPERTIES
             C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
         add_test(NAME openagc_frontend COMMAND openagc_frontend_tests)
+
+        add_executable(openagc_raster_tests tests/test_openagc_raster.c)
+        target_link_libraries(openagc_raster_tests PRIVATE OpenAGC::openagc)
+        target_include_directories(openagc_raster_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/payload")
+        set_target_properties(openagc_raster_tests PROPERTIES
+            C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+        add_test(NAME openagc_raster COMMAND openagc_raster_tests)
 
         add_executable(openagc_vulkan_tests tests/test_openagc_vulkan.c)
         target_link_libraries(openagc_vulkan_tests PRIVATE OpenAGC::openagc)

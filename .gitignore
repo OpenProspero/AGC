@@ -1,6 +1,10 @@
 /build/
+/build-asan/
+/build-policy/
 /out/
 /tools/payload/out/
+/tools/electron/out/
+/tools/electron/.deps/
 /Testing/
 /CMakeUserPresets.json
 /.commandcode
