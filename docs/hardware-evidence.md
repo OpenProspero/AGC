@@ -1919,6 +1919,58 @@ are a comparison lead, not proof that either difference caused the FW9.40
 zero-pixel result. A FW9.40 linker capture, a confirmed pixel, and a completed
 fence are still missing; draw execution remains refused.
 
+## Step AO: the AGC submission path produces fragments
+
+`tools/payload/draw_raster_agc_eop.c` submits the same shared-encoder IB
+through the console's own AGC driver - `dlopen("libSceAgc.sprx")` with
+`sceAgcInit(8)` and `sceAgcSuspendPoint`, `dlopen("libSceAgcDriver.sprx")`
+with `sceAgcDriverSubmitDcb` and a `{words, word_count, flag}` description -
+instead of the raw `0xC0108102` ioctl. The words, the program, the target
+bind and the rasterizer state are the Step-AE ones, and the gate block is
+selected (VTE, depth off, MSAA off), so the draw has fragments to process.
+
+Two defects were found and fixed on the way, both in the payload rather than
+in the encoder: the arena's uconfig table overlapped the context table's
+reserved span (the encoder refuses overlapping scratch tables, which is also
+why the Step AN payload logged `encode refused` instead of submitting), and
+`sceAgcSuspendPoint` lives in `libSceAgc.sprx`, not in the driver module.
+
+**The result.** Pushed once
+(`draw_agc_eop.elf`, 110,768 bytes, SHA-256
+`ea7980a8bee079785f90e745a9627bf5e920c04b4c723dbef1497520d20efaef`), the
+console loaded both modules, submitted, and the dump records
+
+```
+openagc-draw-raster-owned: ... rect=8,8,8x8 pixels=0 outside=64 guard=0
+  value=00000000 gate=1795 wait=30s match=0
+openagc-probe: 00cc0011 00000000 00000003 00000000 00000002 0000c000 00310000 00400040
+openagc-ngg: 00012010 00010080 02000400 00000200 00000000 00000000 00000009 00000080 00000001
+openagc-raster-target: nonzero=64 expected=64 bbox=8,16..15,30 first=ff0040ff
+```
+
+**64 dwords of the payload's own target hold the pinned fragment shader's
+export and nothing else** (`expected=64` counts the words equal to
+`0xff0040ff`), the guard scan is empty, and the baseline line shows the AGC
+driver's own context - a real, initialized graphics context, not the raw
+path's inherited state. The draw rasterized, the pixel shader ran and the
+colour reached memory: this is the first console evidence of rasterization
+in this repository, and it arrives exactly when the submission path
+changes, not when the state does.
+
+**What is still open.** Two anomalies keep this from being a clean
+acceptance. The pixels landed at `(8,16)..(15,30)` rather than in the
+scanned `(8,8)` window, which is the GL-style viewport transform this
+encoder writes against the AGC/Vulkan y-down convention PS5_Vulkan
+documents ("clip y = -1 lands on the target's first row"). And the shared
+EOP marker never fired (`completed=0`), so the payload's own acceptance is
+`match=0` although the target holds the shader's colour: either the release
+after a fragment-producing draw needs the AGC driver's own completion form,
+or the marker's write is what the AGC path does not carry through. Both are
+instruments for the next run, not reasons to claim qualification:
+`OPENAGC_RASTER_GPU_QUALIFIED` stays **0**, `gpu_executable` stays 0, and
+the PS5 policy still refuses `OPENAGC_PS5_CAP_DRAW` until a run reports the
+drawn window, `outside=0` and a fired completion.
+
 ## What the two public PS5 drivers do that this submission does not
 
 Reviewed on 2026-09-26 against PS5_Vulkan (`mihawk-99/PS5_Vulkan`, `main`:
