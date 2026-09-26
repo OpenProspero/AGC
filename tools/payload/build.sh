@@ -35,6 +35,7 @@ CLANG="${HOST_CLANG:-clang}"
 LLD="${HOST_LLD:-ld.lld}"
 TARGET="${PAYLOAD_TARGET:-x86_64-unknown-freebsd13.0}"
 COMMON="--target=$TARGET -ffreestanding -fno-stack-protector -fno-plt -fPIE -O2"
+EXTRA="${PAYLOAD_CFLAGS:-}"
 
 # The SDK wrappers look up llvm-config; Homebrew llvm is not on PATH by default.
 if [ -z "${LLVM_CONFIG:-}" ]; then
@@ -56,9 +57,9 @@ INCLUDE="-I$ROOT/include"
 case "$MODE" in
 sdk)
     if [ -x "$PROSPERO_CLANG" ]; then
-        "$PROSPERO_CLANG" -Wall -O2 $INCLUDE -o "$OUTPUT" "$SOURCE"
+        "$PROSPERO_CLANG" -Wall -O2 $INCLUDE $EXTRA -o "$OUTPUT" "$SOURCE"
     else
-        "$CLANG" $COMMON $INCLUDE -isystem "$PS5_PAYLOAD_SDK/target/include" \
+        "$CLANG" $COMMON $INCLUDE $EXTRA -isystem "$PS5_PAYLOAD_SDK/target/include" \
             -c "$SOURCE" -o "$OUTPUT.o"
         "$LLD" -m elf_x86_64 -pie -e _start \
             -T "$PS5_PAYLOAD_SDK/ldscripts/elf_x86_64.x" \
