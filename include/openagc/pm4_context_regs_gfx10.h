@@ -54,6 +54,7 @@ typedef struct openagc_gfx10_reg_name {
 /* smoke.frag context_registers */
 #define OPENAGC_GFX10_SPI_SHADER_Z_FORMAT 452u
 #define OPENAGC_GFX10_SPI_SHADER_COL_FORMAT 453u
+#define OPENAGC_GFX10_GB_ADJ_ONE 0x3f800000u
 #define OPENAGC_GFX10_SPI_PS_INPUT_ENA 435u
 /* Mesa gfx10.json maps context 0x2ab to VGT_ESGS_RING_ITEMSIZE and 0x2d3
  * to GE_NGG_SUBGRP_CNTL. Earlier probes read 0x2d3 under the wrong name. */

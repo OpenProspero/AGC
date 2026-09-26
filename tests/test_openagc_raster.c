@@ -506,7 +506,7 @@ static int test_raster_explicit_bind_and_pass(void)
                               OPENAGC_GFX10_VTE_CNTL_VIEWPORT_TRANSFORM) == 1u);
     CHECK(ib_has_context_word(words, count, OPENAGC_GFX10_DB_DEPTH_CONTROL,
                               0u) == 0u);
-    draw.gate_mask = OPENAGC_RASTER_GATE_ALL | 0x2000u;
+    draw.gate_mask = OPENAGC_RASTER_GATE_ALL | 0x20000u;
     CHECK(openagc_raster_encode_draw(&draw, words, OPENAGC_RASTER_MAX_WORDS) == 0u);
     draw.gate_mask = OPENAGC_RASTER_GATE_ALL;
 

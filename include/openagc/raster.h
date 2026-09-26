@@ -18,7 +18,7 @@ extern "C" {
 #define OPENAGC_RASTER_MAX_WORDS 1024u
 /* The COLOR0 record count a public AGC capture writes for one target. */
 #define OPENAGC_RASTER_CB_BIND_MAX 16u
-#define OPENAGC_RASTER_GATE_ALL 0x1fffu
+#define OPENAGC_RASTER_GATE_ALL 0x1ffffu
 /* The uconfig table the draw's linkage records are loaded through. */
 #define OPENAGC_RASTER_UCONFIG_TABLE_RECORDS 8u
 #define OPENAGC_RASTER_UCONFIG_TABLE_WORDS (2u * OPENAGC_RASTER_UCONFIG_TABLE_RECORDS)
