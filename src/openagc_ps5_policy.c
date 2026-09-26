@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
+#include "openagc/ps5_policy.h"
+#include "openagc/ps5_videoout.h"
+#include "openagc/raster.h"
 #include "openagc/shader.h"
 #include "openagc/vulkan.h"
 #include "openagc/opengl.h"
@@ -4355,4 +4358,98 @@ openagc_result openagc_gl_draw_elements(openagc_gl_context *context, uint32_t co
 openagc_result openagc_gl_bind_default_framebuffer(openagc_gl_context *context)
 {
     return context == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+/*
+ * The qualification gate. This target is what a PS5 image links instead
+ * of the host library, so it cannot execute anything: what it can do is
+ * state which operations the observed firmware qualified (copy+EOP,
+ * WRITE_DATA fills, compute stores, register programs, CB readback, IB
+ * dumps, the NGG program) and refuse the rest, instead of denying every
+ * call for every firmware alike. A draw is named and still refused: no
+ * console run has produced a pixel.
+ */
+openagc_result openagc_ps5_policy_qualification(uint32_t firmware_id,
+                                                openagc_ps5_qualification *info)
+{
+    if (info == 0) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (info->struct_size != sizeof(*info) ||
+        info->api_version != OPENAGC_PS5_POLICY_API_VERSION) {
+        return OPENAGC_ERROR_INCOMPATIBLE_VERSION;
+    }
+    info->firmware_id = firmware_id;
+    info->capability_mask = 0u;
+    info->refused_mask = OPENAGC_PS5_CAP_DRAW;
+    if (firmware_id != OPENAGC_PS5_POLICY_FW940_ID) {
+        info->qualified = 0u;
+        info->refused_mask = OPENAGC_PS5_CAP_KNOWN_MASK;
+        return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+    }
+    info->qualified = 1u;
+    info->capability_mask = OPENAGC_PS5_QUALIFIED_MASK;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_ps5_policy_require(uint32_t firmware_id,
+                                          openagc_ps5_capability capability)
+{
+    uint32_t mask = 0u;
+
+    if (capability == 0u || (capability & ~(uint32_t)OPENAGC_PS5_CAP_KNOWN_MASK) != 0u) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (firmware_id != OPENAGC_PS5_POLICY_FW940_ID) {
+        return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+    }
+    mask = OPENAGC_PS5_QUALIFIED_MASK;
+    return (capability & mask) != 0u ? OPENAGC_OK
+                                     : OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+}
+
+/* Rasterization needs the GPU draw path this image has not qualified. */
+openagc_result openagc_raster_get_capabilities(
+    openagc_raster_capabilities *capabilities)
+{
+    if (capabilities == 0) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (capabilities->struct_size != sizeof(*capabilities)) {
+        return OPENAGC_ERROR_INCOMPATIBLE_VERSION;
+    }
+    return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+/* VideoOut is a console display path of its own; this image has none. */
+openagc_result openagc_ps5_videoout_create(openagc_ps5_videoout **out_display,
+                                           int *out_platform_error)
+{
+    if (out_display == 0) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    *out_display = 0;
+    if (out_platform_error != 0) {
+        *out_platform_error = -1;
+    }
+    return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_ps5_videoout_present(openagc_ps5_videoout *display,
+                                            const openagc_frame_view *frame,
+                                            int *out_platform_error)
+{
+    if (display == 0 || frame == 0) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (out_platform_error != 0) {
+        *out_platform_error = -1;
+    }
+    return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_ps5_videoout_destroy(openagc_ps5_videoout *display)
+{
+    return display == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                        : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
