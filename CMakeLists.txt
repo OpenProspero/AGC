@@ -46,6 +46,14 @@ endif()
 if(NOT OPENAGC_PS5_POLICY_ONLY)
     include(CTest)
     if(BUILD_TESTING)
+        add_executable(openagc_ps5_videoout_tests tests/test_ps5_videoout.c
+            src/openagc_ps5_videoout.c)
+        target_include_directories(openagc_ps5_videoout_tests PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/include")
+        set_target_properties(openagc_ps5_videoout_tests PROPERTIES
+            C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+        add_test(NAME openagc_ps5_videoout COMMAND openagc_ps5_videoout_tests)
+
         add_executable(openagc_tests tests/test_openagc.c)
         target_link_libraries(openagc_tests PRIVATE OpenAGC::openagc)
         set_target_properties(openagc_tests PROPERTIES
