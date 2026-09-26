@@ -31,11 +31,17 @@
  *   Console-proven completed=1 (COLOR_BASE-class zeros; masks ffffffff).
  * Step Y: SET_CONTEXT smoke-owned SPI/PA/DB_SHADER/CB_SHADER_MASK values,
  *   then absolute COPY_DATA readback (round-trip). Not a COLOR_BASE bind.
- * Step Z: SET_CONTEXT CB_COLOR0_BASE + BASE_EXT from owned GPU VA (Mesa
- *   encoding va>>8 / (va>>8)>>32) plus owned CB_SHADER_MASK, then absolute
- *   COPY_DATA of the CB probe set. Does not invent INFO/ATTRIB/VIEW/DRAW.
+ * Step Z: SET_CONTEXT CB_COLOR0_BASE + a second CB word from an owned GPU
+ *   VA (Mesa encoding va>>8 / (va>>8)>>32) plus owned CB_SHADER_MASK, then
+ *   absolute COPY_DATA of the CB probe set. Step AB corrected the atlas:
+ *   that second offset (793) is CB_COLOR0_PITCH, a GFX10 hole, so Step Z's
+ *   second word was not a BASE_EXT round-trip.
+ * Step AB: SET_CONTEXT the nine gc_10_1_0 linear color-bind registers with
+ *   cited field compositions (BASE/BASE_EXT/VIEW/INFO/ATTRIB/ATTRIB2/
+ *   ATTRIB3/TARGET_MASK/SHADER_MASK) and read them all back. No DRAW.
  *
- * Does not invent CB INFO/ATTRIB values.
+ * Does not invent CB INFO/ATTRIB values: they are composed from the cited
+ * gfx10 driver path, and this IB submits no DRAW.
  * hardware_qualified / gpu_executable stay false.
  */
 
@@ -176,18 +182,23 @@ static inline uint32_t openagc_pm4_encode_ctxreg_rt_abs_eop(
 }
 
 /*
- * Step Z vehicle: SET_CONTEXT owned CB_COLOR0_BASE + BASE_EXT (from
- * color_va via public Mesa va>>8 encoding) and owned CB_SHADER_MASK, then
- * absolute COPY_DATA of the eight CB probe offsets, then EOP.
- * Does not SET INFO/ATTRIB/VIEW/TARGET_MASK (unowned). words must hold
+ * Step Z vehicle: SET_CONTEXT owned CB_COLOR0_BASE plus a second CB word
+ * (from color_va via public Mesa va>>8 encoding) and owned CB_SHADER_MASK,
+ * then absolute COPY_DATA of the eight legacy CB probe offsets, then EOP.
+ * Does not SET INFO/ATTRIB/VIEW/TARGET_MASK. words must hold
  * OPENAGC_PM4_CTXREG_CB_BIND_EOP_WORDS.
+ *
+ * Reproduces the already-pushed Step-Z IB byte for byte, so the second
+ * offset stays the literal it was submitted with (793 = CB_COLOR0_PITCH,
+ * a GFX10 hole — the pushed payload intended BASE_EXT there). Step AB
+ * writes and reads the real BASE_EXT at 912.
  */
 static inline uint32_t openagc_pm4_encode_ctxreg_cb_bind_abs_eop(
     uint64_t color_va, uint64_t dst_base_va, uint32_t sequence,
     uint64_t marker_va, uint32_t *words)
 {
     static const uint32_t offsets[OPENAGC_GFX10_CTXREG_CB_BIND_SET_COUNT] = {
-        OPENAGC_GFX10_CB_COLOR0_BASE, OPENAGC_GFX10_CB_COLOR0_BASE_EXT,
+        OPENAGC_GFX10_CB_COLOR0_BASE, OPENAGC_GFX10_CB_COLOR0_PITCH,
         OPENAGC_GFX10_CB_SHADER_MASK
     };
     uint32_t values[OPENAGC_GFX10_CTXREG_CB_BIND_SET_COUNT];
@@ -195,6 +206,7 @@ static inline uint32_t openagc_pm4_encode_ctxreg_cb_bind_abs_eop(
     uint32_t cursor;
 
     values[0] = openagc_pm4_cb_color0_base_lo(color_va);
+    /* Submitted to offset 793; corrected name: CB_COLOR0_PITCH (hole). */
     values[1] = openagc_pm4_cb_color0_base_ext(color_va);
     values[2] = OPENAGC_GFX10_CB_SHADER_MASK_OWNED;
 
@@ -235,6 +247,51 @@ static inline uint32_t openagc_pm4_encode_mmio_tilemode_probe_eop(
         openagc_pm4_encode_copy_data_reg_to_mem(
             openagc_gfx10_mmio_gb_tile_mode_offset(i),
             dst_base_va + (uint64_t)(1u + i) * 4u, words + cursor);
+        cursor += OPENAGC_PM4_COPY_DATA_WORDS;
+    }
+    openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);
+    return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
+}
+
+/*
+ * Step AB vehicle: SET_CONTEXT the nine full gc_10_1_0 linear color-bind
+ * registers for an owned 8_8_8_8 UNORM target (openagc_gfx10_cb_bind_offsets
+ * order, values from openagc_gfx10_cb_bind_linear_8888_words), then
+ * absolute COPY_DATA readback of the same nine offsets, then EOP.
+ *
+ * The words are a cited *composition* (see the atlas header for the field
+ * and enum cites), not an executed bind: this IB submits no DRAW, so it
+ * claims the write/read path and the register set, nothing more. words
+ * must hold OPENAGC_PM4_CTXREG_CB_BIND_FULL_EOP_WORDS.
+ */
+#define OPENAGC_PM4_CTXREG_CB_BIND_FULL_SET_WORDS                            \
+    ((uint32_t)(OPENAGC_GFX10_CB_BIND_COUNT *                              \
+                OPENAGC_PM4_SET_CONTEXT_WORDS(1u)))
+#define OPENAGC_PM4_CTXREG_CB_BIND_FULL_COPY_WORDS                           \
+    ((uint32_t)(OPENAGC_GFX10_CB_BIND_COUNT * OPENAGC_PM4_COPY_DATA_WORDS))
+#define OPENAGC_PM4_CTXREG_CB_BIND_FULL_EOP_WORDS                            \
+    (OPENAGC_PM4_CTXREG_CB_BIND_FULL_SET_WORDS +                           \
+     OPENAGC_PM4_CTXREG_CB_BIND_FULL_COPY_WORDS +                          \
+     OPENAGC_PM4_EOP_WITH_NOP_WORDS)
+
+static inline uint32_t openagc_pm4_encode_ctxreg_cb_bind_full_abs_eop(
+    uint64_t color_va, uint32_t width, uint32_t height, uint64_t dst_base_va,
+    uint32_t sequence, uint64_t marker_va, uint32_t *words)
+{
+    uint32_t values[OPENAGC_GFX10_CB_BIND_COUNT];
+    uint32_t i;
+    uint32_t cursor;
+
+    openagc_gfx10_cb_bind_linear_8888_words(
+        color_va, width, height, OPENAGC_GFX10_CB_COMP_SWAP_RGBA8, values);
+    cursor = openagc_pm4_encode_psbc_context_pairs(
+        openagc_gfx10_cb_bind_offsets, values, OPENAGC_GFX10_CB_BIND_COUNT,
+        words);
+    for (i = 0u; i < OPENAGC_GFX10_CB_BIND_COUNT; ++i) {
+        openagc_pm4_encode_copy_data_reg_to_mem(
+            openagc_pm4_copy_data_src_context_abs(
+                openagc_gfx10_cb_bind_offsets[i]),
+            dst_base_va + (uint64_t)i * 4u, words + cursor);
         cursor += OPENAGC_PM4_COPY_DATA_WORDS;
     }
     openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + cursor);

@@ -291,6 +291,13 @@ openagc_result openagc_gl_program_set_psbc_register_snapshot(
     openagc_gl_program *program, const uint8_t *vertex_metadata,
     uint32_t vertex_metadata_size, const uint8_t *pixel_metadata,
     uint32_t pixel_metadata_size);
+openagc_result openagc_gl_program_set_agc_linked_registers(
+    openagc_gl_program *program,
+    const openagc_frontend_agc_register *context_records, uint32_t context_count,
+    const openagc_frontend_agc_register *uconfig_records, uint32_t uconfig_count);
+openagc_result openagc_gl_program_set_agc_target_registers(
+    openagc_gl_program *program,
+    const openagc_frontend_agc_register *target_records, uint32_t target_count);
 openagc_result openagc_gl_program_get_host_register_program(
     const openagc_gl_program *program, uint32_t *words, uint32_t max_words,
     uint32_t *out_count);

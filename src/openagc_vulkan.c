@@ -2091,6 +2091,30 @@ openagc_result openagc_vk_pipeline_set_psbc_register_snapshot(
         pixel_metadata_size);
 }
 
+openagc_result openagc_vk_pipeline_set_agc_linked_registers(
+    openagc_vk_pipeline *pipeline,
+    const openagc_frontend_agc_register *context_records, uint32_t context_count,
+    const openagc_frontend_agc_register *uconfig_records, uint32_t uconfig_count)
+{
+    if (pipeline == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_set_agc_linked_registers(
+        pipeline->pipeline, context_records, context_count,
+        uconfig_records, uconfig_count);
+}
+
+openagc_result openagc_vk_pipeline_set_agc_target_registers(
+    openagc_vk_pipeline *pipeline,
+    const openagc_frontend_agc_register *target_records, uint32_t target_count)
+{
+    if (pipeline == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    return openagc_frontend_pipeline_set_agc_target_registers(
+        pipeline->pipeline, target_records, target_count);
+}
+
 openagc_result openagc_vk_pipeline_get_host_register_program(
     const openagc_vk_pipeline *pipeline, uint32_t *words, uint32_t max_words,
     uint32_t *out_count)

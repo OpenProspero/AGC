@@ -1241,7 +1241,7 @@ window (TCP 3232), loader still accepting connections afterward.
 **Status before push.** Host encode + dump parse locked in CTest
 (`test_openagc_gpu`); `openagc_ib_dump_parse` skips the leading
 owned-expect line and refuses text with no header;
-`openagc_ib_dump_cb_bind_owned_base_match` is fail-closed on zero
+`openagc_ib_dump_cb_bind_legacy_base_match` is fail-closed on zero
 expected BASE or any mismatch. One push, no retries.
 
 **Artifact.** `ctxreg_cb_bind_eop.elf` (built from revision `3f192cb`:
@@ -1273,6 +1273,16 @@ pin table stays empty. `hardware_qualified` stays **false**;
 graphics-adjacent gate is owning the remaining CB bind dwords from a
 citeable source; inventing `INFO`/`ATTRIB` values or DRAW remains out of
 scope.
+
+**Correction (Step AB).** The second word this payload wrote and read
+went to offset 793, which the atlas of the time called `BASE_EXT`. Per
+`gc_10_1_0_offset.h` that offset is `CB_COLOR0_PITCH`, a hole on GFX10,
+and `BASE_EXT` is 912. The value read back was zero because both the
+write target and the claimed field are zero at this VA, so the dump does
+**not** demonstrate a `BASE_EXT` round-trip. That claim is withdrawn;
+what this dump still supports is the `CB_COLOR0_BASE` write/read path and
+the `CB_SHADER_MASK` value under SET_CONTEXT. Step AB writes and reads
+the real `BASE_EXT` at 912.
 
 ## Bounded experiment: GB tile-mode table readback (Step AA)
 
@@ -1359,6 +1369,263 @@ indexed read sequence), not another address tweak. Host parse and the
 fail-closed index lookup stay locked for a future successful capture; a
 `completed=0` dump never resolves an index.
 
+## Bounded experiment: one point draw into an owned target (Step AC)
+
+**Question.** Does one FW9.40 IB that runs the console-proven smoke.vert /
+smoke.frag register program and a Step-AB linear color bind — plus the
+minimum rasterizer state, a POINTLIST topology, and a single
+`PACKET3_DRAW_INDEX_AUTO` of one vertex — actually rasterize, so that the
+pixel shader's exported color appears in the target and nowhere else?
+
+**Why it matters.** Everything OpenAGC owns so far is register programming
+and copies. Rasterization is the gate the frontends' entire draw path
+waits on, and this is the smallest draw the fixtures allow: the pinned
+smoke.vert emits a constant `vec4(0,0,0,1)`, so three vertices are
+degenerate and only a point primitive can cover a pixel. A point draw
+exercises VS → VGT → PA → SC → SPI → PS → CB with one vertex and one
+pixel, no vertex buffer, no depth buffer, and no second primitive.
+
+**Cited state (Mesa at the pinned revision, all on top of CLEAR_STATE).**
+
+* `PKT3_CLEAR_STATE` (0x12) + 0: `gfx10_init_gfx_preamble_state` emits it
+  before any draw and relies on its documented defaults for everything it
+  does not re-set (`sid.h` gives the opcode and
+  `CIK_UCONFIG_REG_OFFSET = 0x30000`, which fixes every packet offset as
+  the register's mm low 12 bits).
+* Topology: `VGT_PRIMITIVE_TYPE` is a **uconfig** register on GFX10
+  (`radeon_set_uconfig_reg(R_030908_VGT_PRIMITIVE_TYPE, ...)` in
+  `si_state_draw.cpp`), i.e. `SET_UCONFIG_REG` (0x79) with offset
+  `(0x030908 - 0x30000) >> 2 = 578`, value `DI_PT_POINTLIST` (1).
+* Draw packet: `PKT3(PKT3_DRAW_INDEX_AUTO, 1)` + vertex count +
+  `DI_SRC_SEL_AUTO_INDEX` (`use_opaque` is 0 for this draw).
+* Color: the Step-AB nine-register linear RGBA8 bind, unchanged.
+* Shaders: the Step-S/T/U program, PGMs patched from the uploaded code VAs.
+* Rasterizer state (`si_create_rs_state`, `si_emit_viewport`,
+  `ac_compute_guardband`, `si_emit_window_rectangles`,
+  `si_emit_framebuffer_state`): viewport scale/offset for the drawn rect,
+  `PA_SC_VPORT_ZMIN_0/ZMAX_0` = 0/1, guardband clip 4094.0f / discard 1.0f
+  (the values `ac_compute_guardband` produces for this viewport with zero
+  clip/discard distance, and no hardware screen offset), screen scissor =
+  the drawn rect, window scissor = the framebuffer with
+  `WINDOW_OFFSET_DISABLE`, `PA_SC_CLIPRECT_RULE = 0xffff` (the "no window
+  rectangles" value), `PA_SC_EDGERULE` from the OpenGL-FBO branch,
+  `PA_SU_POINT_SIZE`/`MINMAX` = 8 (one pixel in 1/8-pixel units, the cited
+  non-per-vertex case), `PA_SC_MODE_CNTL_0` = alternate RBs per tile with
+  MSAA and the per-viewport scissor off, `PA_CL_CLIP_CNTL` = GL clip space
+  with linear attribute clipping, `PA_SU_VTX_CNTL` = half-pixel center,
+  round-to-even, 1/256-pixel quantisation, `DB_Z_INFO`/`DB_STENCIL_INFO` =
+  `Z_INVALID`/`STENCIL_INVALID` (no depth or stencil buffer is bound).
+
+**Payload contract (`tools/payload/draw_point_eop.c`).**
+
+May do: open `/dev/gc`; map one 256 KiB arena; upload the two smoke code
+blobs; submit **one** IB of `OPENAGC_PM4_DRAW_POINT_EOP_WORDS` (=212)
+dwords; poll the EOP marker with a 30-second monotonic deadline; read the
+color window back on the CPU; count every other nonzero dword in the arena
+and report it; write
+`/data/prosperoai/openagc-ib-dump-draw-point.log`; exit.
+
+Must not do: no second submit; no retry; no vertex buffer, index buffer, or
+depth buffer; no second primitive; no shader other than the two pinned
+smoke blobs; no VideoOut; no queue-create/ACB; no malformed ELF.
+
+**Why this is bounded.** The draw is scissored (screen scissor) to a 16×16
+rect inside a 32×32 linear target, the target sits inside a 256 KiB arena,
+the shaders contain no memory instruction at all (pure ALU plus `exp`), no
+depth buffer is bound, and the payload scans the whole arena afterwards and
+reports any nonzero dword outside the drawn rect. A wrong topology,
+viewport, or scissor yields no pixels rather than stray writes; a
+rejected packet yields `completed=0` exactly like Steps W and AA.
+
+**Acceptance criteria.** `completed=1`; at least one pixel equals the
+shader's exported color (`0xff0040ff`: `SPI_SHADER_32_ABGR` into an
+`8_8_8_8` UNORM target with `SWAP_STD`); every nonzero pixel in the window
+equals that value; `outside=0`; no fault/hang/timeout in the live klog
+window (TCP 3232); loader still accepting connections afterward.
+
+**Status before push.** Draw-state composition, packet shapes, encode size,
+and the fail-closed `openagc_ib_dump_draw_point_pixels_match` are locked in
+`test_openagc_gpu` (wrong pixel, all-zero window, `completed=0`, wrong
+kind, and NULL inputs all refuse). `hardware_qualified` stays false; the
+pin tables stay empty. One push, no retries.
+
+**Artifact.** `draw_point_eop.elf`
+(`ebe7168d93ab0afb79c667df5d9c662e2cb770eaedc251f193fdf82c7abae379`,
+111,424 bytes, ELF-validated by `tools/payload/validate_elf.py`).
+
+**Observed result (2026-09-25, FW `0x9400008`): no pixel evidence, payload
+defect.** One push was made; the loader accepted it and started the payload
+as pid 123. The console's live klog shows the process receiving a fatal
+signal **after the submit**:
+
+```
+# signal: 11 (SIGSEGV)   proc name: payload.elf
+# reason: page fault (user read data, page not present)
+# fault address: 0000000200080000
+# rbx: 0000000200044000   r13: 0000000200044420
+```
+
+`0x0000000200044000` is the arena's color region and `0x0000000200080000`
+is exactly one page past the end of the payload's own 256 KiB arena
+mapping, i.e. the fault is in this payload's post-processing, not in the
+GPU path: the acceptance scan iterated `OPENAGC_ARENA / 4` words *from the
+colour pointer* instead of from the arena base and ran off the mapping
+after the submit and the marker poll. The log file was therefore never
+written (`/data/prosperoai/openagc-ib-dump-draw-point.log` does not exist,
+FTP answers 550) and there is **no** record of the drawn pixels.
+
+What this run does and does not establish:
+
+* The 212-dword IB — CLEAR_STATE, the smoke draw state, the console-proven
+  register program with patched PGMs, the Step-AB colour bind, the
+  `SET_UCONFIG_REG` topology and one `PACKET3_DRAW_INDEX_AUTO` — was
+  **submitted** and the process survived the submit and the marker poll.
+* The console stayed healthy: no panic/trap/GPU-fault/hang/timeout marker
+  in the klog window, the loader still accepted connections on 9021
+  afterwards, FTP still served earlier logs, and the Syscore coredump of
+  pid 123 completed normally. The GPU itself reported nothing.
+* It does **not** establish that the draw rasterized, or even that the
+  draw packet was accepted rather than dropped: both show up as the same
+  missing evidence. `completed` and the pixel window are unknown.
+
+**Do not re-push this artifact.** Per the repository's one-push-no-retry
+rule, a second push was not attempted after the failure. The defect is
+fixed in the payload and the faulting logic now lives in a shared, tested
+helper (`openagc_pm4_draw_point_scan`, whose bounds are covered by
+`test_openagc_gpu`, including the sanitizer-visible case that a window
+buffer must be at least `view_w * view_h` words).
+
+## Step AC iterations: five reviewed runs, no fragment yet
+
+The fixed vehicle was re-designed and re-run four more times, each run a
+single validated push with a reviewed, cited delta. The console stayed
+healthy through all of them: no panic/trap/fault/hang/timeout marker,
+loader still accepting, every log retrieved over FTP.
+
+| Run | Change from the previous run | Result | What it established |
+| --- | --- | --- | --- |
+| AC-2 | Dropped the bare `CLEAR_STATE` (the kernel brackets its own clear-state block with `PREAMBLE_CNTL` and loads ASIC data inside it — `gfx_v10_0.c` — so a user-mode `CLEAR_STATE` would reset state it cannot restore); enabled `VPORT_SCISSOR_ENABLE` and wrote the per-viewport scissor; viewport and guardband as sequences; point size 8 px | `completed=1`, `pixels=0`, `outside=0` | The inherited context is a real driver baseline: `EDGERULE=0xaa959a6a`, `CLIP_CNTL=0x01000000`, `VTX_CNTL=0x2d`, `TILE_STEERING_OVERRIDE=0`, `MODE_CNTL_1=0` — and context state **persists across payload runs** (previous runs' scissors and point size are visible in the next run's baseline) |
+| AC-3 | Added `PKT3_NUM_INSTANCES` (0x2F) with count 1 before the draw, plus `IA_MULTI_VGT_PARAM` and `VGT_GS_OUT_PRIM_TYPE` to the readback | `completed=1`, `pixels=0`, `outside=0` | The instance count is not the blocker |
+| AC-4 | Added `IA_MULTI_VGT_PARAM = PRIMGROUP_SIZE(127) \| WD_SWITCH_ON_EOP` (cited composition), a **pre-draw readback probe** of the same 22 registers, and a guard-region scan up to the arena end | `completed=1`, `pixels=0`, `outside=0`, `guard=0` | The guard scan rules out writes landing elsewhere in the arena: the CB receives **nothing at all**. The probe also shows that two of the writes do not take: `PA_SC_MODE_CNTL_0.VPORT_SCISSOR_ENABLE` and `IA_MULTI_VGT_PARAM` read back as their previous values, i.e. those registers are write-protected/shadowed for this context |
+| AC-5 | Added `CB_COLOR_CONTROL = MODE(CB_NORMAL) \| ROP3(0xcc)` and `CB_BLEND0_CONTROL = 0` | `completed=1`, `pixels=0`, `outside=0`, `guard=0` | See the CB-write gate below: the write was **taken** (the probe reads `00cc0010`) but the draw still produces no fragment |
+| AC-6 | Adopted `PS5_Vulkan`'s `PA_SC_MODE_CNTL_0 = 0x23` with its whole one-sample MSAA block, `CB_COLOR_CONTROL = 0x00cc0011` (RB+ off) and an explicit `VGT_GS_OUT_PRIM_TYPE` | `completed=1`, `pixels=0` | The probe verifies every one of those writes; the hardware keeps MSAA plus the viewport scissor and manages the RB-alternation bit itself |
+| AC-7 | Read `VGT_PRIMITIVE_TYPE` back through the uconfig aperture (`0xC000+578`) after the draw, and wrote `IA_MULTI_VGT_PARAM` with index 1 | `completed=1`, `pixels=0` | The read completes and returns **0**: the topology write never landed |
+| AC-8 | Added the GFX10 CAM workaround bit (`PKT3_RESET_FILTER_CAM_S`) to the uconfig header | `completed=1`, `pixels=0` | Still 0: the CAM bit is not the reason |
+| AC-9 | Tried the uconfig write with index 1, 2 and 4, each read back | `completed=1`, `pixels=0` | All four forms leave 0 |
+| AC-10 | Built a uconfig table in the arena and issued the **`0x64` register-table load** exactly as `sceAgcDcbSetUcRegistersIndirect` does (payload `addr_lo, addr_hi, 0x80000000, count`; record = offset u16, value u32) | `completed=1`, `pixels=0`, readback 0 | Sony's own encoding does not land either |
+| AC-11 | Wrote `SPI_SHADER_USER_DATA_GS_0..3` (SH offsets 140-143) with four distinctive words and read them back through the SH aperture `0x2C00 + offset` | `completed=1`, `pixels=0` | **The NGG vertex stage's user-data block is writable and reads back exactly**, and the SH aperture works: the prerequisite the NGG step needs is now verified. The run's table-load readback was lost to a destination overlap in the encoder, found in the log |
+| AC-12 | Fixed that overlap (the probe and user-data readbacks no longer share a word) and re-ran | `completed=1`, `pixels=0`, `set_form=00000000 table_load=00000000`, `gs-user-data=a5a5a500 a5a5a501 a5a5a502 a5a5a503` | Clean confirmation of both: the uconfig space stays read-only for every form including Sony's table load, and the GS user-data block is reachable with exact per-index values |
+
+**The CB colour-write gate (AC-5).** A fresh console context has
+`CB_COLOR_CONTROL` = **0**, i.e. `MODE = CB_DISABLE`. Mesa only sets
+`MODE(CB_NORMAL)` when the blend target mask is non-empty
+(`si_state.c`), and `CB_DISABLE` is 0, so *any* context that has never
+drawn has colour writes switched off at the CB. The AC-5 baseline line
+records exactly that (`... 00000002 00000000 00000000 00000000 0000002d
+00000000 00000000`, last two words = `CB_COLOR_CONTROL`, `CB_BLEND0_CONTROL`)
+and the probe line records the fix (`00cc0010`). This is the first
+*explained* reason the earlier runs could not produce a pixel, and any
+future draw path must carry this register.
+
+**State program verified (AC-6).** With the two public PS5 drivers as
+citations — `PS5_Vulkan`'s `ps5vk_draw.c` (offsets "the register
+database's MMIO over four, minus 0xA000", `PA_SC_MODE_CNTL_0 = 0x23` for
+every draw, `CB_COLOR_CONTROL = 0x00cc0011` with RB+ off, the whole
+one-sample MSAA block: `PA_SC_AA_CONFIG = 0xc000`, `DB_EQAA = 0x310000`,
+the four `PA_SC_AA_SAMPLE_LOCS_*` at `0x622ae6ae`, `PA_SC_CENTROID_PRIORITY`
+`0x32103210` and full coverage masks) and `ps5-opengl`'s own runtime
+(`runtime_color_control = 0x00cc0010`, `runtime_target_mask = 0x0000000f`
+and point/line defaults `0x00080008`) — the IB now carries all of it, and
+the pre-draw probe proves the writes land: `CB_COLOR_CONTROL = 00cc0011`,
+`PA_SC_MODE_CNTL_0 = 00000003` (the hardware keeps MSAA plus the viewport
+scissor and manages the RB-alternation bit itself), `PA_SC_AA_CONFIG =
+0000c000`, `DB_EQAA = 00310000`, `PA_SU_POINT_SIZE = 00400040`. Two writes
+never take: `IA_MULTI_VGT_PARAM` (0 plain, 0 with index 1) and the RB
+alternation bit. Pixels: still **0**, `outside=0`, `guard=0`.
+
+**The primitive type is not writable from a user submission (AC-7…AC-10).**
+The one piece the vehicle could not read back was the `SET_UCONFIG_REG`
+write of `VGT_PRIMITIVE_TYPE`. `soc15d.h` gives
+`PACKET3_SET_UCONFIG_REG_START = 0xC000` / `_END = 0xC400`, the same shape
+as the context aperture `0xA000` that Step X proved, so a `COPY_DATA` read
+at `0xC000 + 578` is a way for user mode to check its own topology write.
+It completes (`completed=1`, no fault) and returns **0 after every write
+form this project has tried**, each followed by its own read back:
+
+| Form | Cite | Readback |
+| --- | --- | --- |
+| `SET_UCONFIG_REG` (0x79), plain offset 578 | Mesa's GFX10 `radeon_set_uconfig_reg` | `00000000` |
+| 0x79 with index 1 / 2 / 4 in the offset word's top nibble | Mesa `radeon_opt_set_uconfig_reg_idx`; `soc15d.h` `PACKET3_SET_UCONFIG_REG_INDEX_TYPE` | `00000000` ×3 |
+| 0x64 **register-table load**, 1 record `{578, DI_PT_POINTLIST}`, payload `addr_lo, addr_hi, 0x80000000, 1` | `sceAgcDcbSetUcRegistersIndirect`, word for word from PS5_Vulkan's golden captures and `tools/pm4_decode.py` (`TABLE_LOADS = {0x9f: context, 0x63: sh, 0x64: uconfig}`, records of 8 bytes: offset in the first u16, value in bytes 4..8) | `00000000` |
+
+(All of these also carried the GFX10 CAM workaround bit,
+`PKT3_RESET_FILTER_CAM_S`, which the kernel sets for every GFX-IP uconfig
+write on GFX10+.) The read path works and the write path does not: **this
+submission context cannot program the primitive type**, so the VGT
+assembles from `DI_PT_NONE`. That is the whole of the missing
+rasterization.
+
+**Why the reference drivers are NGG-only.** Both public PS5 drivers reach
+their draws through NGG, and `ps5-opengl`'s own source says so explicitly:
+`options->ngg = shader->stage == PSBC_STAGE_VERTEX` and `options.ngg =
+true`. In that path the rasterized topology comes from
+`VGT_GS_OUT_PRIM_TYPE` — a **context** register, which every write of this
+vehicle does reach (the AC-6 probe reads it back) — instead of the legacy
+path's uconfig register. Their captured AGC stream also shows where an NGG
+vertex stage's user data goes: `SET_SH_REG` at `0xb230`
+(`SPI_SHADER_USER_DATA_GS_*`, "the NGG vertex stage"), and `ps5-opengl`
+puts the metadata's `ngg_lds_layout` into the user-data dword that PSBC
+declares for it. Any NGG step here must therefore write the GS user-data
+block (SH offset 140 upwards) with the declared dwords, not the VS block.
+
+**Consequence for the next gate.** The pinned smoke fixtures are legacy
+(`stages_en = 0x10000`, no `PRIMGEN_EN`, `ngg_lds_layout: null`), so no
+draw the current fixtures can express is reachable from a payload on this
+firmware. The next draw attempt needs **NGG-compiled** stage fixtures from
+the pinned `opengnm-psbc` build (build-time, manual workflow) and the
+`GE_CNTL`/`VGT_SHADER_STAGES_EN` linkage they carry, plus the GS user-data
+writes above. Until then rasterization stays unproven:
+`hardware_qualified` is false, `gpu_executable` is 0, the pin tables are
+empty, and the `openagc_ps5_policy` target stays deny-all.
+
+**What the runs do not establish.** No fragment ever reaches the CB, and
+the readback above names the reason: the VGT holds `DI_PT_NONE` because
+this context cannot write its primitive type. Nothing here shows a
+graphics shader stage executing either — the console-proven shader
+execution is the compute path, with CPU-written code and the same PGM
+patch encoding — so the VS/PS launch of an NGG pipeline is still
+unexercised, and it is the next thing an NGG fixture would test.
+Rasterization is therefore still **not** proven; `hardware_qualified`
+stays **false**, `gpu_executable` stays 0, the pin tables stay empty, and
+the `openagc_ps5_policy` target stays deny-all.
+
+**Next gate (designed, waiting on a build-time artifact).** The same
+point-draw vehicle, unchanged, with **NGG** stage fixtures: a vertex/pixel
+pair whose PSBC metadata carries `ngg_lds_layout` and a
+`VGT_SHADER_STAGES_EN` with `PRIMGEN_EN`, plus the `GE_CNTL` the pinned
+compiler emits for an NGG pipeline. With those, the topology comes from
+`VGT_GS_OUT_PRIM_TYPE` (writable here, verified by the AC-6 probe) and the
+draw no longer needs the uconfig register this context cannot program.
+Producing those fixtures requires a run of the manual
+`.github/workflows/build-psbc-host.yml` job (or a local build of the
+pinned `opengnm-psbc` with NGG enabled) and a review of the resulting
+pinned digests; that is the dependency this experiment is now waiting on,
+not a console push.
+
+**A second diagnostic is available and safe** if the NGG fixtures are
+delayed: the console-proven `store_const`/`store_span` kernel code as the
+*vertex* shader of a legacy point draw, with its destination VA in the VS
+user-data dwords (`SPI_SHADER_USER_DATA_VS_2/3`). A store landing proves
+the graphics VS launch path; nothing landing proves it does not run. The
+store kernel writes to the VA it is handed, so the payload must place that
+VA in its own arena and must not rely on the ABI's base-vertex slot.
+
+**Artifacts.** `draw_point_eop.elf` (first run,
+`ebe7168d…c7abae379`), the AC-2…AC-9 binaries and their logs are archived
+under `tools/payload/out/` (gitignored) with the deploy records; the
+in-tree payload source, its tests, and the cited state program are the
+reviewable artifact.
+
 ### Stage 6/7 refuse contracts (fail-closed scaffold)
 
 **Status.** `include/openagc/presentation_refuse_fw940.h` documents
@@ -1367,3 +1634,287 @@ fail-closed index lookup stay locked for a future successful capture; a
 `OPENAGC_VIDEOOUT_EVIDENCE_PIN_COUNT=0`. Host image create already
 refuses `NATIVE_OPTIMAL` / `SCANOUT`; `openagc_vk_create_swapchain`
 returns `UNSUPPORTED_OPERATION`. No VideoOut path is opened.
+
+## Atlas corrections found while designing Step AB
+
+Designing the full color-bind words required re-reading the public
+register map, and two earlier atlas entries were wrong. Both corrections
+are recorded here rather than silently edited, because they change what
+two recorded console dumps may be claimed to prove.
+
+**Correction 1 — `CB_COLOR0_BASE_EXT`/`ATTRIB2` offsets.** The atlas had
+read Mesa's SI-era names `R_028C64_CB_COLOR0_BASE_EXT` and
+`R_028C68_CB_COLOR0_ATTRIB2` as offsets 793/794. `gc_10_1_0_offset.h`
+gives, all `BASE_IDX=1`:
+
+| Register | Offset | Value |
+| --- | --- | --- |
+| `mmCB_COLOR0_BASE` | 0x0318 | 792 |
+| `mmCB_COLOR0_PITCH` | 0x0319 | 793 (hole on GFX10) |
+| `mmCB_COLOR0_SLICE` | 0x031A | 794 (hole on GFX10) |
+| `mmCB_COLOR0_VIEW` | 0x031B | 795 |
+| `mmCB_COLOR0_INFO` | 0x031C | 796 |
+| `mmCB_COLOR0_ATTRIB` | 0x031D | 797 |
+| `mmCB_COLOR0_BASE_EXT` | 0x0390 | 912 |
+| `mmCB_COLOR0_ATTRIB2` | 0x03B0 | 944 |
+| `mmCB_COLOR0_ATTRIB3` | 0x03B8 | 952 |
+
+Mesa's GFX10 emit block agrees: it writes `R_028C60 + 0..13` with zeros in
+the PITCH/SLICE slots and puts `ATTRIB2`/`ATTRIB3` at `R_028EC0`/`R_028EE0`
+(= 944/952). Consequence for recorded evidence: Step Z's readback index 1
+was `CB_COLOR0_PITCH`, not `BASE_EXT`, so its zero is **not** a
+`BASE_EXT` round-trip. That claim is withdrawn; the Step-Z dump still
+proves BASE and `CB_SHADER_MASK`. `openagc_ib_dump_cb_bind_legacy_base_match`
+now scores only those two, and the five index names are corrected in the
+atlas.
+
+**Correction 2 — GFX10 color tiling is not a `GB_TILE_MODE` index.**
+Step AA was designed against the GFX6-8 rule that a color target needs
+`CB_COLOR0_ATTRIB.TILE_MODE_INDEX`. The cited gfx9+ path does not use it
+for color: `ac_descriptors.c` (`ac_init_gfx10_cb_surface`,
+`ac_set_mutable_cb_surface_fields`) programs
+`CB_COLOR0_ATTRIB3.COLOR_SW_MODE(surf->u.gfx9.swizzle_mode)`, where the
+swizzle mode is a fixed enum (`addrtypes.h`: `ADDR_SW_LINEAR = 0`,
+`ADDR_SW_256B_S = 1`, …), and the GFX10+ depth path likewise programs
+`DB_Z_INFO.SW_MODE`. A linear color/depth bind therefore needs no
+firmware table. Step AA's negative result stands as recorded, but it was
+not on the critical path for a linear bind, and another attempt at that
+read is **not** proposed.
+
+## Bounded experiment: full linear color bind + readback (Step AB)
+
+**Question.** Does one FW9.40 IB program all nine gc_10_1_0 color-bind
+registers for an owned linear 32×32 RGBA8 UNORM target — BASE,
+BASE_EXT (912), VIEW, INFO, ATTRIB, ATTRIB2 (944), ATTRIB3 (952),
+`CB_TARGET_MASK`, `CB_SHADER_MASK` — with field compositions taken from
+the cited gfx10 driver path, then read every one of them back with the
+Step-X-proven absolute `COPY_DATA` and return the programmed words?
+
+**Why it matters.** Stage 5's color-target gate needs owned bind words,
+not owned offsets. Steps X/Y/Z owned the readback vehicle and one BASE
+value; the dwords that describe format, tiling, slice, dimensions, and
+write masks were unowned, and Step AA's attempt to derive the tile mode
+from console state is a dead end (Correction 2). Composing those words
+from public cites and proving a clean console round-trip is the smallest
+step that owns the *set* the later DRAW work needs — without submitting a
+DRAW, and therefore without exercising (or risking) the addressing.
+
+**Cites.** Field shifts/masks: `gc_10_1_0_sh_mask.h`. Word composition:
+Mesa `ac_descriptors.c` (`ac_init_cb_surface`, `ac_init_gfx10_cb_surface`,
+`ac_set_mutable_cb_surface_fields`), `si_state.c`
+(`si_set_framebuffer_state` register set, `cb_target_mask` for
+`CB_TARGET_MASK`), `ac_formats.c` (`ac_translate_colorswap`). Enum values:
+`registers/gfx10.json` (ColorFormat `COLOR_8_8_8_8` = 10, SurfaceEndian
+`ENDIAN_NONE` = 0, SurfaceNumber `NUMBER_UNORM` = 0, SurfaceSwap
+`SWAP_STD` = 0 / `SWAP_ALT` = 1) and `addrlib/inc/addrtypes.h`
+(`ADDR_SW_LINEAR` = 0, `AddrResourceType` 2D = 1). The composed words for
+this payload are
+
+| Register | Word | Derivation |
+| --- | --- | --- |
+| `CB_COLOR0_BASE` | `(va >> 8)` | `ac_set_mutable_cb_surface_fields` |
+| `CB_COLOR0_BASE_EXT` | `(va >> 8) >> 32` | same |
+| `CB_COLOR0_VIEW` | 0 | `SLICE_START(0) \| SLICE_MAX(0) \| MIP_LEVEL(0)` |
+| `CB_COLOR0_INFO` | `0x00028028` | `FORMAT(10)<<2 \| BLEND_CLAMP \| SIMPLE_FLOAT \| SWAP_STD` |
+| `CB_COLOR0_ATTRIB` | 0 | `NUM_SAMPLES(0) \| NUM_FRAGMENTS(0)` |
+| `CB_COLOR0_ATTRIB2` | `(31 << 14) \| 31` | `MIP0_WIDTH/HEIGHT/MAX_MIP` |
+| `CB_COLOR0_ATTRIB3` | `0x01000000` | `RESOURCE_TYPE(2D=1) \| COLOR_SW_MODE(LINEAR=0)` |
+| `CB_TARGET_MASK` | `0x0000000F` | `colormask << (4 * 0)` |
+| `CB_SHADER_MASK` | `0x0000000F` | smoke-owned RGBA export mask |
+
+BGRA8 differs only in `COMP_SWAP` (`SWAP_ALT`), locked in CTest.
+
+**Why not DRAW / CB capture yet.** No DRAW is submitted, so this is a
+*composition* round-trip: it proves the register set, the write path, and
+the readback path, and it pins the exact words. Whether a bound linear
+target also *addresses* correctly under a draw is a separate question with
+its own failure modes (pitch alignment, swizzle semantics) and stays
+gated. The pin table stays empty; `evidence_qualified` stays 0.
+
+**Entry conditions.** Steps A–AA proven on `fw=0x9400008`; host composition
+and encode locked in CTest; payload ELF-validated; one push, no retries.
+
+**Payload contract (`tools/payload/ctxreg_cb_bind_full_eop.c`).**
+
+May do: open `/dev/gc`; map one arena; place a zeroed 4 KiB, 256-byte
+aligned color buffer (32×32 RGBA8 at a 128-byte, i.e. naturally aligned,
+linear pitch); submit **one** IB of
+`OPENAGC_PM4_CTXREG_CB_BIND_FULL_EOP_WORDS` (=105) dwords — nine
+`SET_CONTEXT_REG` pairs, nine absolute `COPY_DATA` reads of the same
+offsets, shared EOP+NOP trailer; poll the marker 30s; CPU-compare the nine
+readback dwords against the composed expectation;
+write `/data/prosperoai/openagc-ib-dump-ctxreg-cb-bind-full.log` (one
+`openagc-cb-bind-full-owned:` expect line plus the `openagc-ib-dump:`
+block); exit.
+
+Must not do: no DRAW; no shader; no `flat_load`; no CMASK/FMASK/DCC
+metadata words; no `CB_COLOR0_PITCH`/`SLICE` write; no second submit; no
+retry; no VideoOut; no queue-create/ACB; no malformed ELF.
+
+**Acceptance criteria.** `completed=1`, one log line set, and the nine
+readback dwords equal the composed expectation (`match=1`); no
+fault/hang/timeout in the live klog window (TCP 3232); loader still
+accepting connections afterward.
+
+**Status before push.** Composition, encoder words, `tag=ctxreg-cb-bind-full`
+parse, and the fail-closed `openagc_ib_dump_cb_bind_full_match` are locked
+in `test_openagc_gpu` (wrong kind, `completed=0`, zero BASE, and each
+single-word mismatch refuse). `OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT`
+stays 0; `hardware_qualified` stays false. One push, no retries.
+
+**Artifact.** `ctxreg_cb_bind_full_eop.elf`
+(`85ccfdf7c40c28a23186db931a124b563c0d5d1253bcdb583c9aa2cfc2e25edb`,
+111,336 bytes, ELF-validated, built from this revision with the payload
+SDK): exactly one push, klog attached across it, no re-push afterward.
+
+**Observed result (2026-09-25, FW `0x9400008`).** The dump
+`/data/prosperoai/openagc-ib-dump-ctxreg-cb-bind-full.log` records
+
+```
+openagc-cb-bind-full-owned: base_lo=02000240 base_ext=00000000 view=00000000
+  info=00028028 attrib=00000000 attrib2=0007c01f attrib3=01000000
+  target_mask=0000000f shader_mask=0000000f match=1
+openagc-ib-dump: tag=ctxreg-cb-bind-full fw=0x9400008 completed=1 words=9
+ib 02000240 00000000 00000000 00028028 00000000 0007c01f 01000000 0000000f 0000000f
+```
+
+for an arena color VA of `0x0000000200024000` (`base_lo` = `va >> 8`,
+`base_ext` = 0 at this VA) and a 32×32 RGBA8 view. Every one of the nine
+`COPY_DATA` readbacks equals the host composition for that VA and view —
+locked as a CTest fixture — so the write path, the readback path, and the
+composed words all agree on physical FW9.40. The reviewed klog windows
+(live drain on 3232 around the push) contain `GFX(pipe0) Game` for pid
+122, `exit_value=0`, and no panic/fault/hang/timeout marker; the loader
+still accepted connections on 9021 and FTP 2120 served the log afterward.
+This owns the gc_10_1_0 color-bind register *set* and its exact words for
+a linear single-sample single-mip RGBA8 target. It does **not** unlock
+CB/DB binds as executed state or DRAW: no `DRAW_INDEX_AUTO` was
+submitted, so the composition's addressing behaviour is untested, and
+`CB_COLOR0_PITCH`/`SLICE`/CMASK/FMASK/DCC base words were deliberately
+not written. `hardware_qualified` stays **false**;
+`OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT` stays **0**; the
+`openagc_ps5_policy` target stays deny-all. The next graphics-adjacent
+gate is a bounded attribute-less DRAW against an owned linear target with
+its own dead-man design (finite submit, marker, CPU pixel comparison, no
+retry); inventing CB capture pins remains out of scope.
+
+## Step AD: the NGG draw and what it settles
+
+### The pinned compiler now runs outside the CI image
+
+`tools/build-pinned-psbc.sh` refuses to run off Ubuntu, so the pinned sources
+were built directly: `git clone --branch v0.3.0` of ps5-opengl,
+`tools/fetch-sources.py` and `--verify-psbc`, then `make` with a macOS host
+copy of `toolchain/opengnm-psbc-host.mak` (clang, `-Dalloca=__builtin_alloca`,
+`-include dlfcn.h -D_DARWIN_C_SOURCE=1`, `-DBLAKE3_USE_NEON=0`). Our own
+`tools/verify_pinned_psbc.py sources` accepted the checkout afterwards: the
+release commit, both patch digests and the Mesa archive SHA-256 all matched,
+and `git diff` is clean — no source file was touched. The freshly built
+compiler emits `smoke.frag` **byte-identical** to the CI-pinned fixture
+(`sha256 28c56f1caab7a771…`), which is the evidence that this host build is
+faithful for the fixtures it produced.
+
+### The NGG vertex fixture and its cross-validation
+
+`tools/shaders/smoke.tri.vert` (a viewport-covering triangle placed from
+`gl_VertexIndex`) compiled with `--ngg --primitive-type triangle-list` gives
+`hardware_stage 3` and a linkage block of `{GE_CNTL 603 = 0x00010080,
+VGT_SHADER_STAGES_EN 725 = 0x00012010, SPI_SHADER_USER_VGPR_EN 610 = 0}`, an
+ES/GS shader register set at SH 200/201 (PGM) and 138/139 (GS RSRC), and
+`ngg_lds_layout {user_data_dword 2, value 512}`. Every one of those numbers
+matches a decoded public capture of Sony's own NGG triangle draw
+(`golden/c1-triangle` in PS5_Vulkan): the same 11 context offsets in the same
+order with the same values, `stages_en = 0x00012010`, and the same SH 200/201
+and 138/139 pairs carrying `0x422c0003`, `0x003fffff` and `0x0000ffff`. That
+decode also settles two things this repository had wrong: the context table's
+records are `{offset u32, value u32}`, and Sony's own draw does **not** put
+GE_CNTL in the context table.
+
+### What the console accepted
+
+`tools/payload/draw_point_ngg_eop.c` (IB: `include/openagc/pm4_ngg_draw_fw940.h`,
+tables from `tools/payload/gen_ngg_tables.py`) submits the NGG program as one
+context table load plus the SH registers, then one `DRAW_INDEX_AUTO`. One push
+per run, no retry, log over FTP. The best dump so far reads
+
+```
+openagc-ngg: 00012010 00010080 02000400 00000200 00000000 00000000 00000009 00000080 00000001
+```
+
+i.e. `VGT_SHADER_STAGES_EN = 0x00012010` (PRIMGEN_EN and ES_STAGE_REAL) and
+`GE_CNTL = 0x00010080` both landed and read back, the ES program address is
+the uploaded vertex code (`0x02000400` = `vert_code_va >> 8`), the LDS layout
+dword reads `0x200` at SH 142, and the three registers that can only come from
+the context **table** (`SPI_SHADER_COL_FORMAT = 9`, `SPI_PS_INPUT_ENA = 0x80`,
+`VGT_ESGS_RING_ITEMSIZE = 1`) all carry the pinned compiler's values — so the
+one context table load writes the whole program, GE_CNTL included once it is
+routed to the uconfig space. `completed=1`, no panic, no fault, no hang; the
+klog shows only `GFX(pipe0) Game` and `exit_value=1`.
+
+Two corrections came out of these runs. The uconfig space is **not**
+read-only: GE_CNTL is a uconfig register (Mesa's `mmGE_CNTL 0x225b` with
+`BASE_IDX 1`; the context offset 603 is a different register) and the plain
+`SET_UCONFIG_REG` wrote it. And the ES PGM readback has to go through the SH
+aperture (`0x2C00 + 200`); reading 200 through the context aperture returns
+the unrelated context register of that index.
+
+### The topology register still unresolved
+
+`VGT_PRIMITIVE_TYPE` (uconfig index 0x242 = 578) reads back zero after every
+form tried: the plain opcode, the indexed opcode radv uses for NGG
+(`radeon_set_uconfig_reg_idx(..., idx = 1, ...)`, `SET_UCONFIG_REG_INDEX`
+0x7a), the uconfig table load, and a `GRBM_GFX_INDEX = 0xe0000000` broadcast
+first (the register Mesa's CAM-bug comment names). Every other register the
+pinned compiler's NGG metadata names is now read back on the console with the
+compiler's value, so the topology path remains unresolved. With no input
+topology the primitive generator has nothing to assemble, which is consistent
+with the zero pixels every NGG run has produced. ps5-opengl's runtime never writes this
+register either — it hands the topology to `agc.link_shaders(...)`, i.e. the
+AGC linker folds it into the linkage — so the next gate is either a linkage
+slot that carries the input topology or a uconfig form the loader accepts.
+It is not established whether the write is dropped or whether an indexed
+uconfig register simply cannot be read back through an unindexed `COPY_DATA`;
+both readings fit the dump. Rasterization is therefore still unproven,
+`hardware_qualified` stays **false**, and the `openagc_ps5_policy` target
+stays deny-all.
+
+### Host correction and one bounded replay after the Step AD captures
+
+Review of the encoded IB found a separate, deterministic error: the payload
+sets `state.vertex_count = 3` for `smoke.tri.vert`, but the NGG encoder emitted
+`DRAW_INDEX_AUTO` with a literal count of **1**. A triangle list cannot
+assemble a triangle from that request, even if the topology register did
+land. The encoder now emits `state.vertex_count`, and the host test checks
+the packet against the requested count. The encoder also refuses a triangle
+list whose count is not a nonzero multiple of three, matching the public
+ps5-opengl draw-state contract at
+`src/platform/ps5_agc_native_runtime.c` (commit
+`6cb291abea32281571c49705735046425cf000fd`). Its native runtime hands
+the primitive type to `sceAgcLinkShaders` rather than writing the topology
+register itself.
+
+On 2026-09-26, the probe log was readable and `/data/libkernel-dump.log`
+still reported `fw=0x9400008`. One rebuilt SDK ELF passed
+`validate_elf.py` (110,544 bytes; SHA-256
+`ba2aededbc20090d2ae758ec337cf0f45dd36d9f22189b26920092ffe07488b8`)
+and was pushed once. Live klog recorded the payload as pid 183, a graphics
+client, then `exit_value=1`, with no panic, GPU fault, GPU hang, or ring
+timeout marker in that window. FTP log retrieval reported `completed=1`,
+`pixels=0`, `outside=0`, `guard=0`, `match=0`, and the same zero readback
+for `VGT_PRIMITIVE_TYPE`. This is a negative rasterization result for the
+corrected three-vertex draw; no retry was made. The next work is to compare
+the linker-produced register tables and packet sequence against the public
+native runtime. Neither the topology readback nor native Vulkan/OpenGL is
+qualified by this run, and PS5 policy remains deny-all.
+
+The public PS5_Vulkan C1 triangle capture (commit `3a6f00df`, region 0) now
+gives exact comparison records: 34 linker context entries at `0x5000/0x5100`,
+three uconfig entries at `0x6000`, and 16 COLOR0 entries at `0x0400`. The
+shared host frontend accepts those tables, and both Vulkan and OpenGL encode
+them identically in the equivalence test with a synthetic color address. The
+capture has `CB_COLOR0_INFO=0x00008828` and
+`CB_COLOR0_ATTRIB3=0x4dc6c000`, whereas the Step-AB linear bind used
+`0x00028028` and `0x01000000`. The capture's target is tiled, so those words
+are a comparison lead, not proof that either difference caused the FW9.40
+zero-pixel result. A FW9.40 linker capture, a confirmed pixel, and a completed
+fence are still missing; draw execution remains refused.

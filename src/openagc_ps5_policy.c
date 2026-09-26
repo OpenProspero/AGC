@@ -1550,6 +1550,44 @@ openagc_result openagc_frontend_pipeline_set_psbc_register_snapshot(
     return pipeline == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
+openagc_result openagc_frontend_pipeline_set_agc_linked_registers(
+    openagc_frontend_pipeline *pipeline,
+    const openagc_frontend_agc_register *context_records, uint32_t context_count,
+    const openagc_frontend_agc_register *uconfig_records, uint32_t uconfig_count)
+{
+    (void)context_records;
+    (void)context_count;
+    (void)uconfig_records;
+    (void)uconfig_count;
+    return pipeline == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_pipeline_set_agc_target_registers(
+    openagc_frontend_pipeline *pipeline,
+    const openagc_frontend_agc_register *target_records, uint32_t target_count)
+{
+    (void)target_records;
+    (void)target_count;
+    return pipeline == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_frontend_agc_build_linear_target(
+    openagc_frontend_kind kind, uint32_t native_format,
+    const openagc_frontend_agc_register *defaults, uint32_t default_count,
+    uint64_t target_va, uint32_t width, uint32_t height,
+    openagc_frontend_agc_register *out_records, uint32_t out_count)
+{
+    (void)kind;
+    (void)native_format;
+    (void)default_count;
+    (void)target_va;
+    (void)width;
+    (void)height;
+    (void)out_count;
+    return defaults == 0 || out_records == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT
+                                             : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
 openagc_result openagc_frontend_pipeline_get_host_register_program(
     const openagc_frontend_pipeline *pipeline, uint32_t *words, uint32_t max_words,
     uint32_t *out_count)
@@ -2747,6 +2785,27 @@ openagc_result openagc_vk_pipeline_set_psbc_register_snapshot(
     (void)vertex_metadata_size;
     (void)pixel_metadata;
     (void)pixel_metadata_size;
+    return pipeline == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_vk_pipeline_set_agc_linked_registers(
+    openagc_vk_pipeline *pipeline,
+    const openagc_frontend_agc_register *context_records, uint32_t context_count,
+    const openagc_frontend_agc_register *uconfig_records, uint32_t uconfig_count)
+{
+    (void)context_records;
+    (void)context_count;
+    (void)uconfig_records;
+    (void)uconfig_count;
+    return pipeline == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_vk_pipeline_set_agc_target_registers(
+    openagc_vk_pipeline *pipeline,
+    const openagc_frontend_agc_register *target_records, uint32_t target_count)
+{
+    (void)target_records;
+    (void)target_count;
     return pipeline == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 
@@ -4128,6 +4187,27 @@ openagc_result openagc_gl_program_set_psbc_register_snapshot(
     (void)vertex_metadata_size;
     (void)pixel_metadata;
     (void)pixel_metadata_size;
+    return program == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gl_program_set_agc_linked_registers(
+    openagc_gl_program *program,
+    const openagc_frontend_agc_register *context_records, uint32_t context_count,
+    const openagc_frontend_agc_register *uconfig_records, uint32_t uconfig_count)
+{
+    (void)context_records;
+    (void)context_count;
+    (void)uconfig_records;
+    (void)uconfig_count;
+    return program == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
+}
+
+openagc_result openagc_gl_program_set_agc_target_registers(
+    openagc_gl_program *program,
+    const openagc_frontend_agc_register *target_records, uint32_t target_count)
+{
+    (void)target_records;
+    (void)target_count;
     return program == 0 ? OPENAGC_ERROR_INVALID_ARGUMENT : OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
 }
 

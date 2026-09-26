@@ -156,12 +156,14 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     an arena VA + smoke `CB_SHADER_MASK`, then absolute COPY_DATA CB
     probe → `openagc-ib-dump-ctxreg-cb-bind.log`) only after host
     `openagc_pm4_encode_ctxreg_cb_bind_abs_eop`,
-    `openagc_ib_dump_cb_bind_owned_base_match`, and `tag=ctxreg-cb-bind`
+    `openagc_ib_dump_cb_bind_legacy_base_match`, and `tag=ctxreg-cb-bind`
     parse are locked. One push, no retries. No INFO/ATTRIB/VIEW/
     TARGET_MASK SET, no DRAW; the dump is not a CB_BIND pin.
     **Console result:** `completed=1`, readback BASE `02000240` =
-    `color_va >> 8`, `BASE_EXT=0`, `CB_SHADER_MASK=15` — owned BASE
-    round-trip proven; remaining bind dwords still unowned.
+    `color_va >> 8`, index 1 (then mislabelled `BASE_EXT`; actually
+    `CB_COLOR0_PITCH`, a GFX10 hole) `0`, `CB_SHADER_MASK=15` — owned BASE
+    round-trip proven; the `BASE_EXT` claim is withdrawn and the remaining
+    bind dwords were unowned until Step AB.
 27. `mmio_tilemode_dump_eop.c` (Step AA, read-only absolute COPY_DATA of
     `GB_ADDR_CONFIG` + `GB_TILE_MODE0..31` → `openagc-ib-dump-mmio-tilemode.log`)
     only after host `openagc_pm4_encode_mmio_tilemode_probe_eop`,
@@ -173,6 +175,43 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
     (`cccccccc`) — the `0x13xx` GB register block is not readable
     through this COPY_DATA encoding; tile-mode table stays unowned.
     Do not retry this encoding.
+28. `ctxreg_cb_bind_full_eop.c` (Step AB, SET the nine gc_10_1_0 linear
+    color-bind registers with cited compositions, then absolute
+    COPY_DATA readback → `openagc-ib-dump-ctxreg-cb-bind-full.log`) only
+    after host `openagc_pm4_encode_ctxreg_cb_bind_full_abs_eop`,
+    `openagc_ib_dump_cb_bind_full_match`, and `tag=ctxreg-cb-bind-full`
+    parse are locked. One push, no retries. No DRAW, no shader, no
+    CMASK/FMASK/DCC or PITCH/SLICE write; the dump owns the register set
+    for encode/record only, not a CB_BIND pin.
+    **Console result:** `completed=1` with all nine readback words equal
+    to the host composition (`match=1`); the dump is locked as a CTest
+    fixture. No fault/hang/timeout marker; loader still accepting.
+29. `draw_point_eop.c` (Step AC, one POINTLIST point into an owned linear
+    target → `openagc-ib-dump-draw-point.log`) only after host
+    `openagc_pm4_encode_draw_point_eop`,
+    `openagc_pm4_draw_point_scan`,
+    `openagc_ib_dump_draw_point_pixels_match`, and `tag=draw-point-eop`
+    parse are locked. One push, no retries. One vertex, one primitive, no
+    vertex/index/depth buffer, no second submit; the draw is scissored to
+    a 16x16 rect inside a 32x32 target with a 256 KiB arena around it.
+    **Console results (nine single-push runs):** the IB completes and the
+    console stays healthy in every run, but no pixel is written. Run 1
+    faulted in its own scan (fixed in-tree, `openagc_pm4_draw_point_scan`);
+    runs 2–6 added the cited state program (no bare `CLEAR_STATE`, viewport
+    scissor, `NUM_INSTANCES(1)`, `CB_COLOR_CONTROL`, the PS5_Vulkan /
+    ps5-opengl MSAA block) and a pre-draw probe; runs 7–10 read
+    `VGT_PRIMITIVE_TYPE` back through the uconfig aperture. Findings: a
+    fresh context has `CB_COLOR_CONTROL.MODE = CB_DISABLE` (colour writes
+    off — now fixed and read back), and **no write form reaches
+    `VGT_PRIMITIVE_TYPE`** (plain, index 1/2/4, with or without the GFX10
+    CAM workaround, and the `0x64` register-table load Sony's own
+    `sceAgcDcbSetUcRegistersIndirect` emits), so the VGT assembles
+    `DI_PT_NONE`. The legacy path is unreachable from a payload here; the
+    draw must be **NGG**, whose topology is the writable
+    `VGT_GS_OUT_PRIM_TYPE` context register and whose vertex-stage user data
+    goes to `SPI_SHADER_USER_DATA_GS_*` — that block and its SH-aperture
+    readback are verified on hardware (AC-11/AC-12). That needs
+    NGG-compiled PSBC fixtures (build-time compiler job).
 
 ## Toolchain result (2026-09-25)
 
@@ -203,8 +242,11 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
 | `ctxreg_cb_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,000 bytes; one nc push: `openagc-ib-dump tag=ctxreg-cb completed=0 words=8` (poison `cccccccc`); host parse `CTXREG_CB` `evidence_qualified=0`; relative COPY_DATA src not console-proven — do not retry |
 | `ctxreg_abs_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-abs completed=1 words=8` (`00000000`×6 + `ffffffff`×2); host parse `CTXREG_ABS` `evidence_qualified=0`; absolute COPY_DATA proven; not a CB_BIND pin |
 | `ctxreg_rt_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-rt completed=1 words=6` (`00000009 00000080 00000080 00008000 00000010 0000000f`); host parse `CTXREG_RT` `evidence_qualified=0`; SET_CONTEXT→abs COPY_DATA round-trip proven; not a CB_BIND pin |
-| `ctxreg_cb_bind_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-cb-bind completed=1 words=8` (`02000240 00000000 00000000 00000000 00000000 00000000 ffffffff 0000000f`); owned BASE/BASE_EXT round-trip proven; host parse `CTXREG_CB_BIND` `evidence_qualified=0`; not a CB_BIND pin |
+| `ctxreg_cb_bind_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,152 bytes; one nc push: `openagc-ib-dump tag=ctxreg-cb-bind completed=1 words=8` (`02000240 00000000 00000000 00000000 00000000 00000000 ffffffff 0000000f`); owned BASE round-trip + shader mask proven — index 1 is `CB_COLOR0_PITCH` (GFX10 hole), so the earlier "BASE_EXT" claim is withdrawn (see Step AB); host parse `CTXREG_CB_BIND` `evidence_qualified=0`; not a CB_BIND pin |
 | `mmio_tilemode_dump_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 110,184 bytes; one nc push: `openagc-ib-dump tag=mmio-tilemode completed=0 words=33` (all poison `cccccccc`); GB `0x13xx` MMIO not readable via this COPY_DATA encoding — do not retry; tile-mode table stays unowned |
+| `ctxreg_cb_bind_full_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,336 bytes (SHA-256 `85ccfdf7…2e25edb`); one nc push: `openagc-ib-dump tag=ctxreg-cb-bind-full completed=1 words=9` with `match=1` and `ib 02000240 00000000 00000000 00028028 00000000 0007c01f 01000000 0000000f 0000000f`; host parse `CTXREG_CB_BIND_FULL` `evidence_qualified=0`; not a CB_BIND pin |
+| `draw_point_eop.c` | sdk (`prospero-clang`) | Builds: FreeBSD PIE, 111,424 bytes (SHA-256 `ebe7168d…c7abae379`); one nc push submitted the 212-dword draw IB, then the payload faulted in its own acceptance scan (page fault one page past its arena) before writing the log — no pixel evidence, rasterization unproven; console healthy, not re-pushed; fixed build `b9adc35e…457dc623b` awaits a reviewed run |
+| `draw_point_ngg_eop.c` | sdk (`prospero-clang`) | 2026-09-26: rebuilt after correcting `DRAW_INDEX_AUTO` from one vertex to three; ELF validated, 110,544 bytes, SHA-256 `ba2aededbc20090d2ae758ec337cf0f45dd36d9f22189b26920092ffe07488b8`; one push on FW `0x9400008` returned `completed=1 pixels=0 outside=0 guard=0 match=0`; live klog pid 183 exited 1 without GPU fault/hang/timeout; no retry, rasterization still unproven |
 
 Firmware identity on the console: `fw=0x9400008` (9.40) from
 `/data/libkernel-dump.log`.

@@ -23,7 +23,10 @@
 
 #define OPENAGC_PM4_OP_SET_CONTEXT_REG 0x69u
 #define OPENAGC_PM4_OP_SET_SH_REG 0x76u
+#define OPENAGC_PM4_OP_SET_UCONFIG_REG 0x79u
 #define OPENAGC_PM4_OP_DRAW_INDEX_AUTO 0x2du
+/* GFX10 uconfig writes use the packet reset-filter-CAM bit. */
+#define OPENAGC_PM4_RESET_FILTER_CAM (1u << 2)
 
 #define OPENAGC_PM4_SET_CONTEXT_WORDS(value_count) ((value_count) + 2u)
 #define OPENAGC_PM4_SET_SH_GFX_WORDS(value_count) ((value_count) + 2u)
@@ -44,6 +47,27 @@ static inline void openagc_pm4_encode_set_context_reg(uint32_t offset,
     }
 }
 
+/*
+ * SET_CONTEXT_REG with the packet's index nibble, the form Mesa's
+ * `radeon_opt_set_context_reg_idx(..., idx, ...)` emits: the offset word
+ * becomes `offset | (idx << 28)` (`__ac_cmdbuf_set_reg_seq`).
+ */
+static inline void openagc_pm4_encode_set_context_reg_idx(uint32_t offset,
+                                                         uint32_t index,
+                                                         uint32_t value_count,
+                                                         const uint32_t *values,
+                                                         uint32_t *words)
+{
+    uint32_t i;
+
+    words[0] = openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG,
+                                   OPENAGC_PM4_SET_CONTEXT_WORDS(value_count), 0u);
+    words[1] = (offset & 0xffffu) | ((index & 0xfu) << 28);
+    for (i = 0u; i < value_count; ++i) {
+        words[2u + i] = values[i];
+    }
+}
+
 /* Graphics SET_SH_REG (compute-bank bit clear). */
 static inline void openagc_pm4_encode_set_sh_graphics(uint32_t offset,
                                                       uint32_t value_count,
@@ -58,6 +82,17 @@ static inline void openagc_pm4_encode_set_sh_graphics(uint32_t offset,
     for (i = 0u; i < value_count; ++i) {
         words[2u + i] = values[i];
     }
+}
+
+/* One plain SET_UCONFIG_REG. The caller validates the register-space offset. */
+static inline void openagc_pm4_encode_set_uconfig_reg(uint32_t offset,
+                                                       uint32_t value,
+                                                       uint32_t *words)
+{
+    words[0] = openagc_pm4_header3(OPENAGC_PM4_OP_SET_UCONFIG_REG, 3u, 0u) |
+               OPENAGC_PM4_RESET_FILTER_CAM;
+    words[1] = offset;
+    words[2] = value;
 }
 
 /*

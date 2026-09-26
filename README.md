@@ -20,11 +20,13 @@ identity.
 | Images / clears | Host-linear RGBA8/BGRA8; CPU clear fills; WRITE_DATA tiling ≤32×8 |
 | Compute (narrow) | Console-proven `store_const` and `store_span` (1–8 lanes) via host CPU path |
 | Shader intake | Unverified fixtures **and** pin-checked `OPENGNM_PSBC` envelopes (`psbc_envelope=1`) |
-| Pipelines | Structural plans; host SET_CONTEXT/SET_SH (+ vertex linkage) snapshot from PSBC |
+| Pipelines | Structural plans; shared host PSBC and AGC linker-register snapshots (no DRAW) |
+| Color-buffer bind words | Host-composed nine-register linear RGBA8 bind (Step AB), console round-trip proven for encode/record only |
 | Vulkan / OpenGL | Shared frontend core; equivalent work lands on the same backend bytes |
 | Attribute-less draws | Bind + draw recorded; still `NOT_READY` (no CB/DRAW / no `gpu_executable`) |
+| First console DRAW | Step AD NGG IB runs and completes, including a corrected three-vertex triangle, but writes no pixel; topology path remains unresolved and rasterization unproven |
 | Draws / general dispatch | Refused (`NOT_READY` from compiler gate) |
-| Presentation / swapchain | Refused until a display path exists |
+| Presentation / swapchain | Native GPU swapchain refused; experimental CPU VideoOut presenter added for QuickJS |
 | `compiler_verified` / `gpu_executable` | Always **0** on accepted plans today |
 
 ## PS5 policy (fail-closed until qualified)
@@ -32,12 +34,14 @@ identity.
 | Area | `OpenAGC::ps5_policy` |
 | --- | --- |
 | Same public symbols | Fail closed: `UNSUPPORTED_FIRMWARE` while FW is unqualified |
-| Host OpenAGC library | Must **not** be linked into a PS5 image |
+| Full host GPU library | Must **not** be linked into a PS5 image; the command recorder is built separately for the VideoOut presenter |
 | FW9.40 | **Not** hardware-qualified yet; no submit path in policy |
 
 Unknown firmware is not qualified either. Firmware fields in descriptors
-are diagnostic hints, not authorization. Policy opens only when
-evidence qualifies a path — deny-all is the gate, not the end state.
+are diagnostic hints, not authorization. The SDK QuickJS host uses
+`openagc_ps5_videoout.c` to draw the recorder's frames on the CPU and submit
+them to native VideoOut. This path has offline tests but awaits console display
+confirmation. Vulkan/OpenGL GPU execution remains explicitly gated.
 
 ## Stage gates (short)
 
@@ -49,8 +53,9 @@ See [docs/roadmap.md](docs/roadmap.md) for the full staged plan.
      intaken as structural (`psbc_envelope=1`); host register programs
      include context, shader, and vertex linkage pairs; `require_compiler`
      still returns `NOT_READY`; nothing sets `gpu_executable`.
-   - **Draw / CB/DB PM4**: no independently owned FW9.40 color-buffer or
-     DRAW capture in-tree; public AMD opcodes alone are not enough.
+   - **Draw / CB/DB PM4**: a nine-register linear color bind and NGG draw
+     complete on FW9.40, but no fragment writes a pixel. Linker output,
+     target defaults, and the native packet path still need comparison.
 3. **Stages 6–7** — native tiling / coherency and presentation: refused
    until separate evidence.
 
@@ -114,6 +119,17 @@ policy-only builds, use `-DOPENAGC_PS5_POLICY_ONLY=ON` and link only
   No DRAW packets.
 - Attribute-less plans (`vertex_input_mask == 0`) draw without a VBO;
   both frontends still stop at `NOT_READY`.
+- After `bind_psbc_code`, both host frontends can intake the 34 context
+  and three uconfig records emitted by AGC's linker through the shared
+  `set_agc_linked_registers` path. These records are retained in host
+  snapshots only; no linker capture or native draw is qualified.
+- Both host frontends can prepend the public 16-record AGC COLOR0 target
+  shape through `set_agc_target_registers` after linking. The shared core
+  validates the register order and a nonzero caller-owned target base.
+  The snapshot remains host-only; PS5 policy refuses the call.
+- `openagc_frontend_agc_build_linear_target` derives those records for an
+  aligned RGBA8/BGRA8 linear image from caller-supplied AGC defaults. It
+  validates the 256-byte row pitch and address span once for both frontends.
 - Build-time compiler job: [`.github/workflows/build-psbc-host.yml`](.github/workflows/build-psbc-host.yml)
   (manual-only). Details: [docs/shader-toolchain.md](docs/shader-toolchain.md).
 
@@ -137,6 +153,8 @@ opening a compute queue or flipping `gpu_executable`.
 | [shader-toolchain.md](docs/shader-toolchain.md) | PSBC pin, reflection, intake gates |
 | [hardware-evidence.md](docs/hardware-evidence.md) | Console step evidence and limits |
 
-Public PS5_Vulkan / ps5-opengl docs and ProsperoAI notes were consulted
-as **knowledge references** only. No third-party source, SDK, firmware,
-or proprietary blob is vendored or linked.
+Public PS5_Vulkan / ps5-opengl and Mesa work is used for register and
+runtime contracts. The next native stage will reuse compatible public
+components where that speeds homebrew integration, with provenance and
+licenses retained. No third-party source, SDK, firmware, or proprietary
+blob is currently vendored or linked.

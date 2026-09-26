@@ -128,8 +128,46 @@ PSBC `context_registers` / `shader_registers` pairs, and from vertex
 linkage fields (`ge_cntl`, `stages_en`, `user_vgpr_en`) when present.
 Tests in `tests/test_openagc_psbc_adapter.c` exercise the smoke.vert /
 smoke.frag pairs. `DRAW_INDEX_AUTO` (0x2D) is cited only; the adapter
-never emits it. Console CB/DB bind and draw remain blocked without an
-independently owned FW9.40 IB capture.
+never emits it. Step AD shows an NGG draw packet completing on console,
+but no pixel was written; executable draw remains blocked.
+
+### AGC linker records through the shared frontend
+
+The public ps5-opengl v0.3.0 native runtime calls `sceAgcLinkShaders` with
+the primitive type, then passes 34 linker-produced context records to its
+context command and three uconfig records to its uconfig command before the
+stage SH records. OpenAGC now accepts that record shape through
+`openagc_frontend_pipeline_set_agc_linked_registers` after PSBC code is
+bound. The Vulkan and OpenGL wrappers call this same core function. It
+checks record counts and register-space bounds, copies the records, and
+rebuilds the host program when code VAs change. The host snapshot orders
+linker context, vertex and pixel context, linker uconfig, then vertex and
+pixel SH records. The uconfig packets carry the GFX10 reset-filter-CAM bit.
+
+The public PS5_Vulkan C1 triangle capture also gives a 16-register COLOR0
+target table. `set_agc_target_registers` prepends that shape to the shared
+host snapshot after linking, using a target base supplied by the caller.
+The equivalence test uses the public defaults with a synthetic base. This
+does not submit GPU commands, qualify a render target, or bypass PS5's
+deny-all policy.
+
+The equivalence test uses the linker and COLOR0 records from the public
+PS5_Vulkan C1 triangle capture (commit `3a6f00df`, region 0, chunks
+`0x5000`, `0x5100`, `0x6000`, `0x0400`) with a synthetic target base. This
+proves the two host frontends encode the same captured shape. It does not
+prove those values apply to FW9.40; no FW9.40 `sceAgcLinkShaders` capture is
+owned. The adapter emits no DRAW, sets no executable capability, and the PS5
+policy stub refuses it.
+
+`openagc_frontend_agc_build_linear_target` uses the public target patch
+formula with caller-supplied AGC defaults to make a one-sample linear
+RGBA8/BGRA8 COLOR0 table. Both native format dialects enter the same
+composer. It refuses unsupported formats, unaligned or overflowing GPU VAs,
+and widths that cannot form 256-byte rows. The public C1 tiled default
+produces `INFO=0x8028` for RGBA8 and `0x8828` for BGRA8 after format
+patching; the host test checks both and the linear ATTRIB3 result. A target
+write mask and the rest of a draw state are still separate, and no console
+execution is qualified by this builder.
 
 ## Typed reflection and pin-checked intake (still non-executable)
 

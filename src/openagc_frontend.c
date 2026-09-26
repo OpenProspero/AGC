@@ -187,6 +187,14 @@ struct openagc_frontend_pipeline {
     uint64_t psbc_vertex_code_bytes;
     uint64_t psbc_pixel_code_bytes;
     uint32_t psbc_code_bound;
+    uint32_t agc_linked;
+    uint32_t agc_target;
+    openagc_frontend_agc_register
+        agc_target_context[OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT];
+    openagc_frontend_agc_register
+        agc_link_context[OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT];
+    openagc_frontend_agc_register
+        agc_link_uconfig[OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT];
 };
 
 static void openagc_frontend_pipeline_release_psbc_code(openagc_frontend_pipeline *pipeline);
@@ -3628,6 +3636,139 @@ openagc_result openagc_frontend_pipeline_get_info(
     return OPENAGC_OK;
 }
 
+static uint32_t openagc_frontend_agc_linked_program_dwords(
+    const openagc_psbc_reflection *vertex, const openagc_psbc_reflection *pixel,
+    uint32_t with_target)
+{
+    return 3u * (with_target * OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT +
+                 OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT +
+                 OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT +
+                 vertex->context_count + pixel->context_count +
+                 vertex->shader_reg_count + pixel->shader_reg_count);
+}
+
+static const uint16_t
+    openagc_frontend_agc_target_offsets[OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT] = {
+        0x318u, 0x31bu, 0x31cu, 0x31du, 0x31eu, 0x31fu, 0x321u, 0x323u,
+        0x324u, 0x325u, 0x390u, 0x398u, 0x3a0u, 0x3a8u, 0x3b0u, 0x3b8u
+    };
+
+openagc_result openagc_frontend_agc_build_linear_target(
+    openagc_frontend_kind kind, uint32_t native_format,
+    const openagc_frontend_agc_register *defaults, uint32_t default_count,
+    uint64_t target_va, uint32_t width, uint32_t height,
+    openagc_frontend_agc_register *out_records, uint32_t out_count)
+{
+    openagc_graphics_format format;
+    uint32_t i;
+    uint32_t swap;
+    openagc_result result;
+
+    if (defaults == NULL || out_records == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (default_count != OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (out_count < OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT) {
+        return OPENAGC_ERROR_CAPACITY;
+    }
+    for (i = 0u; i < default_count; ++i) {
+        if (defaults[i].offset != openagc_frontend_agc_target_offsets[i]) {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+    }
+    result = openagc_frontend_translate_format(kind, native_format, &format);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    if (format == OPENAGC_GRAPHICS_FORMAT_RGBA8_UNORM) {
+        swap = 0u;
+    } else if (format == OPENAGC_GRAPHICS_FORMAT_BGRA8_UNORM) {
+        swap = 1u;
+    } else {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (target_va == 0u || (target_va & 255u) != 0u ||
+        (target_va >> 48) != 0u || width == 0u || height == 0u ||
+        width > 8192u || height > 16384u || (width & 63u) != 0u) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+    if ((uint64_t)width * height * 4u > (UINT64_C(1) << 48) - target_va) {
+        return OPENAGC_ERROR_OUT_OF_RANGE;
+    }
+
+    memmove(out_records, defaults,
+            sizeof(*out_records) * OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT);
+    out_records[0].value = (uint32_t)(target_va >> 8);
+    out_records[1].value &= 0xfc001fffu;
+    /* Public PS5_Vulkan target path: FORMAT=8_8_8_8, UNORM, COMP_SWAP,
+     * BLEND_CLAMP. AGC's captured SIMPLE_FLOAT bit is bit 15 here. */
+    out_records[2].value =
+        (out_records[2].value &
+         ~((0x1fu << 2) | (0x7u << 8) | (0x3u << 11) |
+           0x8000u | 0x10000u | 0x40000u | 0x10000000u | 0x4000u)) |
+        (10u << 2) | (swap << 11) | 0x8000u;
+    out_records[3].value &= ~(0x7000u | 0x38000u);
+    out_records[4].value =
+        (out_records[4].value & ~(0x60u | 0x0cu | 0x00100200u | 0x80000u)) |
+        0x48u;
+    out_records[5].value = 0u;
+    out_records[6].value = 0u;
+    out_records[9].value = 0u;
+    out_records[10].value =
+        (out_records[10].value & 0xffffff00u) | (uint32_t)((target_va >> 40) & 0xffu);
+    out_records[11].value &= 0xffffff00u;
+    out_records[12].value &= 0xffffff00u;
+    out_records[13].value &= 0xffffff00u;
+    out_records[14].value = (height - 1u) | ((width - 1u) << 14);
+    out_records[15].value =
+        (out_records[15].value & ~(0x1fffu | 0x7c000u | 0x03000000u | 0x44000000u)) |
+        0x01000000u | 0x44000000u;
+    return OPENAGC_OK;
+}
+
+static uint32_t openagc_frontend_encode_agc_linked_program(
+    const openagc_psbc_reflection *vertex, const openagc_psbc_reflection *pixel,
+    const openagc_frontend_agc_register *target_records,
+    const openagc_frontend_agc_register *context_records,
+    const openagc_frontend_agc_register *uconfig_records, uint32_t *words)
+{
+    uint32_t cursor = 0u;
+    uint32_t i;
+
+    if (target_records != NULL) {
+        for (i = 0u; i < OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT; ++i) {
+            openagc_pm4_encode_set_context_reg(target_records[i].offset, 1u,
+                                               &target_records[i].value, words + cursor);
+            cursor += 3u;
+        }
+    }
+    for (i = 0u; i < OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT; ++i) {
+        openagc_pm4_encode_set_context_reg(context_records[i].offset, 1u,
+                                           &context_records[i].value, words + cursor);
+        cursor += 3u;
+    }
+    cursor += openagc_pm4_encode_psbc_context_pairs(
+        vertex->context_offsets, vertex->context_values, vertex->context_count,
+        words + cursor);
+    cursor += openagc_pm4_encode_psbc_context_pairs(
+        pixel->context_offsets, pixel->context_values, pixel->context_count,
+        words + cursor);
+    for (i = 0u; i < OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT; ++i) {
+        openagc_pm4_encode_set_uconfig_reg(uconfig_records[i].offset,
+                                           uconfig_records[i].value, words + cursor);
+        cursor += 3u;
+    }
+    cursor += openagc_pm4_encode_psbc_shader_pairs(
+        vertex->shader_offsets, vertex->shader_values, vertex->shader_reg_count,
+        words + cursor);
+    cursor += openagc_pm4_encode_psbc_shader_pairs(
+        pixel->shader_offsets, pixel->shader_values, pixel->shader_reg_count,
+        words + cursor);
+    return cursor;
+}
+
 openagc_result openagc_frontend_pipeline_set_psbc_register_snapshot(
     openagc_frontend_pipeline *pipeline, const uint8_t *vertex_metadata,
     uint32_t vertex_metadata_size, const uint8_t *pixel_metadata,
@@ -3731,6 +3872,176 @@ openagc_result openagc_frontend_pipeline_set_psbc_register_snapshot(
     pipeline->psbc_vertex_code_va = 0u;
     pipeline->psbc_pixel_code_va = 0u;
     pipeline->psbc_pgm_patched = 0u;
+    pipeline->agc_linked = 0u;
+    pipeline->agc_target = 0u;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_frontend_pipeline_set_agc_linked_registers(
+    openagc_frontend_pipeline *pipeline,
+    const openagc_frontend_agc_register *context_records, uint32_t context_count,
+    const openagc_frontend_agc_register *uconfig_records, uint32_t uconfig_count)
+{
+    openagc_psbc_reflection vertex;
+    openagc_psbc_reflection pixel;
+    uint32_t *words;
+    uint32_t count;
+    uint32_t i;
+    openagc_result result;
+
+    if (pipeline == NULL || context_records == NULL || uconfig_records == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (context_count != OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT ||
+        uconfig_count != OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (pipeline->psbc_code_bound == 0u || pipeline->psbc_vertex_metadata == NULL ||
+        pipeline->psbc_pixel_metadata == NULL) {
+        return OPENAGC_ERROR_NOT_READY;
+    }
+    for (i = 0u; i < context_count; ++i) {
+        if (context_records[i].offset >= 0x400u) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+    }
+    for (i = 0u; i < uconfig_count; ++i) {
+        if (uconfig_records[i].offset >= 0x400u) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+    }
+    result = openagc_psbc_metadata_parse_reflection(
+        pipeline->psbc_vertex_metadata, pipeline->psbc_vertex_metadata_size, &vertex);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_metadata_parse_reflection(
+        pipeline->psbc_pixel_metadata, pipeline->psbc_pixel_metadata_size, &pixel);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    for (i = 0u; i < vertex.context_count; ++i) {
+        if (vertex.context_offsets[i] >= 0x400u) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+    }
+    for (i = 0u; i < pixel.context_count; ++i) {
+        if (pixel.context_offsets[i] >= 0x400u) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+    }
+    for (i = 0u; i < vertex.shader_reg_count; ++i) {
+        if (vertex.shader_offsets[i] >= 0x400u) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+    }
+    for (i = 0u; i < pixel.shader_reg_count; ++i) {
+        if (pixel.shader_offsets[i] >= 0x400u) {
+            return OPENAGC_ERROR_OUT_OF_RANGE;
+        }
+    }
+    result = openagc_psbc_reflection_patch_pgm_va(&vertex, pipeline->psbc_vertex_code_va);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_reflection_patch_pgm_va(&pixel, pipeline->psbc_pixel_code_va);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    count = openagc_frontend_agc_linked_program_dwords(&vertex, &pixel,
+                                                       pipeline->agc_target);
+    if (count == 0u ||
+        count > OPENAGC_PM4_WRITE_DATA_MAX_GRID_EOP_WORDS -
+                    OPENAGC_PM4_EOP_WITH_NOP_WORDS) {
+        return OPENAGC_ERROR_CAPACITY;
+    }
+    words = (uint32_t *)malloc((size_t)count * sizeof(uint32_t));
+    if (words == NULL) {
+        return OPENAGC_ERROR_OUT_OF_MEMORY;
+    }
+    if (openagc_frontend_encode_agc_linked_program(
+            &vertex, &pixel,
+            pipeline->agc_target ? pipeline->agc_target_context : NULL,
+            context_records, uconfig_records, words) != count) {
+        free(words);
+        return OPENAGC_ERROR_INTEGRITY;
+    }
+    memcpy(pipeline->agc_link_context, context_records, sizeof(pipeline->agc_link_context));
+    memcpy(pipeline->agc_link_uconfig, uconfig_records, sizeof(pipeline->agc_link_uconfig));
+    free(pipeline->host_register_program);
+    pipeline->host_register_program = words;
+    pipeline->host_register_program_dwords = count;
+    pipeline->agc_linked = 1u;
+    return OPENAGC_OK;
+}
+
+openagc_result openagc_frontend_pipeline_set_agc_target_registers(
+    openagc_frontend_pipeline *pipeline,
+    const openagc_frontend_agc_register *target_records, uint32_t target_count)
+{
+    openagc_psbc_reflection vertex;
+    openagc_psbc_reflection pixel;
+    uint32_t *words;
+    uint32_t count;
+    uint32_t i;
+    openagc_result result;
+
+    if (pipeline == NULL || target_records == NULL) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    if (target_count != OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT) {
+        return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+    }
+    if (pipeline->agc_linked == 0u || pipeline->psbc_code_bound == 0u) {
+        return OPENAGC_ERROR_NOT_READY;
+    }
+    for (i = 0u; i < target_count; ++i) {
+        if (target_records[i].offset != openagc_frontend_agc_target_offsets[i]) {
+            return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
+        }
+    }
+    if (target_records[0].value == 0u) {
+        return OPENAGC_ERROR_INVALID_ARGUMENT;
+    }
+    result = openagc_psbc_metadata_parse_reflection(
+        pipeline->psbc_vertex_metadata, pipeline->psbc_vertex_metadata_size, &vertex);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_metadata_parse_reflection(
+        pipeline->psbc_pixel_metadata, pipeline->psbc_pixel_metadata_size, &pixel);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_reflection_patch_pgm_va(&vertex, pipeline->psbc_vertex_code_va);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    result = openagc_psbc_reflection_patch_pgm_va(&pixel, pipeline->psbc_pixel_code_va);
+    if (result != OPENAGC_OK) {
+        return result;
+    }
+    count = openagc_frontend_agc_linked_program_dwords(&vertex, &pixel, 1u);
+    if (count > OPENAGC_PM4_WRITE_DATA_MAX_GRID_EOP_WORDS -
+                    OPENAGC_PM4_EOP_WITH_NOP_WORDS) {
+        return OPENAGC_ERROR_CAPACITY;
+    }
+    words = (uint32_t *)malloc((size_t)count * sizeof(uint32_t));
+    if (words == NULL) {
+        return OPENAGC_ERROR_OUT_OF_MEMORY;
+    }
+    if (openagc_frontend_encode_agc_linked_program(
+            &vertex, &pixel, target_records, pipeline->agc_link_context,
+            pipeline->agc_link_uconfig, words) != count) {
+        free(words);
+        return OPENAGC_ERROR_INTEGRITY;
+    }
+    memcpy(pipeline->agc_target_context, target_records,
+           sizeof(pipeline->agc_target_context));
+    free(pipeline->host_register_program);
+    pipeline->host_register_program = words;
+    pipeline->host_register_program_dwords = count;
+    pipeline->agc_target = 1u;
     return OPENAGC_OK;
 }
 
@@ -3812,8 +4123,14 @@ openagc_result openagc_frontend_pipeline_patch_psbc_pgm_vas(
     if (result != OPENAGC_OK) {
         return result;
     }
-    capacity = openagc_psbc_reflection_register_program_dwords(&vertex_reflection) +
-               openagc_psbc_reflection_register_program_dwords(&pixel_reflection);
+    if (pipeline->agc_linked != 0u) {
+        capacity = openagc_frontend_agc_linked_program_dwords(&vertex_reflection,
+                                                              &pixel_reflection,
+                                                              pipeline->agc_target);
+    } else {
+        capacity = openagc_psbc_reflection_register_program_dwords(&vertex_reflection) +
+                   openagc_psbc_reflection_register_program_dwords(&pixel_reflection);
+    }
     if (capacity == 0u || capacity != pipeline->host_register_program_dwords) {
         return OPENAGC_ERROR_INTEGRITY;
     }
@@ -3821,9 +4138,18 @@ openagc_result openagc_frontend_pipeline_patch_psbc_pgm_vas(
     if (words == NULL) {
         return OPENAGC_ERROR_OUT_OF_MEMORY;
     }
-    word_count = openagc_psbc_reflection_encode_register_program(&vertex_reflection, words);
-    word_count += openagc_psbc_reflection_encode_register_program(&pixel_reflection,
-                                                                 words + word_count);
+    if (pipeline->agc_linked != 0u) {
+        word_count = openagc_frontend_encode_agc_linked_program(
+            &vertex_reflection, &pixel_reflection,
+            pipeline->agc_target ? pipeline->agc_target_context : NULL,
+            pipeline->agc_link_context,
+            pipeline->agc_link_uconfig, words);
+    } else {
+        word_count = openagc_psbc_reflection_encode_register_program(&vertex_reflection,
+                                                                       words);
+        word_count += openagc_psbc_reflection_encode_register_program(
+            &pixel_reflection, words + word_count);
+    }
     if (word_count != capacity) {
         free(words);
         return OPENAGC_ERROR_INTEGRITY;

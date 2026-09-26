@@ -14,9 +14,10 @@ Rules this roadmap obeys:
 2. A capability is real only when a test proves the accepted **and**
    refused paths. Refusals are first-class results, never silent no-ops
    that look like success.
-3. No reference project (PS5_Vulkan, ps5-opengl, Mesa, OpenGNM, public
-   OpenAGC) is vendored, linked, or copied. Public work is read as
-   architectural research only.
+3. Reuse public PS5_Vulkan, ps5-opengl, Mesa, and OpenGNM work when it
+   shortens the path to a usable homebrew driver. Preserve provenance and
+   license notices for any code brought in; cross-check register values
+   against owned captures before enabling hardware paths.
 4. `src/openagc_ps5_policy.c` stays fail-closed for unqualified
    firmware. Every new public symbol gets a deny stub there until a
    reviewed evidence path opens it; the host library never appears in
@@ -309,7 +310,51 @@ Blocked by two independent gates:
    readable through that `COPY_DATA` encoding — **do not retry it**. The
    tile-mode table stays unowned, `CB_COLOR0_ATTRIB.TILE_MODE_INDEX`
    stays unresolved, and any next attempt needs a distinct reviewed
-   public cite, not another address tweak.
+   public cite, not another address tweak. Step AB corrected the atlas
+   from `gc_10_1_0_offset.h` (`CB_COLOR0_BASE_EXT` = 912, `ATTRIB2` =
+   944, `ATTRIB3` = 952; 793/794 are `PITCH`/`SLICE` holes, so Step Z's
+   index-1 "BASE_EXT" claim is withdrawn) and owns the full nine-register
+   linear color bind for an RGBA8 target: `openagc_gfx10_cb_bind_offsets`
+   + `openagc_gfx10_cb_bind_linear_8888_words` compose
+   BASE/BASE_EXT/VIEW/INFO/ATTRIB/ATTRIB2/ATTRIB3/TARGET_MASK/
+   SHADER_MASK from cited field encodings, the payload reads all nine
+   back, and the console dump is locked as a CTest fixture
+   (`tag=ctxreg-cb-bind-full`,
+   `openagc_ib_dump_cb_bind_full_match`). GFX10 color/depth tiling is a
+   per-surface swizzle-mode enum in `ATTRIB3.COLOR_SW_MODE` /
+   `DB_Z_INFO.SW_MODE`, not a `GB_TILE_MODE` index, so the Step-AA
+   negative is off the linear-bind path. This binds no DRAW: the bind's
+   addressing is untested, the pin table stays empty, and the next gate
+   is a bounded attribute-less DRAW against an owned linear target.
+   Step AC adds that draw vehicle (`pm4_draw_fw940.h`): CLEAR_STATE, the
+   cited rasterizer state, a `SET_UCONFIG_REG` POINTLIST topology, one
+   `DRAW_INDEX_AUTO` vertex, the smoke program, and the Step-AB bind, with
+   `openagc_pm4_draw_point_scan` as the shared, tested acceptance scan and
+   `openagc_ib_dump_draw_point_pixels_match` as the fail-closed pixel
+   check. Nine single-push runs took it from a payload defect to a fully
+   cited state program whose writes the pre-draw probe verifies, and they
+   found that a fresh console context has `CB_COLOR_CONTROL.MODE =
+   CB_DISABLE` (colour writes off, now written as `CB_NORMAL` and read
+   back). Step AD then used NGG-compiled PSBC fixtures and confirmed the
+   ES/GS program, linkage, and context table readbacks. Its first IB had
+   a one-vertex count for a triangle list; that is fixed and one corrected
+   three-vertex IB completed on FW9.40, but still wrote no pixel.
+   `VGT_PRIMITIVE_TYPE` continues to read zero while `GE_CNTL` proves at
+   least one uconfig write succeeds. The native ps5-opengl runtime passes
+   topology through `sceAgcLinkShaders`; comparison with its linker output
+   is the next graphics gate. Rasterization is **not** yet proven;
+   `gpu_executable`, the pin tables, and deny-all PS5 policy are unchanged.
+   A host-only intake for the public AGC linker's 34 context and three
+   uconfig records now sits in the shared frontend core; both VK and GL
+   wrappers use it, and a host equivalence test now checks all 34 context,
+   three uconfig, and 16 COLOR0 records from PS5_Vulkan's public C1 capture
+   with a synthetic target address; `gpu_executable` remains zero. No
+   FW9.40 linker record capture has been qualified yet.
+   A shared host-only COLOR0 composer now derives one-sample linear
+   RGBA8/BGRA8 records from caller-owned AGC defaults and a bounded image
+   address; both frontend format dialects take the same path. The target
+   write mask, draw-state sequence, and rasterization gate remain open.
+   See [hardware-evidence.md](hardware-evidence.md#step-ad-the-ngg-draw-and-what-it-settles).
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
@@ -337,21 +382,22 @@ capability honestly. Fail-closed constants live in
 
 ## Stage 7 — presentation
 
-Vulkan swapchain and GL window-system integration need a display path
-that does not exist here (no VideoOut, no flip, no display controller).
-Presentation stays refused (`OPENAGC_PRESENTATION_SUPPORTED=0`,
+Vulkan swapchain and GL window-system integration still need a GPU display
+path. The experimental CPU VideoOut presenter in `src/openagc_ps5_videoout.c`
+accepts only recorder clear and rectangle frames; it has not been confirmed
+on console. GPU presentation stays refused (`OPENAGC_PRESENTATION_SUPPORTED=0`,
 `OPENAGC_VIDEOOUT_EVIDENCE_PIN_COUNT=0`), and it is a separate interface
 with its own approval, not a mode of the copy queue.
 
 ## Stage 8 — console qualification
 
-Unchanged and untouched by any host stage: only a passive Stage 0
-baseline has ever been observed, with an incomplete build identity.
-Anything beyond that needs a reviewed, bounded design and separate
-explicit approval per environment; no stage above may submit a packet
-to a console. The passive record and the bounded first experiment (one
-copy, one fence, finite deadline, no retries) are specified in
-[hardware-evidence.md](hardware-evidence.md).
+The loader probe, FW9.40 identity, bounded copy/compute/register experiments,
+and two draw vehicles have been observed on console. The corrected NGG draw
+still produces no pixel. These results qualify only the particular packets
+and readbacks recorded in [hardware-evidence.md](hardware-evidence.md); they
+do not qualify a general hardware backend, Vulkan/OpenGL execution, or
+presentation. The PS5 policy library remains deny-all, and any further
+console experiment must remain a single validated push with no retry.
 
 ## Reuse map
 

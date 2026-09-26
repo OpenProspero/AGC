@@ -2350,6 +2350,221 @@ static int test_psbc_register_snapshot_equivalence(void)
         CHECK(gl_info.compiler_verified == 0u && gl_info.gpu_executable == 0u);
     }
 
+    /* The 34 linker context records, three uconfig records and COLOR0
+     * defaults below are from PS5_Vulkan's public C1 triangle capture at
+     * commit 3a6f00df (golden/c1-triangle/c1-triangle-1.json, region 0,
+     * chunks 0x5000/0x5100/0x6000/0x0400). The target BASE is replaced
+     * with a synthetic host address. This is not a FW9.40 qualification. */
+    {
+        openagc_frontend_agc_register
+            link_cx[OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT];
+        openagc_frontend_agc_register
+            link_uc[OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT];
+        /* COLOR0 offsets/defaults follow the public PS5_Vulkan C1 capture;
+         * BASE is a synthetic host address, never a console submission. */
+        openagc_frontend_agc_register
+            target_cx[OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT] = {
+                {0x318u, 0x01000000u}, {0x31bu, 0u}, {0x31cu, 0x8828u},
+                {0x31du, 0u}, {0x31eu, 0x48u}, {0x31fu, 0u},
+                {0x321u, 0u}, {0x323u, 0u}, {0x324u, 0u},
+                {0x325u, 0u}, {0x390u, 0u}, {0x398u, 0u},
+                {0x3a0u, 0u}, {0x3a8u, 0u}, {0x3b0u, 0x03bfc86fu},
+                {0x3b8u, 0x4dc6c000u}
+            };
+        openagc_frontend_agc_register
+            target_vk[OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT];
+        openagc_frontend_agc_register
+            target_gl[OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT];
+        uint32_t linked_vk[256];
+        uint32_t linked_gl[256];
+        uint32_t linked_vk_n = 0u;
+        uint32_t linked_gl_n = 0u;
+        openagc_gpu_submission_view view = OPENAGC_GPU_SUBMISSION_VIEW_INIT;
+        uint64_t vk_v = 0u, vk_p = 0u;
+
+        for (i = 0u; i < 32u; ++i) {
+            link_cx[i].offset = 0x191u + i;
+            link_cx[i].value = i;
+        }
+        link_cx[32] = (openagc_frontend_agc_register){0x2d5u, 0x12010u};
+        link_cx[33] = (openagc_frontend_agc_register){0x29bu, 2u};
+        link_uc[0] = (openagc_frontend_agc_register){0x25bu, 0x10080u};
+        link_uc[1] = (openagc_frontend_agc_register){0x262u, 0u};
+        link_uc[2] = (openagc_frontend_agc_register){0x242u, 4u};
+
+        EXPECT(openagc_vk_pipeline_set_agc_target_registers(
+                   vk_graphics, target_cx, 16u), OPENAGC_ERROR_NOT_READY);
+
+        EXPECT(openagc_vk_pipeline_set_agc_linked_registers(
+                   vk_graphics, link_cx, 33u, link_uc,
+                   OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT),
+               OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+        link_uc[1].offset = 0x400u;
+        EXPECT(openagc_gl_program_set_agc_linked_registers(
+                   gl_graphics, link_cx, OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT,
+                   link_uc, OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT),
+               OPENAGC_ERROR_OUT_OF_RANGE);
+        link_uc[1].offset = 0x262u;
+        EXPECT(openagc_vk_pipeline_get_host_register_program(vk_graphics, vk_words, 128u,
+                                                             &vk_count), OPENAGC_OK);
+        CHECK(vk_count == 69u);
+        EXPECT(openagc_vk_pipeline_set_agc_linked_registers(
+                   vk_graphics, link_cx, OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT,
+                   link_uc, OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT), OPENAGC_OK);
+        EXPECT(openagc_gl_program_set_agc_linked_registers(
+                   gl_graphics, link_cx, OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT,
+                   link_uc, OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT), OPENAGC_OK);
+        EXPECT(openagc_vk_pipeline_get_host_register_program(vk_graphics, linked_vk, 256u,
+                                                             &linked_vk_n), OPENAGC_OK);
+        EXPECT(openagc_gl_program_get_host_register_program(gl_graphics, linked_gl, 256u,
+                                                            &linked_gl_n), OPENAGC_OK);
+        CHECK(linked_vk_n == 171u && linked_gl_n == 171u);
+        EXPECT(openagc_vk_pipeline_get_host_register_program(vk_graphics, vk_words, 128u,
+                                                             &vk_count),
+               OPENAGC_ERROR_CAPACITY);
+        CHECK(vk_count == 171u);
+        CHECK(linked_vk[0] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+        for (i = 0u; i < OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT; ++i) {
+            CHECK(linked_vk[3u * i] ==
+                  openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+            CHECK(linked_vk[3u * i + 1u] == link_cx[i].offset);
+            CHECK(linked_vk[3u * i + 2u] == link_cx[i].value);
+        }
+        CHECK(linked_vk[138] ==
+              (openagc_pm4_header3(OPENAGC_PM4_OP_SET_UCONFIG_REG, 3u, 0u) |
+               OPENAGC_PM4_RESET_FILTER_CAM));
+        CHECK(linked_vk[139] == 603u && linked_vk[140] == 0x10080u);
+        CHECK(linked_vk[142] == 0x262u && linked_vk[143] == 0u);
+        CHECK(linked_vk[145] == 0x242u && linked_vk[146] == 4u);
+        for (i = 0u; i < OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT; ++i) {
+            CHECK(linked_vk[138u + 3u * i] ==
+                  (openagc_pm4_header3(OPENAGC_PM4_OP_SET_UCONFIG_REG, 3u, 0u) |
+                   OPENAGC_PM4_RESET_FILTER_CAM));
+            CHECK(linked_vk[139u + 3u * i] == link_uc[i].offset);
+            CHECK(linked_vk[140u + 3u * i] == link_uc[i].value);
+        }
+        CHECK(linked_vk[147] == openagc_pm4_header3(OPENAGC_PM4_OP_SET_SH_REG, 3u, 0u));
+        for (i = 0u; i < linked_vk_n; ++i) {
+            /* Separate backend heaps give the four PGM VA dwords their
+             * own values; every other word must be identical. */
+            if (i != 149u && i != 152u && i != 161u && i != 164u) {
+                CHECK(linked_vk[i] == linked_gl[i]);
+            }
+        }
+
+        EXPECT(openagc_vk_pipeline_get_psbc_code_vas(vk_graphics, &vk_v, &vk_p), OPENAGC_OK);
+        EXPECT(openagc_vk_pipeline_patch_psbc_pgm_vas(vk_graphics, vk_v, vk_p), OPENAGC_OK);
+        EXPECT(openagc_vk_pipeline_get_host_register_program(vk_graphics, linked_vk, 256u,
+                                                             &linked_vk_n), OPENAGC_OK);
+        CHECK(linked_vk_n == 171u && linked_vk[139] == 603u);
+        EXPECT(openagc_vk_pipeline_set_agc_target_registers(
+                   vk_graphics, target_cx, 15u), OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+        target_cx[0].value = 0u;
+        EXPECT(openagc_gl_program_set_agc_target_registers(
+                   gl_graphics, target_cx, 16u), OPENAGC_ERROR_INVALID_ARGUMENT);
+        target_cx[0].value = 0x01000000u;
+        target_cx[1].offset = 0x31au;
+        EXPECT(openagc_vk_pipeline_set_agc_target_registers(
+                   vk_graphics, target_cx, 16u), OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+        target_cx[1].offset = 0x31bu;
+        EXPECT(openagc_vk_pipeline_set_agc_target_registers(
+                   vk_graphics, target_cx, 16u), OPENAGC_OK);
+        EXPECT(openagc_gl_program_set_agc_target_registers(
+                   gl_graphics, target_cx, 16u), OPENAGC_OK);
+        EXPECT(openagc_vk_pipeline_get_host_register_program(vk_graphics, linked_vk,
+                                                             256u, &linked_vk_n), OPENAGC_OK);
+        EXPECT(openagc_gl_program_get_host_register_program(gl_graphics, linked_gl,
+                                                            256u, &linked_gl_n), OPENAGC_OK);
+        CHECK(linked_vk_n == 219u && linked_gl_n == 219u);
+        for (i = 0u; i < OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT; ++i) {
+            CHECK(linked_vk[3u * i] ==
+                  openagc_pm4_header3(OPENAGC_PM4_OP_SET_CONTEXT_REG, 3u, 0u));
+            CHECK(linked_vk[3u * i + 1u] == target_cx[i].offset);
+            CHECK(linked_vk[3u * i + 2u] == target_cx[i].value);
+            CHECK(linked_vk[3u * i] == linked_gl[3u * i]);
+            CHECK(linked_vk[3u * i + 1u] == linked_gl[3u * i + 1u]);
+            CHECK(linked_vk[3u * i + 2u] == linked_gl[3u * i + 2u]);
+        }
+        CHECK(linked_vk[1] == 0x318u && linked_vk[2] == 0x01000000u);
+        CHECK(linked_vk[7] == 0x31cu && linked_vk[8] == 0x8828u);
+        CHECK(linked_vk[49] == link_cx[0].offset);
+
+        /* One public AGC default table drives both native format dialects.
+         * The caller supplies a synthetic aligned VA and 256-byte rows. */
+        EXPECT(openagc_frontend_agc_build_linear_target(
+                   OPENAGC_FRONTEND_VULKAN,
+                   OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+                   target_cx, 16u, 0x100000000ull, 63u, 32u, target_vk, 16u),
+               OPENAGC_ERROR_OUT_OF_RANGE);
+        EXPECT(openagc_frontend_agc_build_linear_target(
+                   OPENAGC_FRONTEND_VULKAN,
+                   OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+                   target_cx, 16u, 0x100000001ull, 64u, 32u, target_vk, 16u),
+               OPENAGC_ERROR_OUT_OF_RANGE);
+        EXPECT(openagc_frontend_agc_build_linear_target(
+                   OPENAGC_FRONTEND_VULKAN,
+                   OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+                   target_cx, 16u, 0xffffffffff00ull, 64u, 32u, target_vk, 16u),
+               OPENAGC_ERROR_OUT_OF_RANGE);
+        EXPECT(openagc_frontend_agc_build_linear_target(
+                   OPENAGC_FRONTEND_VULKAN,
+                   OPENAGC_FRONTEND_VK_FORMAT_D24_UNORM_S8_UINT,
+                   target_cx, 16u, 0x100000000ull, 64u, 32u, target_vk, 16u),
+               OPENAGC_ERROR_UNSUPPORTED_OPERATION);
+        EXPECT(openagc_frontend_agc_build_linear_target(
+                   OPENAGC_FRONTEND_VULKAN,
+                   OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+                   target_cx, 16u, 0x100000000ull, 64u, 32u, target_vk, 15u),
+               OPENAGC_ERROR_CAPACITY);
+        EXPECT(openagc_frontend_agc_build_linear_target(
+                   OPENAGC_FRONTEND_VULKAN,
+                   OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+                   target_cx, 16u, 0x100000000ull, 64u, 32u, target_vk, 16u),
+               OPENAGC_OK);
+        EXPECT(openagc_frontend_agc_build_linear_target(
+                   OPENAGC_FRONTEND_OPENGL,
+                   OPENAGC_FRONTEND_GL_INTERNAL_FORMAT_RGBA8,
+                   target_cx, 16u, 0x100000000ull, 64u, 32u, target_gl, 16u),
+               OPENAGC_OK);
+        for (i = 0u; i < 16u; ++i) {
+            CHECK(target_vk[i].offset == target_gl[i].offset);
+            CHECK(target_vk[i].value == target_gl[i].value);
+        }
+        CHECK(target_vk[0].value == 0x01000000u);
+        CHECK(target_vk[2].value == 0x8028u);
+        CHECK(target_vk[4].value == 0x48u);
+        CHECK(target_vk[14].value == ((63u << 14) | 31u));
+        CHECK(target_vk[15].value == 0x4dc00000u);
+        EXPECT(openagc_frontend_agc_build_linear_target(
+                   OPENAGC_FRONTEND_VULKAN,
+                   OPENAGC_FRONTEND_VK_FORMAT_B8G8R8A8_UNORM,
+                   target_cx, 16u, 0x100000000ull, 64u, 32u, target_gl, 16u),
+               OPENAGC_OK);
+        CHECK(target_gl[2].value == 0x8828u);
+        EXPECT(openagc_vk_pipeline_set_agc_target_registers(
+                   vk_graphics, target_vk, 16u), OPENAGC_OK);
+        EXPECT(openagc_gl_program_set_agc_target_registers(
+                   gl_graphics, target_vk, 16u), OPENAGC_OK);
+        EXPECT(openagc_vk_pipeline_get_host_register_program(vk_graphics, linked_vk,
+                                                             256u, &linked_vk_n), OPENAGC_OK);
+        EXPECT(openagc_gl_program_get_host_register_program(gl_graphics, linked_gl,
+                                                            256u, &linked_gl_n), OPENAGC_OK);
+        CHECK(linked_vk_n == 219u && linked_gl_n == 219u);
+        CHECK(linked_vk[8] == 0x8028u && linked_vk[8] == linked_gl[8]);
+        EXPECT(openagc_vk_pipeline_patch_psbc_pgm_vas(vk_graphics, vk_v, vk_p),
+               OPENAGC_OK);
+        EXPECT(openagc_vk_pipeline_get_host_register_program(vk_graphics, linked_vk,
+                                                             256u, &linked_vk_n), OPENAGC_OK);
+        CHECK(linked_vk_n == 219u && linked_vk[2] == 0x01000000u);
+        EXPECT(openagc_vk_pipeline_record_psbc_register_eop(vk_graphics), OPENAGC_OK);
+        EXPECT(openagc_vk_device_get_last_write(device, &view), OPENAGC_OK);
+        CHECK(view.gpu_submitted == 0u && view.word_count == 243u);
+        CHECK(view.words[219] == OPENAGC_PM4_EOP_HEADER);
+        EXPECT(openagc_vk_pipeline_get_info(vk_graphics, &vk_info), OPENAGC_OK);
+        EXPECT(openagc_gl_program_get_info(gl_graphics, &gl_info), OPENAGC_OK);
+        CHECK(vk_info.gpu_executable == 0u && gl_info.gpu_executable == 0u);
+    }
+
     EXPECT(openagc_vk_destroy_pipeline(vk_graphics), OPENAGC_OK);
     EXPECT(openagc_gl_destroy_program(gl_graphics), OPENAGC_OK);
     EXPECT(openagc_gl_destroy_renderbuffer(renderbuffer), OPENAGC_OK);

@@ -16,6 +16,24 @@ extern "C" {
 #define OPENAGC_FRONTEND_MEMORY_ALIGN 256u
 #define OPENAGC_FRONTEND_DEFAULT_STAGING_BYTES 65536u
 #define OPENAGC_FRONTEND_MAX_STAGING_BYTES 1048576u
+/* FW9.40 sceAgcLinkShaders output consumed by the public native runtime. */
+#define OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT 34u
+#define OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT 3u
+/* CB_COLOR0 table emitted by the public AGC native draw path. */
+#define OPENAGC_FRONTEND_AGC_TARGET_CONTEXT_COUNT 16u
+
+typedef struct openagc_frontend_agc_register {
+    uint32_t offset;
+    uint32_t value;
+} openagc_frontend_agc_register;
+
+/*
+ * Host-only AGC COLOR0 composer. Both frontend kinds use the same 16-record
+ * path; native_format is a Vulkan or OpenGL format for kind. Defaults must
+ * come from the caller's AGC profile in target-0 order. Only aligned,
+ * single-sample linear RGBA8/BGRA8 targets with 256-byte rows are accepted.
+ * No write mask, DRAW, or PS5 execution is implied.
+ */
 
 typedef struct openagc_frontend_device openagc_frontend_device;
 typedef struct openagc_frontend_image openagc_frontend_image;
@@ -35,6 +53,12 @@ enum {
     /* native_* values are published OpenGL enumerants. */
     OPENAGC_FRONTEND_OPENGL = 2u
 };
+
+openagc_result openagc_frontend_agc_build_linear_target(
+    openagc_frontend_kind kind, uint32_t native_format,
+    const openagc_frontend_agc_register *defaults, uint32_t default_count,
+    uint64_t target_va, uint32_t width, uint32_t height,
+    openagc_frontend_agc_register *out_records, uint32_t out_count);
 
 /* Published Vulkan 1.0 enumerants this host backend accepts. */
 #define OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM 37u
@@ -617,6 +641,26 @@ openagc_result openagc_frontend_pipeline_set_psbc_register_snapshot(
     openagc_frontend_pipeline *pipeline, const uint8_t *vertex_metadata,
     uint32_t vertex_metadata_size, const uint8_t *pixel_metadata,
     uint32_t pixel_metadata_size);
+/*
+ * Host-only: replace the metadata-only register snapshot with the complete
+ * sceAgcLinkShaders context/uconfig records, followed by stage context/SH
+ * records from the retained PSBC metadata. Requires a graphics plan with
+ * bound PSBC code. The two arrays are copied; counts must match the public
+ * FW9.40 linker shape. Still no DRAW or gpu_executable.
+ */
+openagc_result openagc_frontend_pipeline_set_agc_linked_registers(
+    openagc_frontend_pipeline *pipeline,
+    const openagc_frontend_agc_register *context_records, uint32_t context_count,
+    const openagc_frontend_agc_register *uconfig_records, uint32_t uconfig_count);
+/*
+ * Host-only: prepend one AGC COLOR0 target table to the linked shader
+ * register snapshot. Requires linked PSBC code. The caller supplies the
+ * target values from its AGC defaults and owned image; OpenAGC validates
+ * the 16-register shape but does not claim the target can render yet.
+ */
+openagc_result openagc_frontend_pipeline_set_agc_target_registers(
+    openagc_frontend_pipeline *pipeline,
+    const openagc_frontend_agc_register *target_records, uint32_t target_count);
 openagc_result openagc_frontend_pipeline_get_host_register_program(
     const openagc_frontend_pipeline *pipeline, uint32_t *words, uint32_t max_words,
     uint32_t *out_count);

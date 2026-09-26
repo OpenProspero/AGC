@@ -399,6 +399,17 @@ render packets remain unavailable.
 PSBC smoke metadata register pairs (`psbc_metadata.h`), including
 vertex linkage context pairs (`ge_cntl`, `stages_en`, `user_vgpr_en`)
 when present.
+`openagc_pm4_encode_ctxreg_cb_bind_full_abs_eop`
+(`pm4_copy_data_fw940.h`) adds the nine-register linear color bind:
+`openagc_gfx10_cb_bind_offsets` plus
+`openagc_gfx10_cb_bind_linear_8888_words` compose
+BASE/BASE_EXT/VIEW/INFO/ATTRIB/ATTRIB2/ATTRIB3/`CB_TARGET_MASK`/
+`CB_SHADER_MASK` from cited gfx10 field encodings, and the same nine
+offsets are read back with the proven absolute `COPY_DATA` — encode and
+record only, no DRAW. `pm4_context_regs_gfx10.h` carries the corrected
+gc_10_1_0 map (BASE_EXT = 912, ATTRIB2 = 944, ATTRIB3 = 952; 793/794 are
+`PITCH`/`SLICE` holes) and the `COLOR_SW_MODE` swizzle-mode enum that
+GFX10 uses instead of a `GB_TILE_MODE` index.
 `DRAW_INDEX_AUTO` (0x2D) is cited but never emitted. Runtime
 `OPENGNM_PSBC` intake accepts pin-checked empty-binding envelopes
 (`compiler_binary_sha256` must equal
@@ -499,10 +510,11 @@ primitives are **native** image layouts and
 tiling beyond the host-linear metadata subset, an independently verified
 build-time shader compiler/metadata adapter and executable pipeline
 contract, real render-target/draw PM4, coherency/barriers, and an
-independent presentation/VideoOut interface. They require their own
-firmware-specific evidence and capability gates. Nothing here executes a
-shader, rasterizes a pixel, presents a frame, or runs on a console, and
-no firmware is qualified for graphics or VideoOut.
+GPU presentation interface. They require their own firmware-specific evidence
+and capability gates. A separate experimental CPU VideoOut presenter now
+rasterizes recorder clear and rectangle commands into tiled buffers; it is
+offline-tested but has not yet been confirmed to display on console. No shader
+executes and no Vulkan/OpenGL GPU presentation is qualified.
 
 ## Firmware-9.40 proof gates: passive baseline only
 

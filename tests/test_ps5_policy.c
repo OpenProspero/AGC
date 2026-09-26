@@ -309,6 +309,7 @@ static int test_frontend_policy(void)
     openagc_frontend_timeline *created_timeline = 0;
     openagc_frontend_pipeline *pipeline = (openagc_frontend_pipeline *)(void *)&dummy;
     openagc_frontend_pipeline *created_pipeline = 0;
+    openagc_frontend_agc_register linked_register = { 603u, 0u };
     uint8_t bytes[4] = { 0u, 0u, 0u, 0u };
 
     CHECK(openagc_frontend_native_format_at(OPENAGC_FRONTEND_VULKAN, 0u, &native) ==
@@ -388,6 +389,15 @@ static int test_frontend_policy(void)
     CHECK(created_pipeline == 0);
     CHECK(openagc_frontend_pipeline_get_info(pipeline, &pipeline_info) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_pipeline_set_agc_linked_registers(
+              pipeline, &linked_register, 1u, &linked_register, 1u) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_pipeline_set_agc_target_registers(
+              pipeline, &linked_register, 1u) == OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_frontend_agc_build_linear_target(
+              OPENAGC_FRONTEND_VULKAN, OPENAGC_FRONTEND_VK_FORMAT_R8G8B8A8_UNORM,
+              &linked_register, 1u, 0x100000000ull, 64u, 32u,
+              &linked_register, 1u) == OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_frontend_pipeline_destroy(pipeline) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     return 0;
@@ -408,6 +418,8 @@ static int test_vulkan_policy(void)
     openagc_vk_fence *fence = (openagc_vk_fence *)(void *)&dummy;
     openagc_vk_fence *created_fence = 0;
     openagc_vk_pipeline *created_pipeline = 0;
+    openagc_vk_pipeline *unreachable_pipeline = (openagc_vk_pipeline *)(void *)&dummy;
+    openagc_frontend_agc_register linked_register = { 603u, 0u };
     uint8_t bytes[4] = { 0u, 0u, 0u, 0u };
 
     CHECK(openagc_vk_instance_create(&instance_desc, &created) ==
@@ -422,6 +434,12 @@ static int test_vulkan_policy(void)
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(created_device == 0);
     CHECK(openagc_vk_cmd_draw((openagc_vk_command_buffer *)(void *)&dummy, 3u, 1u, 0u, 0u) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_vk_pipeline_set_agc_linked_registers(
+              unreachable_pipeline, &linked_register, 1u, &linked_register, 1u) ==
+          OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    CHECK(openagc_vk_pipeline_set_agc_target_registers(
+              unreachable_pipeline, &linked_register, 1u) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(openagc_vk_cmd_draw(0, 3u, 1u, 0u, 0u) == OPENAGC_ERROR_INVALID_ARGUMENT);
     CHECK(openagc_vk_cmd_dispatch(0, 1u, 1u, 1u) == OPENAGC_ERROR_INVALID_ARGUMENT);
@@ -470,9 +488,18 @@ static int test_vulkan_policy(void)
 
 int main(void)
 {
+    uint32_t dummy = 0u;
+    openagc_frontend_agc_register linked_register = { 603u, 0u };
+
     if (test_policy() != 0 || test_gpu_policy() != 0 ||
         test_graphics_policy() != 0 || test_shader_policy() != 0 ||
         test_frontend_policy() != 0 || test_vulkan_policy() != 0 ||
+        openagc_gl_program_set_agc_linked_registers(
+            (openagc_gl_program *)(void *)&dummy, &linked_register, 1u,
+            &linked_register, 1u) != OPENAGC_ERROR_UNSUPPORTED_FIRMWARE ||
+        openagc_gl_program_set_agc_target_registers(
+            (openagc_gl_program *)(void *)&dummy, &linked_register, 1u) !=
+            OPENAGC_ERROR_UNSUPPORTED_FIRMWARE ||
         openagc_gl_draw_arrays(0, 0u, 3u) != OPENAGC_ERROR_INVALID_ARGUMENT ||
         openagc_gl_create_graphics_program(0, 0, 0, 0, 0) !=
             OPENAGC_ERROR_INVALID_ARGUMENT ||
