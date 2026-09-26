@@ -23,25 +23,29 @@ identity.
 | Pipelines | Structural plans; shared host PSBC and AGC linker-register snapshots (no DRAW) |
 | Color-buffer bind words | Host-composed nine-register linear RGBA8 bind (Step AB), console round-trip proven for encode/record only |
 | Vulkan / OpenGL | Shared frontend core; equivalent work lands on the same backend bytes |
+| GPU rasterizer | `openagc_raster_encode_draw` (shared, host-locked): composes the AGC-shaped draw IB — scalar state, context/uconfig tables, ES/PS program, color bind, one draw |
 | Attribute-less draws | Bind + draw recorded; still `NOT_READY` (no CB/DRAW / no `gpu_executable`) |
-| First console DRAW | Step AD NGG IB runs and completes, including a corrected three-vertex triangle, but writes no pixel; topology path remains unresolved and rasterization unproven |
+| First console DRAW | The AGC-shaped IB retires on FW9.40 but writes no pixel (Steps AE-AH: either colour bind, either draw initiator). With viewport transform on, the NGG draw stops retiring (Steps AJ-AM). Step AN corrected the `VGT_ESGS_RING_ITEMSIZE` register address, wrote and read its captured value 1, and used `CB_NORMAL`; it still timed out with zero pixels. A later source audit found that Steps AF and AN left the optional fragment-gate mask unset; the corrected payload has only offline validation. The legacy draw retires without a pixel while its topology readback stays zero. |
 | Draws / general dispatch | Refused (`NOT_READY` from compiler gate) |
 | Presentation / swapchain | Native GPU swapchain refused; experimental CPU VideoOut presenter added for QuickJS |
 | `compiler_verified` / `gpu_executable` | Always **0** on accepted plans today |
 
-## PS5 policy (fail-closed until qualified)
+## PS5 policy (qualification gate, not blanket deny)
 
 | Area | `OpenAGC::ps5_policy` |
 | --- | --- |
-| Same public symbols | Fail closed: `UNSUPPORTED_FIRMWARE` while FW is unqualified |
+| Same public symbols | Every public symbol is defined; host entry points stay fail-closed |
+| Qualification record | `openagc_ps5_policy_qualification` / `openagc_ps5_policy_require` state what the one observed firmware (`0x9400008`) qualified: copy+EOP, WRITE_DATA fills, compute stores, register programs, CB readback, IB dumps, the NGG program |
+| Draws | Named `OPENAGC_PS5_CAP_DRAW` and still refused: no console run has produced a pixel |
 | Full host GPU library | Must **not** be linked into a PS5 image; the command recorder is built separately for the VideoOut presenter |
-| FW9.40 | **Not** hardware-qualified yet; no submit path in policy |
 
-Unknown firmware is not qualified either. Firmware fields in descriptors
-are diagnostic hints, not authorization. The SDK QuickJS host uses
+An unknown firmware identity is not qualified: the table answers
+`UNSUPPORTED_FIRMWARE`, and a capability without console evidence answers
+`UNSUPPORTED_OPERATION`. Firmware fields in descriptors are diagnostic
+hints, not authorization. The SDK QuickJS host uses
 `openagc_ps5_videoout.c` to draw the recorder's frames on the CPU and submit
 them to native VideoOut. This path has offline tests but awaits console display
-confirmation. Vulkan/OpenGL GPU execution remains explicitly gated.
+confirmation. GPU draw execution remains explicitly gated.
 
 ## Stage gates (short)
 
@@ -89,8 +93,15 @@ Headers (include as `<openagc/….h>`):
 | `graphics.h` | Images and host clear path |
 | `shader.h` | Artifact intake and pipeline plans |
 | `frontend.h` | Shared VK/GL translation core |
+| `raster.h` | GPU rasterizer: AGC-shaped draw composition and encoding |
+| `ps5_policy.h` | PS5 qualification record for the observed firmware |
 | `vulkan.h` / `opengl.h` | Host frontend subsets |
 | `psbc_metadata.h` / `pm4_*_fw940.h` | PSBC reflection and PM4 helpers |
+
+The [Electron/DOM port track](https://github.com/OpenProspero/sdk/blob/main/docs/ELECTRON.md)
+pins a matching FreeBSD Electron 36.3.1 source and patch set, cross-compiles
+an ABI probe through the canonical SDK, and runs a host offscreen DOM/paint
+smoke app. Electron is not yet cross-compiled or running on PS5.
 
 Link `OpenAGC::openagc` on the host via `add_subdirectory`. For PS5
 policy-only builds, use `-DOPENAGC_PS5_POLICY_ONLY=ON` and link only

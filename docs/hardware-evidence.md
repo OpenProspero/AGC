@@ -1846,7 +1846,7 @@ i.e. `VGT_SHADER_STAGES_EN = 0x00012010` (PRIMGEN_EN and ES_STAGE_REAL) and
 the uploaded vertex code (`0x02000400` = `vert_code_va >> 8`), the LDS layout
 dword reads `0x200` at SH 142, and the three registers that can only come from
 the context **table** (`SPI_SHADER_COL_FORMAT = 9`, `SPI_PS_INPUT_ENA = 0x80`,
-`VGT_ESGS_RING_ITEMSIZE = 1`) all carry the pinned compiler's values — so the
+`GE_NGG_SUBGRP_CNTL = 1` at 0x2d3) all carry the pinned compiler's values — so the
 one context table load writes the whole program, GE_CNTL included once it is
 routed to the uconfig space. `completed=1`, no panic, no fault, no hang; the
 klog shows only `GFX(pipe0) Game` and `exit_value=1`.
@@ -1918,3 +1918,398 @@ capture has `CB_COLOR0_INFO=0x00008828` and
 are a comparison lead, not proof that either difference caused the FW9.40
 zero-pixel result. A FW9.40 linker capture, a confirmed pixel, and a completed
 fence are still missing; draw execution remains refused.
+
+## Step AM: NGG stalls with viewport transform; legacy retires
+
+Three more single pushes, each with a 1x1 viewport and `PA_CL_VTE_CNTL` set:
+
+| Variant | Change | Result |
+| --- | --- | --- |
+| Step AM | point primitive (`DI_PT_POINTLIST` + `VGT_GS_OUT_PRIM_TYPE` 0), one vertex | `completed=0` |
+| Step AM | legacy (non-NGG) program, pinned `smoke.vert`/`smoke.frag` fixtures, point | **`completed=1`**, `pixels=0` |
+| Step AM | `SPI_PS_INPUT_ENA`/`_ADDR` = 0 (interpolation modes off) | `completed=0` |
+
+Together with the AC-era record these two paths now say something precise:
+
+* The **legacy** path retires without a pixel, and it has done so
+  across AC-2..AC-12, AC-11's user-data probe, and now Step AM - all of which
+  depend on `VGT_PRIMITIVE_TYPE` (uconfig index 0x242), the register that
+  has read back 0 in every write form tried. A masked readback remains
+  possible, so the absence of a pixel does not prove the VGT never assembled.
+* The **NGG** path stalls when viewport transform is enabled for either a
+  triangle or a point. This is consistent with the draw advancing into
+  primitive or fragment work, but EOP noncompletion alone does not prove a
+  fragment was generated or locate the stall. Disabling colour writes, depth
+  and stencil, multisampling, binning and interpolation modes does not make
+  that draw retire.
+
+Artifacts: `draw_raster_point.elf`
+(`1d05452ccbad22e8eee65da9df418fe50c35950cec9e14cf35ec04055363c89e`),
+`draw_legacy_eop.elf`
+(`e245dd849549c9719e57ef17a29652bc69633727381e3b53828b66e539fb0785`,
+log `/data/prosperoai/openagc-ib-dump-draw-legacy.log`) and
+`draw_raster_pixel_nointerp.elf`
+(`443963fafb2564329213968563271bf3f428ff12e162db285cea81ec195c7f4a`),
+one push each, klog attached, console healthy, no fault/hang marker.
+
+**Status.** `hardware_qualified` stays **false**, `gpu_executable` stays 0,
+`OPENAGC_RASTER_GPU_QUALIFIED` stays **0**, the PS5 policy still refuses
+`OPENAGC_PS5_CAP_DRAW`. The next instrument has to bound the unknown the
+stall sits behind, and the two that do not risk a stray write are a capture
+from this firmware and the public native runtime's own draw replayed with
+its own shaders.
+
+## Step AL: the stall is the draw itself, not the state writes
+
+Four more single pushes, all on the 1x1 viewport with `PA_CL_VTE_CNTL` written:
+
+| Variant | Added | Result |
+| --- | --- | --- |
+| Step AL | `CB_COLOR_CONTROL = CB_DISABLE` (pixel shader runs, no colour write) | `completed=0` |
+| Step AL | `SPI_PS_INPUT_CNTL_0..31` from the capture (identity table, now written by every draw) | `completed=0` |
+| Step AL | `DB_DEPTH_CONTROL = 0` (depth and stencil off, colour writes normal) | `completed=0` |
+| Step AL | the same state with the PS-input and gate blocks moved *before* the pre-draw readbacks | `completed=0`, readbacks land |
+
+The last row is the informative one. The readbacks are ordinary CP memory
+writes that have landed in every stalled run, so moving the suspect state in
+front of them turns them into a progress marker: with `PA_CL_VTE_CNTL`,
+`DB_DEPTH_CONTROL`, `PA_SC_MODE_CNTL_0`, `PA_SC_AA_CONFIG`, `DB_EQAA` and the
+32 pixel-shader input controls all written *before* the readbacks, and the
+readbacks still carrying the pinned values, those writes demonstrably
+executed. The submission therefore stops in the remaining tail - colour
+bind, `NUM_INSTANCES`, `DRAW_INDEX_AUTO`, EOP. `CB_DISABLE` (no colour write)
+and a depth/stencil-off, single-sample, non-binning pipeline still stop it.
+The readbacks bound the stalled packet range, but do not prove which GPU
+stage waits inside the draw.
+
+**Status.** `hardware_qualified` stays **false**, `gpu_executable` stays 0,
+`OPENAGC_RASTER_GPU_QUALIFIED` stays **0**, the PS5 policy still refuses
+`OPENAGC_PS5_CAP_DRAW`. The two remaining instruments are the legacy
+(non-NGG) vertex path with the viewport transform on - the fragment path is
+shared, the vertex path is not - and a capture taken on *this* firmware
+rather than the public one.
+
+## Step AK: a one-pixel draw still stalls, with binning and MSAA off
+
+Three more single pushes, all with `PA_CL_VTE_CNTL` written and the payload's
+viewport reduced to 1x1 (`OPENAGC_VIEW_W/H=1`, so the screen, viewport and
+generic scissors are 1x1 as well):
+
+| Variant | Added | Result |
+| --- | --- | --- |
+| Step AK | nothing | `completed=0`, `wait=30s`, window `1x1` |
+| Step AK | `PA_SC_BINNER_CNTL_0 = 0` (binning off, now a scalar state pair) | `completed=0` |
+| Step AK | `PA_SC_MODE_CNTL_0 = 2`, `PA_SC_AA_CONFIG = 0`, `DB_EQAA = 0` (MSAA off, gate bits 8-10) | `completed=0` |
+
+So the stall is not fragment volume, not binning and not the multisample
+path: one pixel's worth of coverage is enough to stop the submission. What
+the three runs do establish is *where* the pipeline stops moving. With
+`PA_CL_VTE_CNTL` clear, the vertex positions are not transformed, the
+triangle lands outside every scissor and the IB retires with no fragment;
+with it set, the triangle covers the 1x1 viewport and the IB never retires.
+That is the first real difference in behaviour any OpenAGC draw has produced,
+and it points at the fragment path after rasterization (pixel shader launch
+or the RB write to a host-mapped target) rather than at the vertex stage.
+
+**Note for the next run.** A payload that stalls writes its log only after
+its 30-second deadline, so a deploy that fetches the log 15 s after the push
+reads the *previous* run's file. Every stalled run here was recovered by
+re-fetching after the deadline; `--wait 40` is the correct fetch setting for
+this shape.
+
+**Status.** `hardware_qualified` stays **false**, `gpu_executable` stays 0,
+`OPENAGC_RASTER_GPU_QUALIFIED` stays **0**, the PS5 policy still refuses
+`OPENAGC_PS5_CAP_DRAW`. Candidate next instruments: the legacy (non-NGG)
+vertex path with the viewport transform on, and a variant that distinguishes
+pixel shader launch from the RB write (for example the console-proven compute
+store kernel as the pixel stage's export target, or a target address the
+console's own driver has already written).
+
+## Step AJ: the fragment-gate bisect lands on PA_CL_VTE_CNTL
+
+The gate block was made selectable (`openagc_raster_gpu_draw.gate_mask`, the
+payload's `OPENAGC_GATE_MASK`) and bisected with single pushes:
+
+| Variant | Gate mask | Result |
+| --- | --- | --- |
+| Step AI | all seven | `completed=0`, `wait=30s` |
+| Step AJ | `PA_CL_VTE_CNTL` only (1) | `completed=0`, `wait=30s` |
+| Step AJ | `PA_CL_VTE_CNTL` + the capture's 16-record bind | `completed=0`, `wait=30s` |
+
+The minimal tested trigger is `PA_CL_VTE_CNTL` alone - the six
+viewport-transform enables. The draw stops retiring with either of the two
+tested color binds when viewport transform is enabled. That is consistent
+with work reaching rasterization, but EOP noncompletion does not prove a
+fragment was generated. Everything else in
+the block (depth control, the two prim filters, NaN/Inf control, the
+over-rasterization control, `PA_CL_NGG_CNTL`) is not the trigger. Artifacts:
+`draw_raster_vte.elf` (`177fee95fc63ed5ef30609c793bd4d6a232066ef9e3c66ebd661a37de8311421`)
+and `draw_raster_vte_tiled.elf`
+(`59e4ab50345be5fcdf6d2cd08ad6a96ea5abeb248582a8121861495ad19c89f8`), one
+push each, klog attached, no fault/hang marker and the loader still serving
+after both.
+
+Two notes for the next run. First, the dump of the second variant shows the
+console's context had been reset (a fresh boot: `CB_COLOR_CONTROL` 0, the
+screen scissor 0..16384, `PA_CL_CLIP_CNTL` 0x00090000), so the earlier
+"parameters persist across runs" observation applies to a boot session, not
+across one. Second, the stall is a property of the *submission*: the console
+stayed healthy and the next push was accepted, so a stalled EOP is a usable
+negative signal here rather than a hazard.
+
+**Status.** `hardware_qualified` stays **false**, `gpu_executable` stays 0,
+`OPENAGC_RASTER_GPU_QUALIFIED` stays **0**, and the PS5 policy still refuses
+`OPENAGC_PS5_CAP_DRAW`. The next instrument is a one-pixel draw (1x1
+viewport and scissors) to separate "fragment generation" from "many
+fragments" and, after that, the legacy VS path.
+
+## Steps AG-AI: the public capture settles the packet sequence, and the fragment gates change behaviour
+
+The public C1 capture (`mihawk-99/PS5_Vulkan`, `golden/c1-triangle/c1-triangle-1.json`,
+commit `3a6f00df`, fetched and decoded rather than quoted) gives the whole
+submission AGC itself emits for one triangle: `SET_UCONFIG 0x342`
+(`SQ_THREAD_TRACE_USERDATA_2`, a trace marker), two `SET_UCONFIG` writes,
+then per draw a **context table of 90 records**, a **uconfig table of 3**,
+a **SH table of 10**, `SET_SH` user data at `0x8c` (GS) and `0x0c` (PS), and
+**`DRAW_INDEX_AUTO` with `DI_SRC_SEL_AUTO_INDEX`** - the same initiator
+OpenAGC has used all along, and the same three uconfig records OpenAGC
+composes (`{0x25b,0x10080}`, `{0x262,0}`, `{0x242,4}` byte for byte).
+That retires the indexed-draw hypothesis before it needed a console run.
+
+Diffing the capture's 90 context records against the OpenAGC state found
+three registers OpenAGC never wrote and the capture does:
+
+* `PA_SC_GENERIC_SCISSOR_TL/BR` (0x090/0x091) - TL `0x80000000`, BR
+  `(4096,4096)` for a full-screen target. A context that inherits the
+  reset value (0,0)-(0,0) discards every fragment.
+* `PA_SC_VPORT_ZMIN_0/ZMAX_0` (0x0b4/0x0b5) - 0 and 1.0.
+* `CB_COLOR0_DCC_CONTROL` in the capture's 16-record target set (Step AF).
+
+`include/openagc/pm4_context_regs_gfx10.h` now names all of these, the
+shared encoder writes the generic scissor and the depth range, and the
+offsets were re-verified against Mesa `gfx10.json` (the atlas had
+0x090/0x091 and 0x0b4/0x0b5 unassigned; 0x094/0x095 are the per-viewport
+scissor pair, as the atlas already had).
+
+**Step AH (2026-09-26).** `draw_raster_eop.elf` rebuilt with the generic
+scissor and the depth range
+(`8ed91a920f46db168ca4b2fa5701f98a1b3ef77d5c6e3e67274c0b8b896f9490`),
+pushed once: `completed=1`, `pixels=0`, `guard=0` - those two writes alone
+do not change the zero-fragment result.
+
+**Step AI (2026-09-26).** The same payload with a second block of
+registers a driver always initializes because each one can drop fragments
+silently: `PA_CL_VTE_CNTL` (the six viewport-transform enables),
+`DB_DEPTH_CONTROL` (no depth test or write, no colour-write override),
+`PA_SU_PRIM_FILTER_CNTL`, `PA_SU_SMALL_PRIM_FILTER_CNTL`,
+`PA_CL_NANINF_CNTL`, `PA_SU_OVER_RASTERIZATION_CNTL` and `PA_CL_NGG_CNTL`,
+all neutral (`bcf5bbaf97f04cc025d1f036b4ca6ee3f65d3d9b9b80acde8553aa2555536c5b`).
+Pushed once: **the IB no longer retires** - `completed=0`, `wait=30s`, the
+program readbacks (which precede the draw and the EOP) still land with the
+pinned values, and the live klog shows the payload as a graphics client
+with `exit_value=1` and no panic/fault/hang marker in the drained window.
+Writing that block therefore moves the pipeline: one of those registers is
+on the critical path, and the block needs bisecting before anything is
+claimed about it. The console was left to the operator at this point; no
+retry was made.
+
+**Status.** `hardware_qualified` stays **false**, `gpu_executable` stays 0,
+`OPENAGC_RASTER_GPU_QUALIFIED` stays **0**, the pin tables stay empty, and
+the PS5 policy still refuses `OPENAGC_PS5_CAP_DRAW`.
+
+## Step AE run 2 and Step AF: the AGC draw retires with two target binds
+
+Two further single pushes were made, each one artifact, no retry.
+
+**Step AE run 2 (2026-09-26).** The operator closed the console-side
+application that had left the graphics ring in a timeout, and the same
+AGC-shaped draw was pushed once
+(`draw_raster_eop.elf`, 110,536 bytes, SHA-256
+`12bbb43d7fe68f8fc1f19c790669c32a956d2e3770491e6e2d223fef0fc45d2d`). The
+context query was accepted, the IB **submitted and retired**
+(`completed=1`, exit_value=1), the console stayed clean, and the dump is
+
+```
+openagc-draw-raster-owned: color_va=0000000200044000 rect=8,8,8x8
+  pixels=0 outside=0 guard=0 value=00000000 wait=0s match=0
+openagc-probe: 00cc0011 00000000 00000003 00000000 00000002 0000c000 00310000 00400040
+openagc-ngg: 00012010 00010080 02000400 00000200 00000000 00000000 00000009 00000080 00000001
+```
+
+Every register of the program landed and reads back with the pinned
+compiler's value - `VGT_SHADER_STAGES_EN` 0x12010, **GE_CNTL 0x10080 read
+through the uconfig aperture** (so the AGC-shaped uconfig table does load),
+ES PGM 0x02000400 = `vert_code_va >> 8`, the LDS layout dword 0x200,
+`SPI_SHADER_COL_FORMAT` 9, `SPI_PS_INPUT_ENA` 0x80,
+`GE_NGG_SUBGRP_CNTL` 1 at 0x2d3 - and `VGT_PRIMITIVE_TYPE` still reads 0 through
+that aperture, exactly as in Step AD. No pixel, and `guard=0` says nothing
+was written anywhere in the arena.
+
+**Step AF (2026-09-26).** A suspected structural difference from
+public driver is the colour bind: OpenAGC's nine-word set binds a *linear*
+8_8_8_8 surface, while the public native runtime
+(`append_target_state`) and the C1 capture both write **16 COLOR0 records**
+with `CB_COLOR0_DCC_CONTROL = 0x48` (0x31e is DCC_CONTROL, not an ATTRIB
+alias: Mesa `gfx10.json`), `COLOR_SW_MODE 27`, `FMASK_SW_MODE 24`,
+`RESOURCE_LEVEL 1` and the CMASK/DCC pipe-aligned bits. One IB therefore
+drew the same triangle twice: pass A with the nine-word linear bind into a
+32x32 target, pass B with the capture's 16-record bind into a 256B-pitch
+64x256 target, both inside the payload's own arena, with the guard counting
+nonzero dwords in every arena region that holds no target.
+
+`draw_raster_ab_eop.elf` (111,328 bytes, SHA-256
+`e68d11571dd0b91c14804aa3d38b5d0b7b3aa904813b3de3def99bf29480d8cf`) was
+pushed once. `ib=659` dwords, two draws, one EOP; the dump records
+`completed=1` and
+
+```
+openagc-draw-raster-ab-owned: a_pixels=0 a_outside=0 a_value=00000000
+  b_nonzero=0 b_first=00000000 guard=0 ib=659 wait=0s match=0
+openagc-cb-capture: 798=00000048 ... 944=000fc0ff 952=4dc6c000
+```
+
+so **neither bind received anything**: not the linear one, not the
+capture-shaped one, and nothing landed anywhere else in the arena. Both
+draws retired (the EOP fired once, exit_value=1, no fault/hang/timeout
+marker in the live klog window; the loader still accepted connections on
+9021 afterwards).
+
+**Corrected after a source audit.** Step AF zero-initialized `draw` and never
+set `draw.gate_mask`, so the shared encoder skipped the fragment-gate block.
+It did not write `CB_DISABLE` after the initial normal-color state. Step AF
+establishes that both draws retired with different target register sets, but
+does not isolate either bind from the omitted fragment-gate state. The
+original conclusion that the color bind had been eliminated as a cause is
+withdrawn. `VGT_PRIMITIVE_TYPE` still read 0 in every tested write form,
+but that readback alone does not locate the zero-pixel failure.
+The A/B payload source now selects the full gate for a future build;
+the Step AF ELF and result above remain the historical run.
+
+**What remains open.** Whether that register write is dropped or only its
+readback is masked is still not settled, and the next reviewed delta has
+two candidates: (a) load the uconfig records one per table load (and with
+`VGT_PRIMITIVE_TYPE` first) to test whether the loader consumes the whole
+table; (b) reproduce the native runtime's *indexed* draw path
+(`set_index_size` -> `VGT_INDEX_TYPE` with index type 2, `set_index_buffer`,
+`set_index_count`, `draw_index`) instead of the auto-indexed
+`DRAW_INDEX_AUTO` every OpenAGC draw has used so far. Neither is a retry of
+anything above. `hardware_qualified` stays **false**, `gpu_executable`
+stays 0, `OPENAGC_RASTER_GPU_QUALIFIED` stays **0**, the pin tables stay
+empty, and the PS5 policy still refuses `OPENAGC_PS5_CAP_DRAW`.
+
+## Step AE: the shared rasterizer's AGC-shaped draw (host locked, console refused at setup)
+
+### What changed, and why
+
+The public native runtime at the pinned release commit
+(`blackbearreloaded/ps5-opengl`, `6cb291abea32281571c49705735046425cf000fd`,
+`src/platform/ps5_agc_native_runtime.c`) settles the packet shape the Step-AD
+vehicle got wrong. `sceAgcLinkShaders` writes 34 context records and **three
+uconfig records**; `set_linkage_uc_state` then loads exactly those three with
+`set_uc` (`sceAgcDcbSetUcRegistersIndirect`), writes the shader registers with
+`set_sh`, the NGG user data at SH `0x8c` with `set_sh_direct`, and draws. The
+C1 capture's uconfig records are `{0x25b GE_CNTL}`, `{0x262
+SPI_SHADER_USER_VGPR_EN}`, `{0x242 VGT_PRIMITIVE_TYPE=4}` - and no
+`VGT_SHADER_STAGES_EN`, which is a *context* record (`0x2d5`).
+
+Two deterministic defects followed for Step AD:
+
+1. its context table mixed the uconfig linkage records into the context table,
+   so `SPI_SHADER_USER_VGPR_EN` (610) was written to an unrelated context
+   register, and
+2. `VGT_PRIMITIVE_TYPE` was written with the **indexed** packet and a
+   `GRBM_GFX_INDEX` broadcast. Mesa `si_emit_draw_registers` (fetched from
+   Mesa `main`) uses the **plain** `radeon_set_uconfig_reg(R_030908_...)` for
+   `GFX_VERSION >= GFX10` and reserves the indexed form for GFX7-GFX9;
+   `soc15d.h` gives `PACKET3_SET_UCONFIG_REG_INDEX_TYPE` as an index *type*
+   (2), not a generic index.
+
+The shared rasterizer (`include/openagc/raster.h`, `openagc_raster_encode_draw`)
+now composes the whole draw: the proven scalar state, viewport/guardband/scissor
+sequences, the context table with the vertex records, the one context linkage
+record and the pixel records, an AGC-shaped uconfig table
+`{GE_CNTL, USER_VGPR_EN, VGT_PRIMITIVE_TYPE = this draw's topology}`, the ES/PS
+shader registers with the PGMs patched, the GS user-data dwords, the Step-AB
+nine-word linear color bind, one `DRAW_INDEX_AUTO`, and the shared EOP trailer.
+A uconfig index inside a context table is refused, a linkage block without
+`GE_CNTL` is refused, and a triangle list that is not a multiple of three
+vertices is refused. `tests/test_openagc_raster` locks the packet walk, the two
+table contents, every refusal, and the `OPENAGC_RASTER_GPU_QUALIFIED` pin (0).
+
+### The single push
+
+`tools/payload/draw_raster_eop.c` (built from this revision, SDK mode,
+`validate_elf.py` clean, 110,536 bytes, SHA-256
+`9d508d71bfbc5f81cbdb8ac77fe327c31b2fb3853c7987b26154a62e5a35516b`) was pushed
+**once** on 2026-09-26 through `tools/payload/deploy.py` with the live klog
+attached. The payload opened `/dev/gc`, became a graphics client
+(`### GFX(pipe0) Game ... pid:202`), and then the `0xC004812E` context query
+was refused:
+
+```
+openagc-draw-raster: context query refused
+### Warning: own_gfx_ring timeout pid=202.
+# process pid=202, payload.elf calls exit() exit_value=0.
+```
+
+The payload's own fail-closed path returned before building the command buffer,
+so **nothing was submitted**: no IB, no draw, no packet. The loader still
+accepted connections afterwards and the log was retrieved over FTP 2120. Per
+the one-push rule this run was not repeated; the graphics-ring timeout is a
+console-side state the operator owns, not a payload defect, and the payload
+cannot be scored as a rasterization result either way.
+
+### What this does and does not establish
+
+* It establishes the AGC-shaped IB host-side: the composed draw is a single
+  448-dword submission whose uconfig table is byte-for-byte the shape the
+  public native runtime loads and whose values are the pinned fixtures'
+  (locked by CTest).
+* It does **not** establish any console result for the draw: the submit never
+  happened, so the zero-pixel question from Steps AC/AD is unchanged.
+* `hardware_qualified` stays **false**, `gpu_executable` stays 0,
+  `OPENAGC_RASTER_GPU_QUALIFIED` stays **0**, the evidence pin tables stay
+  empty, and the next draw attempt needs a console whose graphics ring is
+  healthy plus a fresh reviewed delta - not a retry of this artifact.
+* The PS5 policy target is no longer a blanket deny: it publishes the
+  qualification record for the one observed firmware
+  (`openagc_ps5_policy_qualification`, `openagc_ps5_policy_require`) with the
+  capabilities Steps B-AD proved, and names the draw as still refused. Nothing
+  in that record is new evidence.
+
+## Step AN: corrected ESGS ring register and normal color writes
+
+Mesa's `gfx10.json` maps context index `0x2ab` to
+`VGT_ESGS_RING_ITEMSIZE`; index `0x2d3` is `GE_NGG_SUBGRP_CNTL`. The latter
+was mislabeled in the earlier NGG probes. A decoded PS5_Vulkan C1 draw
+records `0x2ab=1`, while the pinned NGG fixture records `0x2ab=0`. The
+shared rasterizer's optional fragment-gate block had a `CB_DISABLE` default;
+it now uses `0x00cc0011`, and the host test verifies no later disable write
+when that block is selected. The historical Step AN payload left that block
+unselected, as documented below.
+
+The Step AN payload copies the fixture's vertex context table and changes
+only its `0x2ab` record to 1. The shared encoder then emits the draw and
+reads `0x2ab` before the draw. One SDK ELF passed `validate_elf.py` (110,328
+bytes, SHA-256 `a9e45a049cbb5a135fab8142907ccda88a39c752627f868438dc72a7b9a31b1c`)
+and was pushed once to port 9021 on FW `0x9400008`; the log was retrieved
+from `/data/prosperoai/openagc-ib-dump-draw-ring.log` on FTP port 2120.
+The payload became a graphics client (pid 97), submitted the draw, and exited
+without a klog GPU fault, panic, hang, or timeout marker in the captured
+window. Its readbacks show `CB_COLOR_CONTROL=00cc0011`, the NGG program
+registers, and `VGT_ESGS_RING_ITEMSIZE=1`. The acceptance result was
+`completed=0`, `wait=30s`, `pixels=0`, `outside=0`, `guard=0`.
+
+This establishes the correct ring-size register write and readback. It does
+not establish a completed GPU draw or a pixel. A later source audit found
+that Step AN's `OPENAGC_GATE_MASK` appeared only in the log: `draw` was
+zero-initialized and its `gate_mask` was never assigned. The encoder therefore
+skipped the fragment-gate block. Its `CB_NORMAL` readback came from the
+initial scalar state. The payload now assigns the gate mask, but this new
+binary has not been pushed. No second push was made.
+The corrected ELF passes offline validation (110,328 bytes, SHA-256
+`ed408447bc774d3021c9facdfe2c1eddfbf16e0735880554ee468bd67615ecd3`);
+it is not hardware evidence.
+The remaining fragment-stage stall needs a new instrument or a native FW9.40
+capture before enabling `OPENAGC_PS5_CAP_DRAW`; both Vulkan and OpenGL keep
+using the shared frontend core, and `gpu_executable` remains 0.

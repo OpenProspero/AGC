@@ -18,11 +18,12 @@ Rules this roadmap obeys:
    shortens the path to a usable homebrew driver. Preserve provenance and
    license notices for any code brought in; cross-check register values
    against owned captures before enabling hardware paths.
-4. `src/openagc_ps5_policy.c` stays fail-closed for unqualified
-   firmware. Every new public symbol gets a deny stub there until a
-   reviewed evidence path opens it; the host library never appears in
-   a PS5 image. Deny-all is the gate while FW is unqualified — not the
-   product end state.
+4. `src/openagc_ps5_policy.c` is the qualification gate, not a blanket
+   deny: it publishes, for the one firmware identity the console runs
+   observed, exactly which operations those runs proved
+   (`openagc_ps5_policy_qualification` / `openagc_ps5_policy_require`)
+   and refuses everything else, draws included. Every new public symbol
+   is defined there; the host library never appears in a PS5 image.
 
 ## Where we are
 
@@ -33,15 +34,20 @@ Rules this roadmap obeys:
 | Graphics core: host-linear images, logical state/owner machine, CPU clear execution | `src/openagc_graphics.c` | Host metadata + CPU fills |
 | Shader intake: structural artifacts and pipeline plans | `src/openagc_shader.c` | No compiler, nothing executes |
 | **Shared frontend core** | `src/openagc_frontend.c` | Translation + shared image/buffer I/O and copy |
+| **GPU rasterizer** | `include/openagc/raster.h` | Composes the AGC-shaped draw IB; encodes, never claims a pixel |
 | Vulkan 1.0 subset frontend (host) | `src/openagc_vulkan.c` | Transfer, clear, render-pass and pipeline recording |
 | OpenGL subset frontend (host) | `src/openagc_opengl.c` | Same backend, derived from GL commands |
-| Fail-closed PS5 policy | `src/openagc_ps5_policy.c` | Denies every entry point |
+| PS5 qualification gate | `src/openagc_ps5_policy.c` | Publishes the qualified capability set; refuses the rest |
 
 Tests today: `openagc_host`, `openagc_gpu`, `openagc_graphics`,
-`openagc_shader`, `openagc_frontend`, `openagc_vulkan`,
+`openagc_shader`, `openagc_raster`, `openagc_frontend`, `openagc_vulkan`,
 `openagc_opengl`, `openagc_equivalence`, `openagc_ps5_policy` (CTest).
 Everything below builds on
 `include/openagc/{driver,graphics,shader,frontend,vulkan,opengl}.h`.
+
+The parallel [Electron/DOM port track](https://github.com/OpenProspero/sdk/blob/main/docs/ELECTRON.md)
+has an exact FreeBSD 36.3.1 patch base, a cross-linked PS5 ABI probe, and a
+host DOM smoke app. It does not yet have a PS5 Electron runtime.
 
 ## Target architecture
 
@@ -343,7 +349,8 @@ Blocked by two independent gates:
    least one uconfig write succeeds. The native ps5-opengl runtime passes
    topology through `sceAgcLinkShaders`; comparison with its linker output
    is the next graphics gate. Rasterization is **not** yet proven;
-   `gpu_executable`, the pin tables, and deny-all PS5 policy are unchanged.
+   `gpu_executable` and the draw capability in the PS5 qualification table
+   remain unqualified.
    A host-only intake for the public AGC linker's 34 context and three
    uconfig records now sits in the shared frontend core; both VK and GL
    wrappers use it, and a host equivalence test now checks all 34 context,
@@ -355,6 +362,34 @@ Blocked by two independent gates:
    address; both frontend format dialects take the same path. The target
    write mask, draw-state sequence, and rasterization gate remain open.
    See [hardware-evidence.md](hardware-evidence.md#step-ad-the-ngg-draw-and-what-it-settles).
+   Step AE turns that work into the shared **GPU rasterizer**
+   (`include/openagc/raster.h`): one entry point composes the whole draw -
+   scalar rasterizer state, viewport/guardband/scissor sequences, the
+   context table, the AGC-shaped uconfig table (`GE_CNTL`, the user-VGPR
+   enable, `VGT_PRIMITIVE_TYPE` from the draw's topology), the ES/PS
+   shader registers with patched PGMs, the GS user data, the Step-AB color
+   bind, one `DRAW_INDEX_AUTO` and the EOP trailer - and encodes it in one
+   IB, with a uconfig index in a context table refused. The public native
+   runtime's own sequence (release commit `6cb291ab`) and Mesa
+   `si_emit_draw_registers` are the cites for the packet routing. Two
+   console runs scored it: the IB submits and **retires** (`completed=1`)
+   with every program register readable - GE_CNTL through the uconfig
+   aperture included - and still writes no pixel, in neither a linear
+   target nor a target bound with the capture's own 16 COLOR0 records
+   (Step AF's two-pass A/B). A later source audit found that Step AF left
+   `draw.gate_mask` at zero, so the optional fragment-gate block was absent;
+   those results cannot isolate the bind from the omitted state. Step AN corrected the
+   mislabeled context probe: `0x2ab` is
+   `VGT_ESGS_RING_ITEMSIZE`, whereas `0x2d3` is `GE_NGG_SUBGRP_CNTL`.
+   A single FW9.40 draw with the capture's `0x2ab=1` and normal color
+   writes read that value back but stalled at the draw (`completed=0`,
+   zero pixels). Step AN also left the fragment-gate block unselected, despite
+   printing the intended mask in its log. The payload now assigns that mask,
+   but the corrected ELF has not run on hardware.
+   `OPENAGC_RASTER_GPU_QUALIFIED` stays 0. The frontends
+   still refuse a draw;
+   wiring them onto this encoder is the next stage-5 step, and it cannot
+   flip `gpu_executable` before a pixel exists.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
@@ -396,8 +431,9 @@ and two draw vehicles have been observed on console. The corrected NGG draw
 still produces no pixel. These results qualify only the particular packets
 and readbacks recorded in [hardware-evidence.md](hardware-evidence.md); they
 do not qualify a general hardware backend, Vulkan/OpenGL execution, or
-presentation. The PS5 policy library remains deny-all, and any further
-console experiment must remain a single validated push with no retry.
+presentation. The PS5 policy library advertises only capabilities qualified
+for the observed firmware and still refuses draws and presentation. The one
+validated payload push for the current draw step has already been used.
 
 ## Reuse map
 
