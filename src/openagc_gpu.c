@@ -1306,6 +1306,11 @@ openagc_result openagc_ib_dump_parse(const char *text, uint32_t *words,
                                strlen(OPENAGC_IB_DUMP_TAG_MMIO_TILEMODE)) == 0) {
                 kind = OPENAGC_IB_DUMP_KIND_MMIO_TILEMODE;
             } else if (tag != NULL &&
+                       (size_t)(p - tag) == strlen(OPENAGC_IB_DUMP_TAG_DRAW_RASTER) &&
+                       strncmp(tag, OPENAGC_IB_DUMP_TAG_DRAW_RASTER,
+                               strlen(OPENAGC_IB_DUMP_TAG_DRAW_RASTER)) == 0) {
+                kind = OPENAGC_IB_DUMP_KIND_DRAW_RASTER;
+            } else if (tag != NULL &&
                        (size_t)(p - tag) == strlen(OPENAGC_IB_DUMP_TAG_DRAW_POINT) &&
                        strncmp(tag, OPENAGC_IB_DUMP_TAG_DRAW_POINT,
                                strlen(OPENAGC_IB_DUMP_TAG_DRAW_POINT)) == 0) {

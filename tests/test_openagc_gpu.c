@@ -2068,6 +2068,46 @@ static int test_draw_point_window_dump_shape(void)
     return 0;
 }
 
+/*
+ * The shared rasterizer's draw dump: same pixel rule as the point draw,
+ * its own kind, and a leading owned-expect line the parser must skip.
+ */
+static int test_draw_raster_window_dump_shape(void)
+{
+    openagc_ib_dump_info info = OPENAGC_IB_DUMP_INFO_INIT;
+    uint32_t words[16u];
+    uint32_t pixels = 0u;
+    static const char dump[] =
+        "openagc-draw-raster-owned: color_va=0000000200024000 rect=8,8,8x8 "
+        "pixels=2 outside=0 guard=0 value=ff0040ff match=1\n"
+        "openagc-ib-dump: tag=draw-raster-eop fw=0x9400008 completed=1 words=4\n"
+        "ib 00000000 ff0040ff ff0040ff 00000000\n";
+
+    EXPECT(openagc_ib_dump_parse(dump, words, 16u, &info), OPENAGC_OK);
+    CHECK(info.kind == OPENAGC_IB_DUMP_KIND_DRAW_RASTER);
+    CHECK(info.completed == 1u && info.word_count == 4u);
+    CHECK(info.evidence_qualified == 0u);
+    CHECK(openagc_ib_dump_draw_raster_pixels_match(
+              &info, words, OPENAGC_PM4_SMOKE_FRAG_PIXEL_RGBA8, &pixels) == 1u);
+    CHECK(pixels == 2u);
+
+    /* The point-draw matcher refuses this kind, and the raster matcher
+     * refuses an untouched window, a zero expectation and another color. */
+    CHECK(openagc_ib_dump_draw_point_pixels_match(
+              &info, words, OPENAGC_PM4_SMOKE_FRAG_PIXEL_RGBA8, NULL) == 0u);
+    words[1] = 0u;
+    words[2] = 0u;
+    words[3] = 0u;
+    CHECK(openagc_ib_dump_draw_raster_pixels_match(
+              &info, words, OPENAGC_PM4_SMOKE_FRAG_PIXEL_RGBA8, NULL) == 0u);
+    words[1] = OPENAGC_PM4_SMOKE_FRAG_PIXEL_RGBA8;
+    CHECK(openagc_ib_dump_draw_raster_pixels_match(&info, words, 0u, NULL) == 0u);
+    words[1] = 0xff4000ffu;
+    CHECK(openagc_ib_dump_draw_raster_pixels_match(
+              &info, words, OPENAGC_PM4_SMOKE_FRAG_PIXEL_RGBA8, NULL) == 0u);
+    return 0;
+}
+
 static int test_ngg_draw_ib_contracts(void)
 {
     openagc_pm4_draw_point_state state;
@@ -2273,6 +2313,7 @@ int main(void)
         test_draw_point_ib_and_pixels() != 0 ||
         test_draw_point_scan_bounds() != 0 ||
         test_draw_point_window_dump_shape() != 0 ||
+        test_draw_raster_window_dump_shape() != 0 ||
         test_ngg_draw_ib_contracts() != 0) {
         return 1;
     }

@@ -40,6 +40,10 @@
  * tag=mmio-tilemode means Step-AA read-only absolute COPY_DATA of
  * GB_ADDR_CONFIG then GB_TILE_MODE0..31 (console tile-mode table; no
  * write, no CB bind, no DRAW).
+ * tag=draw-point-eop and tag=draw-ngg-eop mean the words are the drawn
+ * color-target pixel window, not IB dwords (Steps AC and AD).
+ * tag=draw-raster-eop means the same window for the shared rasterizer's
+ * AGC-shaped draw IB.
  * None of these alone is a full CB_BIND pin: evidence_qualified stays 0
  * until an independently owned capture is pinned separately.
  * Use openagc_ib_dump_cb_bind_full_match for the Step-AB word set and
@@ -57,6 +61,7 @@
 #define OPENAGC_IB_DUMP_TAG_CTXREG_CB_BIND_FULL "ctxreg-cb-bind-full"
 #define OPENAGC_IB_DUMP_TAG_DRAW_POINT "draw-point-eop"
 #define OPENAGC_IB_DUMP_TAG_DRAW_NGG "draw-ngg-eop"
+#define OPENAGC_IB_DUMP_TAG_DRAW_RASTER "draw-raster-eop"
 #define OPENAGC_IB_DUMP_TAG_MMIO_TILEMODE "mmio-tilemode"
 
 typedef uint32_t openagc_ib_dump_kind;
@@ -103,7 +108,13 @@ enum {
      * draw wrote, not IB dwords. A positive match means the shader's color
      * reached the target and nothing else did.
      */
-    OPENAGC_IB_DUMP_KIND_DRAW_POINT = 8u
+    OPENAGC_IB_DUMP_KIND_DRAW_POINT = 8u,
+    /*
+     * AGC-shaped draw: the words are the color-target pixel window the
+     * shared rasterizer's IB wrote, not IB dwords. The same fail-closed
+     * pixel rule as the point draw applies.
+     */
+    OPENAGC_IB_DUMP_KIND_DRAW_RASTER = 9u
 };
 
 typedef struct openagc_ib_dump_info {
@@ -231,9 +242,9 @@ static inline uint32_t openagc_ib_dump_cb_bind_full_match(
  * evidence_qualified: this proves the draw's own target, not a display
  * path or a general renderer.
  */
-static inline uint32_t openagc_ib_dump_draw_point_pixels_match(
+static inline uint32_t openagc_ib_dump_draw_pixels_match_common(
     const openagc_ib_dump_info *info, const uint32_t *words,
-    uint32_t expected_pixel, uint32_t *pixel_count)
+    uint32_t expected_pixel, openagc_ib_dump_kind kind, uint32_t *pixel_count)
 {
     uint32_t i;
     uint32_t matched = 0u;
@@ -244,7 +255,7 @@ static inline uint32_t openagc_ib_dump_draw_point_pixels_match(
     if (info->dump_parsed == 0u || info->completed == 0u) {
         return 0u;
     }
-    if (info->kind != OPENAGC_IB_DUMP_KIND_DRAW_POINT) {
+    if (info->kind != kind) {
         return 0u;
     }
     if (info->word_count == 0u) {
@@ -269,6 +280,30 @@ static inline uint32_t openagc_ib_dump_draw_point_pixels_match(
         *pixel_count = matched;
     }
     return 1u;
+}
+
+static inline uint32_t openagc_ib_dump_draw_point_pixels_match(
+    const openagc_ib_dump_info *info, const uint32_t *words,
+    uint32_t expected_pixel, uint32_t *pixel_count)
+{
+    return openagc_ib_dump_draw_pixels_match_common(
+        info, words, expected_pixel, OPENAGC_IB_DUMP_KIND_DRAW_POINT,
+        pixel_count);
+}
+
+/*
+ * The same fail-closed pixel rule for tag=draw-raster-eop dumps, whose
+ * words are the window the shared rasterizer's IB drew into. Different
+ * kind, same acceptance: every nonzero word must be the shader's export
+ * and at least one pixel must have matched.
+ */
+static inline uint32_t openagc_ib_dump_draw_raster_pixels_match(
+    const openagc_ib_dump_info *info, const uint32_t *words,
+    uint32_t expected_pixel, uint32_t *pixel_count)
+{
+    return openagc_ib_dump_draw_pixels_match_common(
+        info, words, expected_pixel, OPENAGC_IB_DUMP_KIND_DRAW_RASTER,
+        pixel_count);
 }
 
 /*
