@@ -22,7 +22,10 @@ are tracked stages, not the product identity.
 | Pipelines | Structural plans; shared host PSBC and AGC linker-register snapshots |
 | Color-buffer bind | Nine-register linear RGBA8 bind (Step AB) and the public capture's 16-record set, both console round-trip proven |
 | GPU rasterizer | `include/openagc/raster.h` composes one draw IB: scalar state, context/uconfig tables, ES/PS register program, colour bind, `DRAW_INDEX_AUTO` or `DRAW_INDEX_2`, EOP trailer, optional gate blocks. The shared core's capability reports `gpu_rasterization=1`, qualified by the Step AQ console pixel |
-| First console DRAW | **Proven (Step AQ)**: submitted through the console's own AGC driver, the draw writes 64 dwords that are all the pinned pixel shader's `0xff0040ff`, exactly inside the viewport rectangle, with an empty guard scan and the nine colour-bind registers reading back as composed. The raw `0xC0108102` ioctl path has never produced a fragment; the shared EOP marker is not delivered on the AGC path, so completion reads the target |
+| First console DRAW | **Proven (Step AQ)**: submitted through the console's own AGC driver, the draw writes 64 dwords that are all the pinned pixel shader's `0xff0040ff`, exactly inside the viewport rectangle, with an empty guard scan and the nine colour-bind registers reading back as composed. The raw `0xC0108102` ioctl path has never produced a fragment; Step AQ omitted the EOP packet, so it did not establish completion |
+| Native submit bridge | Optional `OpenAGC::ps5_gpu` takes a caller-owned GPU-visible draw. A FW9.40 console run with the **OpenProspero native CRT and module loader** returned marker `1`, all 64 expected pixels, and a clean exit. This is one qualified payload draw, not a general GPU backend |
+| Application preflight | `examples/ps5-native-smoke` is a separate OpenProspero C++ application with a runtime FW9.40 check and a log. It has not been run as an app on console; no GPU or VideoOut call is made |
+| Application GPU diagnostic | `examples/ps5-native-gpu-smoke` compiles the bounded AGC bridge draw as an OpenProspero application with the opt-in app AGC loader and SDK UDP logging. A FW9.40 native-writer PKG reached `EXEC /app0/eboot.bin`, but produced no received UDP log or qualified marker/pixels; VideoOut is not used. This is not Vulkan/OpenGL |
 | Draws through the frontends | Still `NOT_READY`: `vkCmdDraw`/`glDrawArrays` are not yet wired onto the encoder. The CPU paths (clears, store-const compute) are the fallback |
 | Presentation / swapchain | Native GPU swapchain refused; experimental CPU VideoOut presenter added for QuickJS |
 | `compiler_verified` / `gpu_executable` | Always **0** on accepted plans today |
@@ -47,6 +50,10 @@ display confirmation.
 ## Stage gates (short)
 
 See [docs/roadmap.md](docs/roadmap.md) for the full staged plan.
+The external-application Vulkan 1.0 and OpenGL 3.3 ABI, including runtime
+compilation of application-supplied shaders, is tracked separately in stage 9;
+the existing host `openagc_vk_*` / `openagc_gl_*` subsets are not standard
+drivers.
 
 1. **Stages 1–4 (host)** — shared frontend core, VK/GL subsets, refuse
    unsupported ops. Done on host.
@@ -80,8 +87,19 @@ the copy, WRITE_DATA and compute vehicles; the raster campaign is:
   packed 32-pixel row is 128, which is what made the first runs look like a
   placement anomaly; with that understood the acceptance is exact.
 
-The shared EOP marker is not delivered on the AGC submission path. Details,
-limits and the per-step artifacts: [docs/hardware-evidence.md](docs/hardware-evidence.md).
+The Step AQ payload left `append_eop=0` and emitted no marker packet;
+its `completed=0` therefore cannot establish whether AGC supports that EOP.
+Details and per-step artifacts: [docs/hardware-evidence.md](docs/hardware-evidence.md).
+An opt-in follow-up submitted one draw with a distinct completion event from
+[PS5_Vulkan's R90 runs](https://github.com/mihawk-99/PS5_Vulkan/blob/main/driver/ps5vk_queue.c).
+On FW9.40 it returned marker `1`, exactly 64 expected shader pixels
+and no out-of-bounds writes; the loader recorded a clean exit. The
+bridge retains a pending submission on timeout or driver error, and
+requires the caller to keep its GPU memory mapped until completion.
+The full bridge also passed the same exact-pixel check with the
+OpenProspero native CRT, validated runtime firmware query, and its AGC
+module loader. Application-profile GPU and native VideoOut execution
+remain unqualified.
 
 ## Build
 
@@ -90,6 +108,21 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+The optional native target is separate from the host implementation:
+configure with `-DOPENAGC_PS5_GPU_NATIVE=ON` when cross-compiling
+for PS5, link `OpenAGC::ps5_gpu`, and provide the SDK's dynamic-loader
+and `op_ps5_system_firmware_version()` APIs. The native bridge now
+requires the OpenProspero SDK's validated runtime query (not the
+payload CRT's process SDK-version field); application-profile linkage
+is available with the updated OpenProspero CRT, but GPU execution
+from an application/PKG remains untested. It does not make the host
+Vulkan/OpenGL frontends available on the console. `openagc_ps5_gpu`
+allows one active bridge instance per process and keeps initialized
+AGC modules resident until process exit, because the FW9.40 driver
+refused their unload. It submits a caller-owned raster draw; it is
+not a shader compiler, memory allocator, swapchain, or complete GPU
+driver.
 
 Extra checks the stages expect:
 

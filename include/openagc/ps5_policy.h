@@ -44,9 +44,10 @@ enum {
     /*
      * A draw that lands a pixel: the AGC-submitted raster draw that writes
      * the pinned pixel shader's colour into the caller's target (Step AQ).
-     * The shared EOP marker is not delivered on that submission path, so a
-     * caller must accept the target's contents, not a marker, as the
-     * completion signal.
+     * The Step-AQ payload omitted the optional EOP, so it established
+     * pixels but did not test completion. A later standalone AGC
+     * diagnostic observed an explicit marker and 64 exact pixels on
+     * FW9.40; application/frontend completion remains unverified.
      */
     OPENAGC_PS5_CAP_DRAW = 128u
 };

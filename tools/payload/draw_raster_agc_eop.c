@@ -32,7 +32,16 @@
  */
 
 #include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/pm4_agc_completion_fw940.h"
 #include "openagc/raster.h"
+#if OPENAGC_AGC_COMPLETION
+#include "openagc/ps5_policy.h"
+#endif
+#if OPENAGC_GPU_BRIDGE
+#include "openagc/ps5_gpu.h"
+#include <openprospero/firmware.h>
+extern int sceKernelGetProsperoSystemSwVersion(void *);
+#endif
 
 #include "ngg_smoke_tables.h"
 
@@ -43,11 +52,23 @@
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#if !OPENAGC_GPU_BRIDGE
 #include <sys/ioctl.h>
+#endif
 #include <sys/mman.h>
 #include <sys/time.h>
+#if OPENAGC_APP_BRIDGE
+#include <openprospero/udp_log.h>
+#ifndef OPENAGC_LOG_HOST_IP
+#error "The application UDP log requires an explicit receiver IPv4 address"
+#endif
+#define OPENAGC_UDP_LOG_PORT 9999u
+#endif
 #if OPENAGC_AGC_SUBMIT
 #include <dlfcn.h>
+#endif
+#if OPENAGC_AGC_COMPLETION
+extern uint32_t kernel_get_fw_version(void);
 #endif
 
 extern int sceKernelAllocateMainDirectMemory(size_t len, size_t alignment,
@@ -100,6 +121,18 @@ extern int sceKernelMapNamedDirectMemory(void **address, size_t len,
 #ifndef OPENAGC_AGC_SUBMIT
 #define OPENAGC_AGC_SUBMIT 0
 #endif
+#ifndef OPENAGC_AGC_COMPLETION
+#define OPENAGC_AGC_COMPLETION 0
+#endif
+#ifndef OPENAGC_GPU_BRIDGE
+#define OPENAGC_GPU_BRIDGE 0
+#endif
+#if OPENAGC_AGC_COMPLETION && !OPENAGC_AGC_SUBMIT
+#error "AGC completion requires AGC submission"
+#endif
+#if OPENAGC_GPU_BRIDGE && !OPENAGC_AGC_COMPLETION
+#error "the native GPU bridge requires AGC completion"
+#endif
 #ifndef OPENAGC_POINT_DRAW
 #define OPENAGC_POINT_DRAW 0
 #endif
@@ -137,8 +170,20 @@ struct openagc_agc_description {
 #endif
 
 #ifndef OPENAGC_LOG_PATH
+#if OPENAGC_GPU_BRIDGE
+#define OPENAGC_LOG_PATH "/data/prosperoai/openagc-gpu-bridge-op-fw940.log"
+#elif OPENAGC_AGC_COMPLETION
+#define OPENAGC_LOG_PATH "/data/prosperoai/openagc-agc-completion-fw940.log"
+#else
 #define OPENAGC_LOG_PATH "/data/prosperoai/openagc-ib-dump-draw-agc-rows.log"
 #endif
+#endif
+#if OPENAGC_APP_BRIDGE
+static int openagc_log_bytes(const char *bytes, size_t length)
+{
+    return op_ps5_udp_log_write(bytes, length);
+}
+#else
 static const char openagc_log_path[] = OPENAGC_LOG_PATH;
 
 static int openagc_log_bytes(const char *bytes, size_t length)
@@ -155,6 +200,7 @@ static int openagc_log_bytes(const char *bytes, size_t length)
     fclose(handle);
     return 0;
 }
+#endif
 
 static int openagc_logf(const char *fmt, ...)
 {
@@ -165,7 +211,7 @@ static int openagc_logf(const char *fmt, ...)
     va_start(args, fmt);
     n = vsnprintf(line, sizeof(line), fmt, args);
     va_end(args);
-    if (n < 0) {
+    if (n < 0 || (size_t)n >= sizeof(line)) {
         return -1;
     }
     return openagc_log_bytes(line, strlen(line));
@@ -431,8 +477,27 @@ static int openagc_elapsed_seconds(const struct timeval *start)
     return (int)(now.tv_sec - start->tv_sec);
 }
 
+#if OPENAGC_AGC_COMPLETION
+static void openagc_flush_arena(const void *address, size_t bytes)
+{
+    uintptr_t line = (uintptr_t)address & ~(uintptr_t)63u;
+    uintptr_t end = (uintptr_t)address + bytes;
+
+    for (; line < end; line += 64u) {
+        __asm__ volatile("clflush (%0)" : : "r"(line) : "memory");
+    }
+    __asm__ volatile("mfence" ::: "memory");
+}
+#endif
+
 int main(void)
 {
+#if OPENAGC_APP_BRIDGE
+    if (op_ps5_udp_log_open(OPENAGC_LOG_HOST_IP, OPENAGC_UDP_LOG_PORT) != 0)
+        return 3;
+    if (openagc_logf("openagc-app: entered main; UDP receiver=9999\n") != 0)
+        return 3;
+#endif
     uint8_t *arena = NULL;
     uint8_t *color = NULL;
     uint32_t *ib = NULL;
@@ -442,11 +507,18 @@ int main(void)
     uint32_t *context_table = NULL;
     uint32_t *uconfig_table = NULL;
     uint32_t *cb_probe = NULL;
+#if !OPENAGC_GPU_BRIDGE
     struct openagc_cb *cb = NULL;
-    volatile uint64_t *marker = NULL;
+#endif
+    volatile uint32_t *marker = NULL;
+#if !OPENAGC_GPU_BRIDGE
     struct openagc_submit submit;
+#endif
     struct timeval start;
-    uint64_t ib_va, cb_va, color_va, marker_va, vert_code_va, frag_code_va;
+    uint64_t color_va, marker_va, vert_code_va, frag_code_va;
+#if !OPENAGC_GPU_BRIDGE
+    uint64_t ib_va, cb_va;
+#endif
     uint64_t baseline_va, probe_va, ngg_probe_va;
     uint64_t context_table_va, uconfig_table_va, cb_probe_va;
     openagc_pm4_ngg_program program;
@@ -474,15 +546,36 @@ int main(void)
     int match = 0;
     off_t physical = 0;
 
+#if OPENAGC_AGC_COMPLETION
+    {
+#if OPENAGC_GPU_BRIDGE
+        uint32_t fw = op_ps5_system_firmware_version();
+#else
+        uint32_t fw = kernel_get_fw_version();
+#endif
+        if (fw != OPENAGC_PS5_POLICY_FW940_ID) {
+            (void)openagc_logf(
+                "openagc-draw-raster: firmware refused got=%08x expected=%08x\n",
+                fw, OPENAGC_PS5_POLICY_FW940_ID);
+            return 1;
+        }
+#if OPENAGC_APP_BRIDGE
+        (void)openagc_logf("openagc-app: runtime firmware validated\n");
+#endif
+    }
+#endif
+
+#if OPENAGC_APP_BRIDGE
+    (void)openagc_logf("openagc-app: allocating direct GPU memory\n");
+#endif
     {
         int rc = sceKernelAllocateMainDirectMemory(OPENAGC_ARENA, OPENAGC_ARENA, 1,
                                                    &physical);
 
         if (rc != 0) {
-            return openagc_logf("openagc-draw-raster: allocate failed rc=%d\n",
-                                rc) == 0
-                       ? 0
-                       : 1;
+            (void)openagc_logf("openagc-draw-raster: allocate failed rc=%d\n",
+                               rc);
+            return 1;
         }
     }
     {
@@ -494,9 +587,8 @@ int main(void)
             "openagc-draw-raster");
 
         if (rc != 0) {
-            return openagc_logf("openagc-draw-raster: map failed rc=%d\n", rc) == 0
-                       ? 0
-                       : 1;
+            (void)openagc_logf("openagc-draw-raster: map failed rc=%d\n", rc);
+            return 1;
         }
     }
 
@@ -507,11 +599,15 @@ int main(void)
     context_table = (uint32_t *)(arena + OPENAGC_CONTEXT_TABLE_OFF);
     uconfig_table = (uint32_t *)(arena + OPENAGC_UCONFIG_TABLE_OFF);
     cb_probe = (uint32_t *)(arena + OPENAGC_CB_PROBE_OFF);
+#if !OPENAGC_GPU_BRIDGE
     cb = (struct openagc_cb *)(arena + OPENAGC_CB_OFF);
-    marker = (volatile uint64_t *)(arena + OPENAGC_MARKER_OFF);
+#endif
+    marker = (volatile uint32_t *)(arena + OPENAGC_MARKER_OFF);
     color = arena + OPENAGC_COLOR_OFF;
+#if !OPENAGC_GPU_BRIDGE
     ib_va = (uint64_t)(uintptr_t)ib;
     cb_va = (uint64_t)(uintptr_t)cb;
+#endif
     color_va = (uint64_t)(uintptr_t)color;
     marker_va = (uint64_t)(uintptr_t)marker;
     baseline_va = (uint64_t)(uintptr_t)baseline;
@@ -532,9 +628,8 @@ int main(void)
 
     if ((color_va & 0xffull) != 0ull || (vert_code_va & 0xffull) != 0ull ||
         (frag_code_va & 0xffull) != 0ull) {
-        return openagc_logf("openagc-draw-raster: VA not 256B aligned\n") == 0
-                   ? 0
-                   : 1;
+        (void)openagc_logf("openagc-draw-raster: VA not 256B aligned\n");
+        return 1;
     }
 
     memset(&program, 0, sizeof(program));
@@ -548,8 +643,8 @@ int main(void)
         }
     }
     if (i == OPENAGC_NGG_VERTEX_CONTEXT_COUNT) {
-        return openagc_logf("openagc-draw-raster: no ESGS ring record\n") == 0
-                   ? 0 : 1;
+        (void)openagc_logf("openagc-draw-raster: no ESGS ring record\n");
+        return 1;
     }
     program.vertex_context.count = OPENAGC_NGG_VERTEX_CONTEXT_COUNT;
     program.vertex_context.offsets = openagc_ngg_vertex_context_offsets;
@@ -612,6 +707,7 @@ int main(void)
     draw.uconfig_table = uconfig_table;
     draw.cb_probe_va = cb_probe_va;
     draw.gate_mask = OPENAGC_GATE_MASK;
+    draw.append_eop = 0u;
     draw.sequence = OPENAGC_EOP_SEQUENCE;
     draw.marker_va = marker_va;
     gs_out = draw.topology == OPENAGC_RASTER_TOPOLOGY_POINT_LIST
@@ -631,16 +727,95 @@ int main(void)
                 program.vertex_context.count, program.vertex_shader.count,
                 program.linkage.count, program.fragment_context.count,
                 program.fragment_shader.count, program.user_data.count);
-        return openagc_logf("openagc-draw-raster: encode refused\n") == 0 ? 0 : 1;
+        (void)openagc_logf("openagc-draw-raster: encode refused\n");
+        return 1;
     }
     if ((uint64_t)word_count * 4u > OPENAGC_CB_OFF - OPENAGC_IB_OFF) {
-        return openagc_logf("openagc-draw-raster: IB overruns its window\n") == 0
-                   ? 0
-                   : 1;
+        (void)openagc_logf("openagc-draw-raster: IB overruns its window\n");
+        return 1;
     }
+#if OPENAGC_AGC_COMPLETION && !OPENAGC_GPU_BRIDGE
+    if (word_count > OPENAGC_RASTER_MAX_WORDS - OPENAGC_PM4_AGC_COMPLETION_WORDS ||
+        word_count + OPENAGC_PM4_AGC_COMPLETION_WORDS >
+            (OPENAGC_CB_OFF - OPENAGC_IB_OFF) / 4u) {
+        (void)openagc_logf("openagc-draw-raster: completion overruns IB\n");
+        return 1;
+    }
+    openagc_pm4_encode_agc_completion(marker_va, OPENAGC_EOP_SEQUENCE,
+                                      words + word_count);
+    word_count += OPENAGC_PM4_AGC_COMPLETION_WORDS;
+#endif
+#if !OPENAGC_GPU_BRIDGE
     memcpy(ib, words, word_count * 4u);
+#if OPENAGC_AGC_COMPLETION
+    openagc_flush_arena(arena, OPENAGC_ARENA);
+#endif
+#endif
 
-#if OPENAGC_AGC_SUBMIT
+#if OPENAGC_GPU_BRIDGE
+    {
+        openagc_ps5_gpu *gpu = NULL;
+        openagc_ps5_gpu_draw request = OPENAGC_PS5_GPU_DRAW_INIT;
+        openagc_ps5_gpu_submission receipt = OPENAGC_PS5_GPU_SUBMISSION_INIT;
+        int32_t platform_error = 0;
+        openagc_result result;
+
+        request.draw = &draw;
+        request.words = ib;
+        request.word_capacity = (OPENAGC_CB_OFF - OPENAGC_IB_OFF) / 4u;
+        request.marker = marker;
+        request.vertex_code = arena + OPENAGC_VERT_CODE_OFF;
+        request.vertex_code_bytes = sizeof(openagc_ngg_vert_code);
+        request.fragment_code = arena + OPENAGC_FRAG_CODE_OFF;
+        request.fragment_code_bytes = sizeof(openagc_ngg_frag_code);
+        request.color = color;
+        request.color_bytes = OPENAGC_COLOR_PITCH * OPENAGC_COLOR_HEIGHT;
+
+        openagc_flush_arena(arena, OPENAGC_ARENA);
+        result = openagc_ps5_gpu_create(&gpu, &platform_error);
+        if (result != OPENAGC_OK) {
+            const char *loader_error = dlerror();
+            struct {
+                uint64_t reserved_00;
+                char text[0x1c];
+                uint32_t packed;
+                uint64_t reserved_28;
+            } raw_version = {0};
+            int version_rc = sceKernelGetProsperoSystemSwVersion(&raw_version);
+            uint32_t system_fw = op_ps5_system_firmware_version();
+            (void)openagc_logf(
+                "openagc-gpu-bridge: create refused result=%d platform=%d "
+                "system=%08x raw_rc=%d raw_packed=%08x raw_text=%.24s "
+                "sdk=%08x loader=%.120s\n",
+                result, platform_error, system_fw,
+                version_rc, raw_version.packed, raw_version.text,
+                kernel_get_fw_version(),
+                loader_error != NULL ? loader_error : "none");
+            return 1;
+        }
+        gettimeofday(&start, NULL);
+        result = openagc_ps5_gpu_submit_draw(gpu, &request,
+                                             OPENAGC_PS5_GPU_MAX_WAIT_MS,
+                                             &receipt);
+        if (result != OPENAGC_OK || !receipt.completed) {
+            (void)openagc_logf(
+                "openagc-gpu-bridge: draw refused result=%d platform=%d "
+                "attempted=%u completed=%u words=%u sequence=%u\n",
+                result, receipt.platform_error, receipt.submitted,
+                receipt.completed, receipt.word_count, receipt.sequence);
+            return 1;
+        }
+        word_count = receipt.word_count;
+        completed = 1;
+        result = openagc_ps5_gpu_destroy(gpu);
+        if (result != OPENAGC_OK) {
+            (void)openagc_logf(
+                "openagc-gpu-bridge: destroy refused result=%d\n", result);
+            return 1;
+        }
+        openagc_flush_arena(arena, OPENAGC_ARENA);
+    }
+#elif OPENAGC_AGC_SUBMIT
     {
         void *agc_module = dlopen("libSceAgc.sprx", RTLD_NOW | RTLD_LOCAL);
         void *driver_module = dlopen("libSceAgcDriver.sprx", RTLD_NOW | RTLD_LOCAL);
@@ -651,28 +826,24 @@ int main(void)
         int32_t rc;
 
         if (agc_module == NULL || driver_module == NULL) {
-            return openagc_logf("openagc-draw-raster: agc module missing\n") == 0
-                       ? 0
-                       : 1;
+            (void)openagc_logf("openagc-draw-raster: agc module missing\n");
+            return 1;
         }
         *(void **)(&agc_init) = dlsym(agc_module, "sceAgcInit");
         *(void **)(&suspend_point) = dlsym(agc_module, "sceAgcSuspendPoint");
         *(void **)(&submit_dcb) = dlsym(driver_module, "sceAgcDriverSubmitDcb");
         if (agc_init == NULL || submit_dcb == NULL || suspend_point == NULL) {
-            return openagc_logf(
-                       "openagc-draw-raster: agc symbols missing init=%d submit=%d "
-                       "suspend=%d\n",
-                       agc_init != NULL, submit_dcb != NULL,
-                       suspend_point != NULL) == 0
-                       ? 0
-                       : 1;
+            (void)openagc_logf(
+                "openagc-draw-raster: agc symbols missing init=%d submit=%d "
+                "suspend=%d\n",
+                agc_init != NULL, submit_dcb != NULL, suspend_point != NULL);
+            return 1;
         }
         rc = agc_init(8u);
         if (rc != 0) {
-            return openagc_logf("openagc-draw-raster: agc init refused rc=%d\n",
-                                rc) == 0
-                       ? 0
-                       : 1;
+            (void)openagc_logf("openagc-draw-raster: agc init refused rc=%d\n",
+                               rc);
+            return 1;
         }
         description.words = ib;
         description.word_count = word_count;
@@ -683,10 +854,9 @@ int main(void)
         gettimeofday(&start, NULL);
         rc = submit_dcb(&description);
         if (rc != 0) {
-            return openagc_logf(
-                       "openagc-draw-raster: agc submit refused rc=%d\n", rc) == 0
-                       ? 0
-                       : 1;
+            (void)openagc_logf(
+                "openagc-draw-raster: agc submit refused rc=%d\n", rc);
+            return 1;
         }
         (void)submit;
         (void)ib_va;
@@ -703,20 +873,17 @@ int main(void)
 
     gc_fd = open("/dev/gc", O_RDWR);
     if (gc_fd < 0) {
-        return openagc_logf("openagc-draw-raster: /dev/gc unavailable\n") == 0
-                   ? 0
-                   : 1;
+        (void)openagc_logf("openagc-draw-raster: /dev/gc unavailable\n");
+        return 1;
     }
     {
         int rc = ioctl(gc_fd, OPENAGC_CONTEXT_QUERY, &submit);
 
         if (rc != 0) {
             close(gc_fd);
-            return openagc_logf(
-                       "openagc-draw-raster: context query refused rc=%d\n",
-                       rc) == 0
-                       ? 0
-                       : 1;
+            (void)openagc_logf(
+                "openagc-draw-raster: context query refused rc=%d\n", rc);
+            return 1;
         }
     }
 
@@ -729,24 +896,36 @@ int main(void)
 
         if (rc != 0) {
             close(gc_fd);
-            return openagc_logf("openagc-draw-raster: submit refused rc=%d\n",
-                                rc) == 0
-                       ? 0
-                       : 1;
+            (void)openagc_logf("openagc-draw-raster: submit refused rc=%d\n",
+                               rc);
+            return 1;
         }
     }
 #endif
 
+#if !OPENAGC_GPU_BRIDGE
     while (openagc_elapsed_seconds(&start) < OPENAGC_DEADLINE_SECONDS) {
-        if (*marker == (uint64_t)OPENAGC_EOP_SEQUENCE) {
+#if OPENAGC_AGC_COMPLETION
+        openagc_flush_arena((const void *)marker, sizeof(*marker));
+#endif
+        if (*marker == OPENAGC_EOP_SEQUENCE) {
             completed = 1;
             break;
         }
         usleep(1000);
     }
+#endif
     if (gc_fd >= 0) {
         close(gc_fd);
     }
+#if OPENAGC_AGC_COMPLETION
+    if (!completed) {
+        (void)openagc_logf("openagc-draw-raster: AGC completion timed out\n");
+        return 1;
+    }
+    openagc_flush_arena(color,
+                        OPENAGC_COLOR_STRIDE_WORDS * OPENAGC_COLOR_HEIGHT * 4u);
+#endif
 
     {
         const uint32_t *target = (const uint32_t *)(const void *)color;
@@ -831,8 +1010,8 @@ int main(void)
         }
     }
 
-    /* Acceptance is what the target holds; the EOP marker is reported beside
-     * it because the AGC path does not deliver it. */
+    /* The original Step AQ accepted pixels without a completion packet.
+     * OPENAGC_AGC_COMPLETION requires a separate marker before this scan. */
     match = (target_nonzero != 0u && target_expected == target_nonzero &&
              outside == 0u && guard == 0u)
                 ? 1
@@ -846,8 +1025,6 @@ int main(void)
     /* Whole-target summary: where the writes landed and what they hold. */
     {
         const uint32_t *target = (const uint32_t *)(const void *)color;
-        uint32_t nonzero = 0u;
-        uint32_t expected = 0u;
         uint32_t min_x = 0xffffffffu, max_x = 0u, min_y = 0xffffffffu, max_y = 0u;
         uint32_t first_value = 0u;
 
@@ -858,10 +1035,6 @@ int main(void)
 
             if (word == 0u) {
                 continue;
-            }
-            ++nonzero;
-            if (word == OPENAGC_PM4_SMOKE_FRAG_PIXEL_RGBA8) {
-                ++expected;
             }
             if (first_value == 0u) {
                 first_value = word;
@@ -885,8 +1058,7 @@ int main(void)
         }
     }
 
-    /* Acceptance is what the target holds; the EOP marker is reported beside
-     * it because the AGC path does not deliver it. */
+    /* Only the opt-in completion probe requires a marker before readback. */
     match = (target_nonzero != 0u && target_expected == target_nonzero &&
              outside == 0u && guard == 0u)
                 ? 1
@@ -894,6 +1066,22 @@ int main(void)
     if (pixels != 0u && value != OPENAGC_PM4_SMOKE_FRAG_PIXEL_RGBA8) {
         match = 0;
     }
+#if OPENAGC_AGC_COMPLETION
+    if (target_nonzero != OPENAGC_VIEW_WORDS ||
+        target_expected != OPENAGC_VIEW_WORDS ||
+        pixels != OPENAGC_VIEW_WORDS || !completed ||
+        target_min_x != OPENAGC_VIEW_X ||
+        target_min_y != OPENAGC_VIEW_Y ||
+        target_max_x != OPENAGC_VIEW_X + OPENAGC_VIEW_W - 1u ||
+        target_max_y != OPENAGC_VIEW_Y + OPENAGC_VIEW_H - 1u) {
+        match = 0;
+    }
+    for (i = 0u; i < OPENAGC_VIEW_WORDS; ++i) {
+        if (window[i] != OPENAGC_PM4_SMOKE_FRAG_PIXEL_RGBA8) {
+            match = 0;
+        }
+    }
+#endif
 
     if (openagc_write_report(
             completed, color_va, pixels, outside, guard, value,

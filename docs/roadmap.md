@@ -388,8 +388,18 @@ Blocked by two independent gates:
    but the corrected ELF has not run on hardware.
    `OPENAGC_RASTER_GPU_QUALIFIED` stays 0. The frontends
    still refuse a draw;
-   wiring them onto this encoder is the next stage-5 step, and it cannot
-   flip `gpu_executable` before a pixel exists.
+   wiring them onto this encoder is the next stage-5 step; the pixel
+   proof alone does not make arbitrary PSBC plans executable. A separate
+   opt-in `ps5_gpu.h` submit bridge now composes this draw and waits for
+   a cache-flushing AGC marker. A standalone FW9.40 console probe has
+   observed that marker with 64 exact shader pixels and an empty guard;
+   the full bridge has repeated that result using OpenProspero's
+   validated runtime firmware query and its native CRT/AGC module
+   loader. Only this bounded payload draw is qualified: the
+   application/package GPU path, frontends and VideoOut remain
+   unqualified.
+   A timeout keeps the caller's GPU memory live and blocks subsequent
+   submissions.
 
 Until both close, stages 3 and 4 must refuse draws and general
 dispatches. A narrow exception exists on the host only: the
@@ -434,6 +444,32 @@ do not qualify a general hardware backend, Vulkan/OpenGL execution, or
 presentation. The PS5 policy library advertises only capabilities qualified
 for the observed firmware and still refuses draws and presentation. The one
 validated payload push for the current draw step has already been used.
+
+## Stage 9 — standard APIs for external PS5 applications (not started)
+
+The existing `openagc_vk_*` and `openagc_gl_*` interfaces are host-only,
+project-specific subsets. They are **not** the Khronos Vulkan 1.0 ABI, an ICD,
+an OpenGL 3.3 implementation, or libraries an external PS5 application can
+link. The native bridge proves one pinned payload draw, not an application
+driver. All new runtime code must be original OpenProspero work; Mesa,
+PS5_Vulkan and ps5-opengl are reference material, not linked or copied code.
+Licensed Vulkan headers and separately executed compiler/test tools may be
+build-time inputs, with their own provenance and license review.
+
+| Required surface | Falsifiable acceptance gate |
+| --- | --- |
+| Application startup | Build the separate `examples/ps5-native-smoke` C++ application with the OpenProspero application profile; observe its exact firmware/log result on console. Its `gpu=not-attempted` field must never count as GPU evidence. Follow with `examples/ps5-native-gpu-smoke`: observe the real bridge marker, all 64 pixels and an empty guard through the application CRT, without claiming standard Vulkan/GL execution. |
+| Standard Vulkan 1.0 ABI | Provide ABI-correct Vulkan entry points, instance/device dispatch, advertised features/limits/extensions and external-app linking or loader integration actually supported by the PS5 environment. Run a separately built consumer using Vulkan headers, not `openagc_vk_*`. |
+| Standard OpenGL 3.3 ABI | Provide the GL entry points, context/window-system lifecycle and 3.3 core features required by a separately built consumer, not `openagc_gl_*`. Do not claim GL 3.3 for a context that cannot compile and link application shaders. |
+| Shader compilation | An independently built, pinned compiler may first qualify a known triangle shader with exact console readback. That is **not** enough for external apps: `vkCreateShaderModule` accepts application-supplied SPIR-V at runtime, and `glShaderSource`/`glCompileShader` must work on application-supplied GLSL. An original runtime compiler or an equivalent standards-correct original runtime path is needed before advertising these APIs. |
+| Native resources and execution | Independently qualify GPU-visible memory allocation/mapping, shader metadata, vertex/index data, images/layouts, queues, barriers, fences and device-lost/timeout handling on the target firmware. Keep resources mapped after ambiguous submission failure. |
+| Presentation | Qualify an application VideoOut display path and GPU-backed images with explicit ownership/coherency and visible frames. CPU VideoOut and offscreen marker readback do not establish a Vulkan swapchain or GL buffer swap. |
+| Interoperability and tests | Run two **external** PS5 homebrew consumers, one through each standard API, then an identified internal subset of VK-GL-CTS with pass/fail evidence. Do not use the term Khronos-conformant without its separate official adoption and conformance process. |
+
+An application-profile ELF that links on the host does not close any console
+gate. No driver publication should describe Vulkan 1.0 or OpenGL 3.3 as
+functional before their respective external consumers run on PS5. Hyperion
+integration follows those tests rather than serving as their first test.
 
 ## Reuse map
 

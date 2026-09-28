@@ -8,9 +8,10 @@
    lifecycle/intake allowlist below; anything else is a bypass.
 2. Fail-closed PS5 policy: every externally linked `openagc_*` symbol
    declared in `include/openagc/*.h` has a definition in
-   `openagc_ps5_policy.c`. Header `static inline` helpers are not
-   external symbols and are excluded; undefined imports are a separate
-   check (`llvm-nm -u` on the policy archive).
+   `openagc_ps5_policy.c`, except the explicitly separate native
+   `ps5_gpu.h` API, which must be defined in `openagc_ps5_gpu.c`.
+   Header `static inline` helpers are not external symbols and are
+   excluded; undefined imports are a separate check on the policy archive.
 
 usage: check_host_invariants.py [repo_root]
 """
@@ -64,19 +65,28 @@ def check_shared_core(root: str) -> list[str]:
 def check_policy_symbols(root: str) -> list[str]:
     declared: set[str] = set()
     inline_only: set[str] = set()
+    native: set[str] = set()
     for path in sorted(glob.glob(os.path.join(root, "include/openagc/*.h"))):
         text = strip_comments(read(path))
         inline_only |= set(STATIC.findall(text))
-        declared |= set(DECL.findall(text))
+        symbols = set(DECL.findall(text))
+        if os.path.basename(path) == "ps5_gpu.h":
+            native |= symbols
+        else:
+            declared |= symbols
 
     policy = strip_comments(read(os.path.join(root, "src/openagc_ps5_policy.c")))
     defined = set(STATIC.findall(policy)) | set(DECL.findall(policy))
+    native_source = strip_comments(read(os.path.join(root, "src/openagc_ps5_gpu.c")))
+    native_defined = set(STATIC.findall(native_source)) | set(DECL.findall(native_source))
 
     external = declared - inline_only
     print(f"policy symbols: extern={len(external)} header_inline={len(inline_only)} "
-          f"policy_defined={len(defined)}")
-    return [f"openagc_ps5_policy.c does not define {name}"
-            for name in sorted(external - defined)]
+          f"policy_defined={len(defined)} native={len(native)}")
+    return ([f"openagc_ps5_policy.c does not define {name}"
+             for name in sorted(external - defined)] +
+            [f"openagc_ps5_gpu.c does not define {name}"
+             for name in sorted(native - native_defined)])
 
 
 def main() -> int:

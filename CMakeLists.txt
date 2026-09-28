@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(OpenAGC VERSION 0.1.0 LANGUAGES C)
 
 option(OPENAGC_PS5_POLICY_ONLY "Build only the fail-closed, freestanding PS5 target" OFF)
+option(OPENAGC_PS5_GPU_NATIVE "Build the separate, FW9.40-only native AGC submitter" OFF)
 
 if(NOT OPENAGC_PS5_POLICY_ONLY)
     add_library(openagc STATIC
@@ -31,17 +32,36 @@ set_target_properties(openagc_ps5_policy PROPERTIES
     C_STANDARD_REQUIRED YES
     C_EXTENSIONS NO)
 
+if(OPENAGC_PS5_GPU_NATIVE)
+    if(MSVC)
+        message(FATAL_ERROR "The PS5 GPU native target requires the PS5 Clang toolchain")
+    endif()
+    add_library(openagc_ps5_gpu STATIC src/openagc_ps5_gpu.c)
+    add_library(OpenAGC::ps5_gpu ALIAS openagc_ps5_gpu)
+    target_include_directories(openagc_ps5_gpu PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(openagc_ps5_gpu PUBLIC OpenAGC::ps5_policy)
+    set_target_properties(openagc_ps5_gpu PROPERTIES
+        C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+endif()
+
 if(MSVC)
     if(TARGET openagc)
         target_compile_options(openagc PRIVATE /W4)
     endif()
     target_compile_options(openagc_ps5_policy PRIVATE /W4)
+    if(TARGET openagc_ps5_gpu)
+        target_compile_options(openagc_ps5_gpu PRIVATE /W4)
+    endif()
 else()
     if(TARGET openagc)
         target_compile_options(openagc PRIVATE -Wall -Wextra -Wpedantic)
     endif()
     target_compile_options(openagc_ps5_policy PRIVATE
         -Wall -Wextra -Wpedantic -ffreestanding -fno-builtin)
+    if(TARGET openagc_ps5_gpu)
+        target_compile_options(openagc_ps5_gpu PRIVATE
+            -Wall -Wextra -Wpedantic -ffreestanding -fno-builtin)
+    endif()
 endif()
 
 if(NOT OPENAGC_PS5_POLICY_ONLY)
@@ -54,6 +74,18 @@ if(NOT OPENAGC_PS5_POLICY_ONLY)
         set_target_properties(openagc_ps5_videoout_tests PROPERTIES
             C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
         add_test(NAME openagc_ps5_videoout COMMAND openagc_ps5_videoout_tests)
+
+        if(NOT MSVC)
+            add_executable(openagc_ps5_gpu_tests tests/test_ps5_gpu.c
+                src/openagc_ps5_gpu.c)
+            target_link_libraries(openagc_ps5_gpu_tests PRIVATE OpenAGC::ps5_policy)
+            target_include_directories(openagc_ps5_gpu_tests PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/tests/shims"
+                "${CMAKE_CURRENT_SOURCE_DIR}/tools/payload")
+            set_target_properties(openagc_ps5_gpu_tests PROPERTIES
+                C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
+            add_test(NAME openagc_ps5_gpu COMMAND openagc_ps5_gpu_tests)
+        endif()
 
         add_executable(openagc_tests tests/test_openagc.c)
         target_link_libraries(openagc_tests PRIVATE OpenAGC::openagc)

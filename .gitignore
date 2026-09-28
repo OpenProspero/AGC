@@ -5,6 +5,7 @@
 /tools/payload/out/
 /tools/electron/out/
 /tools/electron/.deps/
+/examples/*/build/
 /Testing/
 /CMakeUserPresets.json
 /.commandcode

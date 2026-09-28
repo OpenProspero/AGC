@@ -58,6 +58,31 @@ which is what `/dev/gc` payloads need for direct-memory allocation. If the
 host clang rejects `x86_64-sie-ps5`, set
 `PAYLOAD_TARGET=x86_64-unknown-freebsd13.0`.
 
+Step AQ's AGC draw deliberately left `draw.append_eop=0` and appended
+no marker packet. The separate completion experiment is opt-in:
+compile `draw_raster_agc_eop.c` with
+`-DOPENAGC_AGC_SUBMIT=1 -DOPENAGC_AGC_COMPLETION=1` in `PAYLOAD_CFLAGS`.
+It appends the eight-word cache-flushing AGC completion packet, flushes
+the owned arena before submitting, and refuses to accept a pixel scan
+if its marker does not arrive within 30 seconds. This variant is
+logged separately at `/data/prosperoai/openagc-agc-completion-fw940.log`;
+it refuses unexpected firmware before any GPU allocation. Do not
+interpret a successful ELF build as console qualification. The
+2026-09-28 FW9.40 console run did qualify this specific completion
+packet with marker `1`, exactly 64 expected pixels and an empty guard.
+Adding `-DOPENAGC_GPU_BRIDGE=1` instead routes the same draw through
+`OpenAGC::ps5_gpu`, linked against the OpenProspero SDK runtime firmware
+API; it writes `/data/prosperoai/openagc-gpu-bridge-op-fw940.log`.
+The single-source `build.sh` cannot link this variant: build and link
+`src/openagc_ps5_gpu.c` and `src/openagc_ps5_policy.c` alongside the
+diagnostic using the OpenProspero native profile and SDK CRT.
+On FW9.40 the bridge produced the same exact pixels and marker with
+OpenProspero's validated firmware query linked to the public payload
+CRT's working loader. A subsequent run linked entirely against the
+updated OpenProspero native CRT also passed with marker `1`, 64 exact
+pixels and clean exit. Neither result qualifies an application PKG,
+VideoOut, arbitrary shaders or the Vulkan/OpenGL frontends.
+
 ## Deploy
 
 ```console

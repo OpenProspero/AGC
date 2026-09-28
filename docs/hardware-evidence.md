@@ -1961,12 +1961,10 @@ changes, not when the state does.
 acceptance. The pixels landed at `(8,16)..(15,30)` rather than in the
 scanned `(8,8)` window, which is the GL-style viewport transform this
 encoder writes against the AGC/Vulkan y-down convention PS5_Vulkan
-documents ("clip y = -1 lands on the target's first row"). And the shared
-EOP marker never fired (`completed=0`), so the payload's own acceptance is
-`match=0` although the target holds the shader's colour: either the release
-after a fragment-producing draw needs the AGC driver's own completion form,
-or the marker's write is what the AGC path does not carry through. Both are
-instruments for the next run, not reasons to claim qualification:
+documents ("clip y = -1 lands on the target's first row"). The payload reported `completed=0` and `match=0` despite the pixels;
+a later audit found that it left `draw.append_eop=0` and never encoded
+an EOP. That result cannot distinguish completion mechanisms. It is not
+a reason to claim synchronous completion:
 `OPENAGC_RASTER_GPU_QUALIFIED` stays **0**, `gpu_executable` stays 0, and
 the PS5 policy still refuses `OPENAGC_PS5_CAP_DRAW` until a run reports the
 drawn window, `outside=0` and a fired completion.
@@ -1995,9 +1993,9 @@ colour-bind registers back before the draw, exactly as Step AB did on the
 raw path, and the same run also tries the bind as the last write before
 `DRAW_INDEX_AUTO`.
 
-The second anomaly is unchanged: `completed=0` with `pixels` in memory, so
-the shared EOP trailer is not delivered through this submission path. The
-payload's acceptance is now the target's own contents
+The completion field is unchanged: `completed=0` because the payload
+did not emit an EOP, not because the AGC driver demonstrably lost it.
+The payload's acceptance is now the target's own contents
 (`nonzero`/`expected`/`outside`/`guard`) with the marker reported beside it,
 and it stays **0** for the mismatch above rather than for the marker.
 
@@ -2032,15 +2030,16 @@ openagc-agc-cb: 02000440 00000000 00000000 00028028 00000000 0007c01f 01000000 0
 * the submission is the AGC driver's (`sceAgcDriverSubmitDcb` plus
   `sceAgcSuspendPoint`); the raw ioctl path has never produced a fragment.
 
-The one caveat is unchanged and does not affect the pixels: the shared EOP
-marker is not delivered on this submission path (`completed=0`), so a
-caller completing on a marker would time out. The acceptance above reads
-the target's contents instead.
+The caveat does not affect the pixels: `draw.append_eop` remained zero,
+so this IB **never contained an EOP packet**. Polling its unwritten marker
+necessarily timed out. Completion must be tested separately; reading the
+target after 30 seconds is not a reusable fence.
 
 **Qualification.** With this evidence the rasterizer pin is raised:
 `OPENAGC_RASTER_GPU_QUALIFIED` is **1**, `openagc_raster_get_capabilities`
 reports `gpu_rasterization=1`, and the PS5 qualification record for
-`0x9400008` now includes `OPENAGC_PS5_CAP_DRAW` with the marker caveat
+`0x9400008` now includes `OPENAGC_PS5_CAP_DRAW` with the missing
+completion proof
 written into it. Artifact: `draw_agc_eop.elf`
 (`a1c359c56c296e10b24aee313ce08fe45b0fbcb96b515b2613a0ffbcaa00a76f`),
 one push, klog attached, no fault or hang marker, loader still serving
@@ -2052,6 +2051,71 @@ the AGC submission lives in the payload. Wiring `vkCmdDraw` and
 `glDrawArrays` onto the shared encoder, with the host CPU paths as the
 fallback, is the next stage-5 step, and this evidence is what makes it
 worth doing.
+
+## Native AGC completion marker: FW9.40 console result
+
+The Step AQ draw writes the expected pixels but omits its optional EOP;
+the marker was never written to. `ps5_gpu.h` now offers a separate,
+opt-in native submit bridge: the same shared draw encoder without its old
+EOP, followed by an eight-dword `RELEASE_MEM` marker using event 20,
+index 5 and cache actions `0x30c`. This form comes from
+[PS5_Vulkan's console-tested R90 queue](https://github.com/mihawk-99/PS5_Vulkan/blob/main/driver/ps5vk_queue.c),
+not from the Step AQ capture. The bridge polls only that marker with a
+bounded wait; timeout leaves its command memory in flight and disallows
+resubmission or destruction until a later wait observes completion.
+The same rule applies when the driver returns an error after submission
+is attempted: without a contract guaranteeing rejection, the command
+memory remains reserved, even if no marker ever arrives.
+
+On 2026-09-28, after a device-free Step A succeeded on the same boot,
+the opt-in diagnostic ELF (`OPENAGC_AGC_SUBMIT=1`,
+`OPENAGC_AGC_COMPLETION=1`; SHA-256
+`00003C2ED11BE03C92BCF64549BC58D425167176152B3238A401ACB12A85A9BD`)
+submitted once to the FW9.40 console. Its own fresh report recorded
+`completed=1`, marker `1`, `pixels=64`, `nonzero=64`, `expected=64`,
+`outside=0`, `guard=0`, every one of the 64 window pixels
+`0xff0040ff`, exact bbox `8,8..15,15`, and `match=1`. The live loader
+recorded `exit_value=0`. This **qualifies this draw and completion packet**
+on that console, not arbitrary GPU work.
+
+An initial consumer of the native bridge observed its completion receipt
+but exited with error because the initialized AGC driver refused module
+unload. The bridge now keeps the AGC modules loaded for the process
+lifetime and permits only one active instance. A later consumer with the
+OpenProspero CRT correctly refused GPU submission when the new runtime
+firmware parser returned zero: a raw, read-only console query instead
+returned `0x09400008` and the text ` 9.400.008`, which the first parser
+version did not admit. After correcting that parser, the OpenProspero
+native CRT validated the firmware but its `dlopen` returned null for
+both AGC modules, by name and absolute path, before any GPU submission.
+
+The bridge itself **did** pass a FW9.40 console test when linked to the
+OpenProspero SDK's validated runtime firmware query and the public
+`ps5-payload-sdk` CRT's working module loader (OpenProspero ELF layout).
+That hybrid ELF's SHA-256 was
+`CA95371EB9D11CFF0A008F3D4D902ACD65A60E287915D5CD82BF071F34E5A116`.
+It returned marker `1`, `completed=1`, all 64 expected fragment pixels,
+the exact `8,8..15,15` rectangle, `outside=0`, `guard=0`, `match=1`, and
+the loader recorded `exit_value=0`. Its receipt and colour readback
+passed an exact-shape check.
+
+After the OpenProspero native CRT gained an AGC module loader, a
+**second bridge test with only the OpenProspero CRT** passed on the same
+FW9.40 console. Its ELF SHA-256 was
+`1132E949613BD59AD1753CD3E9135C014AB317ACCD0E7CA120114EEF9D7A79B8`.
+The firmware query validated `0x09400008`, both AGC modules and all
+three bridge symbols resolved, and the draw returned `completed=1`,
+marker `1`, exactly 64 `0xff0040ff` pixels within `8,8..15,15`,
+`outside=0`, `guard=0`, `match=1`. The bridge's process-lifetime
+module teardown returned successfully and the loader recorded
+`exit_value=0`. This qualifies the **native payload draw path**, not
+generic dynamic loading, an application/PKG, VideoOut, or general
+GPU pipelines. Raw captures and logs remain outside the repository.
+
+Host mocks cover accepted, rejected, submit-error, suspend-error and
+timeout/recovery paths. Do not infer completion from
+`sceAgcSuspendPoint` alone or open Vulkan/OpenGL execution or VideoOut
+based on a single diagnostic draw.
 
 ## What the two public PS5 drivers do that this submission does not
 
@@ -2501,3 +2565,25 @@ it is not hardware evidence.
 The remaining fragment-stage stall needs a new instrument or a native FW9.40
 capture before enabling `OPENAGC_PS5_CAP_DRAW`; both Vulkan and OpenGL keep
 using the shared frontend core, and `gpu_executable` remains 0.
+
+## Application-profile GPU diagnostic and UDP channel (FW9.40)
+
+The separate `examples/ps5-native-gpu-smoke` test links the native AGC bridge
+with OpenProspero's opt-in application loader. Two experimental native-writer
+PKGs were installed for diagnostics. The first displayed black with no file
+log; that is consistent both with a pre-`main` failure and with the app being
+unable to write its requested path. The second links an optional OpenProspero
+UDP transport and its title reached `EXEC /app0/eboot.bin` in console klog.
+The PC receiver saw **no UDP datagram**, so neither `main` nor any GPU
+submission or exact-pixel result is established. A separate single-datagram
+OpenProspero **payload** probe returned its post-`send()` success code, but
+the PC still received no datagram even with a source/port-scoped local
+firewall rule. `send()` success is not delivery confirmation. No console
+log or device fingerprint is committed here.
+
+The application PKGs used an existing, separately source-built GPL
+compatibility `libc.prx` only as an external test input; it is not included
+in OpenAGC and is not an original OpenProspero libc. This app is neither a
+Vulkan 1.0 nor an OpenGL 3.3 consumer, and draws only to an offscreen
+caller-owned target. The native **payload** marker/pixel result above
+remains the sole qualified bridge execution result.
