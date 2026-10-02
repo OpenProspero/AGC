@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step R: linkage SET_CONTEXT_REG + EOP for FW9.40 (no SET_SH, no DRAW).
+/* Step R: linkage SET_CONTEXT_REG + EOP (no SET_SH, no DRAW).
  *
  * Contract (docs/hardware-evidence.md): one submit of the three
  * smoke.vert linkage pairs (ge_cntl / stages_en / user_vgpr_en from the
  * pinned PSBC fixture) plus the shared EOP+NOP trailer. Same SET_CONTEXT
  * vehicle as Step P; omits context_registers, SET_SH, CB/DB, and DRAW.
  *
- * Packet layout: include/openagc/pm4_graphics_fw940.h
+ * Packet layout: include/openagc/pm4_graphics.h
  */
 
-#include "openagc/pm4_graphics_fw940.h"
+#include "openagc/pm4_graphics.h"
 
 #include <stdint.h>
 #include <stdarg.h>

@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#ifndef OPENAGC_PM4_WRITE_FW940_H
-#define OPENAGC_PM4_WRITE_FW940_H
+#ifndef OPENAGC_PM4_WRITE_H
+#define OPENAGC_PM4_WRITE_H
 
-#include "openagc/pm4_fw940.h"
+#include "openagc/pm4.h"
 
 #include <stdint.h>
 
@@ -278,4 +278,4 @@ static inline void openagc_pm4_encode_dma_write_data_eop(uint64_t source_va,
     openagc_pm4_encode_eop_with_nops(marker_va, sequence, words + packet_words);
 }
 
-#endif /* OPENAGC_PM4_WRITE_FW940_H */
+#endif /* OPENAGC_PM4_WRITE_H */

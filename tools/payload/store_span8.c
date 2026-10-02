@@ -6,11 +6,11 @@
  * dest+i*32), shared preamble, one EOP, finite deadline, no flat_load,
  * no CB/DB, no draw, no retry. One log line. Fills 256 bytes.
  *
- * Layout: include/openagc/pm4_compute_fw940.h
+ * Layout: include/openagc/pm4_compute.h
  * Shader: tools/shaders/store_span.s (Steps I–K proven).
  */
 
-#include "openagc/pm4_compute_fw940.h"
+#include "openagc/pm4_compute.h"
 #include "openagc/store_span_code.h"
 
 #include <stdint.h>

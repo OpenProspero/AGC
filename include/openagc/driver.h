@@ -4,9 +4,9 @@
 #define OPENAGC_DRIVER_H
 
 #include "openagc/openagc.h"
-#include "openagc/pm4_cb_capture_fw940.h"
-#include "openagc/pm4_ib_dump_fw940.h"
-#include "openagc/presentation_refuse_fw940.h"
+#include "openagc/pm4_cb_capture.h"
+#include "openagc/pm4_ib_dump.h"
+#include "openagc/presentation_refuse.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -169,7 +169,7 @@ openagc_result openagc_gpu_buffer_write(openagc_gpu_buffer *buffer, uint64_t off
                                         const void *data, uint64_t size_bytes);
 
 /*
- * Host-only store-const: encode the FW9.40 compute PM4 packet (51 dwords) and
+ * Host-only store-const: encode the compute PM4 packet (51 dwords) and
  * write 0xA5A5A5A5 into destination. Does not open a compute queue or set
  * gpu_execution. Inspect with openagc_gpu_device_get_last_compute.
  */
@@ -193,7 +193,7 @@ openagc_result openagc_gpu_device_get_last_compute(const openagc_gpu_device *dev
                                                    openagc_gpu_submission_view *view);
 
 /*
- * Host-only WRITE_DATA fill: encode the FW9.40 CP WRITE_DATA+EOP packet
+ * Host-only WRITE_DATA fill: encode the CP WRITE_DATA+EOP packet
  * (console-proven Step D for one dword; Step E extends to N dwords up to
  * a 4x4 RGBA8 tile) and write the pattern. Does not set gpu_execution.
  * Inspect with openagc_gpu_device_get_last_write.
@@ -256,7 +256,7 @@ openagc_result openagc_gpu_device_get_last_write(const openagc_gpu_device *devic
                                                  openagc_gpu_submission_view *view);
 /*
  * Host-only: copy a graphics SET_CONTEXT/SET_SH register program and append
- * the shared FW9.40 EOP+NOP trailer into the write-data snapshot slot.
+ * the shared EOP+NOP trailer into the write-data snapshot slot.
  * Does not submit, does not emit DRAW, and does not set gpu_execution.
  * register_dword_count must leave room for OPENAGC_PM4_EOP_WITH_NOP_WORDS.
  */

@@ -28,8 +28,13 @@ freestanding, deny-all target. It has no allocator, device driver, VideoOut,
 ioctl, filesystem, SDK, or graphics imports. Link **exactly one** target
 into an application.
 
-The current policy gate always rejects a PS5 context, including firmware 9.40,
-an unknown version (0.0), and any other caller-claimed version. In the host
+The policy target's generic context API always rejects a PS5 context, whatever
+firmware version the caller claims (including 0.0); it is a deny-all ABI stub,
+not a firmware gate. OpenAGC itself is firmware-independent: native
+submission through `OpenAGC::ps5_gpu` and the `ps5_policy.h` capability record
+accept any readable firmware identity and refuse only an unreadable one (`0`),
+and the driver has been tested end-to-end on PS5 consoles across firmware
+versions. In the host
 library it runs before allocation; in the PS5 policy library there is no
 allocation or hardware path at all. A caller cannot opt in with a firmware
 number. The policy target does not emulate rendering and never produces a
@@ -373,7 +378,7 @@ qualification — is [roadmap.md](roadmap.md).
 ## PM4 host vectors (console-aligned FW9.40)
 
 The host encoder and `tools/payload/copy_eop.c` share
-`include/openagc/pm4_fw940.h`. One copy+fence IB is **31 dwords**:
+`include/openagc/pm4.h`. One copy+fence IB is **31 dwords**:
 
 * seven `IT_DMA_DATA` dwords (`0xC0055002`, `0x8C00C000`, source
   low/high, destination low/high, aligned byte count ≤ `0x1ffffc`);
@@ -386,7 +391,7 @@ That layout was observed on physical FW9.40 (`fw=0x9400008`) with one
 validated `copy_eop.elf` push (`submit=ok completed=1 matched=1`).
 Host tests lock down all 31 words for one copy and fence.
 
-`include/openagc/pm4_compute_fw940.h` encodes a separate **51-dword**
+`include/openagc/pm4_compute.h` encodes a separate **51-dword**
 compute store-const IB (SET_SH_REG compute-bank + DISPATCH_DIRECT
 initiator `0x41` + the same EOP+NOP trailer). One validated
 `store_const.elf` push wrote `0xA5A5A5A5` and fired the marker. The
@@ -394,13 +399,13 @@ host library still never submits (`gpu_submitted=0`); the deny-all PS5
 policy target still has no packet encoder or submission path. Draw and
 render packets remain unavailable.
 
-`include/openagc/pm4_graphics_fw940.h` encodes host-only
+`include/openagc/pm4_graphics.h` encodes host-only
 `SET_CONTEXT_REG` (0x69) and graphics-bank `SET_SH_REG` (0x76) from
 PSBC smoke metadata register pairs (`psbc_metadata.h`), including
 vertex linkage context pairs (`ge_cntl`, `stages_en`, `user_vgpr_en`)
 when present.
 `openagc_pm4_encode_ctxreg_cb_bind_full_abs_eop`
-(`pm4_copy_data_fw940.h`) adds the nine-register linear color bind:
+(`pm4_copy_data.h`) adds the nine-register linear color bind:
 `openagc_gfx10_cb_bind_offsets` plus
 `openagc_gfx10_cb_bind_linear_8888_words` compose
 BASE/BASE_EXT/VIEW/INFO/ATTRIB/ATTRIB2/ATTRIB3/`CB_TARGET_MASK`/
@@ -510,7 +515,7 @@ primitives are **native** image layouts and
 tiling beyond the host-linear metadata subset, an independently verified
 build-time shader compiler/metadata adapter and executable pipeline
 contract, real render-target/draw PM4, coherency/barriers, and an
-GPU presentation interface. They require their own firmware-specific evidence
+GPU presentation interface. They require their own console evidence
 and capability gates. A separate experimental CPU VideoOut presenter now
 rasterizes recorder clear and rectangle commands into tiled buffers; it is
 offline-tested but has not yet been confirmed to display on console. No shader
@@ -547,13 +552,15 @@ GPU copy/EOP proof would additionally require trusted firmware
 identification, valid-memory/IB review, finite timeouts, an operator
 recovery plan, and independently checked marker **and** destination
 bytes with clean klogs. These are prerequisites, **not** permission
-to submit packets or lift the firmware gate.
+to submit packets.
 
 Any future plan must exclude `flat_load`, invalid indirect buffers,
 queue-create/Ring paths known to disrupt the UI, and automatic retries.
-No firmware is qualified for graphics or VideoOut. A trusted allowlist
-must remain ahead of all kernel/device/video operations on every
-entry path; caller-supplied firmware numbers are never proof.
+Graphics capabilities are now qualified for any readable firmware identity
+(see `ps5_policy.h`); VideoOut presentation remains unqualified. A runtime
+firmware-identity check must remain ahead of all kernel/device/video
+operations on every entry path; caller-supplied firmware numbers are never
+proof.
 
 ## Attribution and license
 

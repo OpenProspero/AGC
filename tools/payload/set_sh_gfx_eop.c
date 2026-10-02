@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step O: graphics-bank SET_SH_REG + EOP for FW9.40 (no SET_CONTEXT, no DRAW).
+/* Step O: graphics-bank SET_SH_REG + EOP (no SET_CONTEXT, no DRAW).
  *
  * Contract (docs/hardware-evidence.md): one submit of smoke.vert shader
  * register pairs (PGM patched to uploaded code VA) plus the shared
  * EOP+NOP trailer. Proves graphics-bank SET_SH (low_bits=0) completes.
  * Does not unlock CB/DB, DRAW, or host gpu_execution.
  *
- * Packet layout: include/openagc/pm4_graphics_fw940.h
+ * Packet layout: include/openagc/pm4_graphics.h
  */
 
-#include "openagc/pm4_graphics_fw940.h"
+#include "openagc/pm4_graphics.h"
 
 #include <stdint.h>
 #include <stdarg.h>

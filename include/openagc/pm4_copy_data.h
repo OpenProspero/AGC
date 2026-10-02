@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#ifndef OPENAGC_PM4_COPY_DATA_FW940_H
-#define OPENAGC_PM4_COPY_DATA_FW940_H
+#ifndef OPENAGC_PM4_COPY_DATA_H
+#define OPENAGC_PM4_COPY_DATA_H
 
 #include "openagc/pm4_context_regs_gfx10.h"
-#include "openagc/pm4_fw940.h"
-#include "openagc/pm4_graphics_fw940.h"
+#include "openagc/pm4.h"
+#include "openagc/pm4_graphics.h"
 
 #include <stdint.h>
 
@@ -298,4 +298,4 @@ static inline uint32_t openagc_pm4_encode_ctxreg_cb_bind_full_abs_eop(
     return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
 }
 
-#endif /* OPENAGC_PM4_COPY_DATA_FW940_H */
+#endif /* OPENAGC_PM4_COPY_DATA_H */

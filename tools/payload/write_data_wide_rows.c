@@ -1,17 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step G: full-width multi-row CP WRITE_DATA clear proof for FW9.40.
+/* Step G: full-width multi-row CP WRITE_DATA clear proof.
  *
  * Contract: one submit, two WRITE_DATA packets (16 dwords each) at a
  * non-contiguous pitch (128 bytes), one shared EOP+NOP trailer, finite
  * deadline, no shader, no CB/DB, no draw, no retry. One log line.
  *
- * Layout: include/openagc/pm4_write_fw940.h
+ * Layout: include/openagc/pm4_write.h
  * (Step E proved 16 contiguous dwords; Step F proved 8-dword × 2 rows;
  *  this combines both for the host clear/fill row width cap.)
  */
 
-#include "openagc/pm4_write_fw940.h"
+#include "openagc/pm4_write.h"
 
 #include <stdint.h>
 #include <stdarg.h>

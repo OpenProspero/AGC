@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#ifndef OPENAGC_PM4_CB_CAPTURE_FW940_H
-#define OPENAGC_PM4_CB_CAPTURE_FW940_H
+#ifndef OPENAGC_PM4_CB_CAPTURE_H
+#define OPENAGC_PM4_CB_CAPTURE_H
 
 #include <stdint.h>
 
 /*
- * Fail-closed CB/DB/DRAW capture intake for FW9.40.
+ * Fail-closed CB/DB/DRAW capture intake.
  *
- * No independently owned FW9.40 CB/DB bind or DRAW IB capture exists in
+ * No independently owned CB/DB bind or DRAW IB capture exists in
  * this repository (see docs/hardware-evidence.md Stage 5 gate). This
  * header defines the manifest + SHA-256 digest contract so host code can
  * accept a verified artifact without inventing register values or DRAW
@@ -27,7 +27,6 @@
  */
 
 #define OPENAGC_CB_CAPTURE_API_VERSION 1u
-#define OPENAGC_CB_CAPTURE_FW940_ID 0x9400008u
 #define OPENAGC_CB_CAPTURE_MAX_WORDS 256u
 
 typedef uint32_t openagc_cb_capture_kind;
@@ -42,7 +41,8 @@ typedef struct openagc_cb_capture_manifest {
     uint32_t struct_size;
     uint32_t api_version;
     openagc_cb_capture_kind kind;
-    /* Must be OPENAGC_CB_CAPTURE_FW940_ID for FW9.40 intake. */
+    /* Packed BCD firmware identity the capture was taken on; 0 (unknown)
+     * is refused, any other identity is accepted. */
     uint32_t firmware_id;
     uint32_t word_count;
     uint8_t words_sha256[32];
@@ -73,9 +73,9 @@ typedef struct openagc_cb_capture_info {
     })
 
 /*
- * Independently owned FW9.40 capture digests. Empty until a real CB/DB or
+ * Independently owned capture digests. Empty until a real CB/DB or
  * DRAW IB dump is cited and pinned. Count stays 0; do not invent entries.
  */
 #define OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT 0u
 
-#endif /* OPENAGC_PM4_CB_CAPTURE_FW940_H */
+#endif /* OPENAGC_PM4_CB_CAPTURE_H */

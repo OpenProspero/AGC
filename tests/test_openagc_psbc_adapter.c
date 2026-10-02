@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#include "openagc/pm4_graphics_fw940.h"
+#include "openagc/pm4_graphics.h"
 #include "openagc/psbc_metadata.h"
 #include "openagc/shader.h"
 #include "openagc_sha256.h"

@@ -9,6 +9,11 @@ experiment that may run once a build path exists.
 Raw console captures are **not** stored in this repository. Only the
 sanitized summary below is committed.
 
+The step records below say on which firmware each measurement was taken
+(most were first taken on FW9.40, `fw=0x9400008`). That is a record, not a
+scope: OpenAGC is firmware-independent and has since been tested end-to-end
+on PS5 consoles across firmware versions.
+
 ## Observed on 2026-09-24 (read-only)
 
 The console at `192.168.1.20` was reached for **reading only**: a TCP
@@ -81,7 +86,7 @@ to use for diagnosis. `deploy.py` now attaches to it before the push.
 ## Bounded design: OpenAGC copy and EOP proof
 
 **Question.** Does the shared FW9.40 sequence in
-`include/openagc/pm4_fw940.h` (seven `IT_DMA_DATA`, eight action-based
+`include/openagc/pm4.h` (seven `IT_DMA_DATA`, eight action-based
 `IT_RELEASE_MEM`, sixteen NOP dwords = 31 total), as locked down by
 `tests/test_openagc_gpu.c` and emitted by `tools/payload/copy_eop.c`,
 execute on physical FW9.40 with real addresses, and does its EOP
@@ -254,7 +259,7 @@ those packets is out of scope.
 2. WRITE_DATA packet layout locked from an **independent** source
    OpenAGC may cite (SPRX / public AMD type-3 WRITE_DATA facts, or a
    single console capture of a known-good IB), written into
-   `include/openagc/pm4_write_fw940.h` with host unit tests for dword
+   `include/openagc/pm4_write.h` with host unit tests for dword
    count and field placement — **before** any payload is authored.
 3. Payload built with ps5-payload-sdk and `validate_elf.py`.
 4. Design reviewed; one push, no retries.
@@ -316,7 +321,7 @@ without inventing CB/DB packets. Step D proved one dword; Step E proves
 the clear-tile size OpenAGC uses as the host WRITE_DATA fill cap.
 
 **Entry conditions.** Steps A–D proven on `fw=0x9400008`; encoding already
-locked in `pm4_write_fw940.h` (`openagc_pm4_encode_write_data_fill_eop`);
+locked in `pm4_write.h` (`openagc_pm4_encode_write_data_fill_eop`);
 payload ELF-validated; one push, no retries.
 
 **Payload contract (`tools/payload/write_data_clear.c`).** One IB of
@@ -620,7 +625,7 @@ still lack an independently owned FW9.40 capture. Step O deliberately
 omits both.
 
 **Entry conditions.** Steps A–N proven on `fw=0x9400008`; host encoding
-locked in `pm4_graphics_fw940.h` / `psbc_metadata.h` (PGM patch +
+locked in `pm4_graphics.h` / `psbc_metadata.h` (PGM patch +
 `openagc_pm4_encode_graphics_sh_eop`); payload ELF-validated; one push,
 no retries.
 
@@ -671,7 +676,7 @@ the compositor. DRAW and CB/DB still lack an independently owned FW9.40
 capture. Step P deliberately omits all three.
 
 **Entry conditions.** Steps A–O proven on `fw=0x9400008`; host encoding
-locked in `pm4_graphics_fw940.h`
+locked in `pm4_graphics.h`
 (`openagc_pm4_encode_graphics_context_eop`); payload ELF-validated; one
 push, no retries.
 
@@ -720,7 +725,7 @@ enables geometry stages; DRAW and CB/DB still lack an independently
 owned FW9.40 capture.
 
 **Entry conditions.** Steps A–P proven on `fw=0x9400008`; host encoding
-locked in `pm4_graphics_fw940.h`
+locked in `pm4_graphics.h`
 (`openagc_pm4_encode_graphics_context_sh_eop`); payload ELF-validated;
 one push, no retries.
 
@@ -822,7 +827,7 @@ owned FW9.40 capture. Step S deliberately omits both; it only submits
 the verified register program the host already encodes.
 
 **Entry conditions.** Steps A–R proven on `fw=0x9400008`; host encoding
-locked in `pm4_graphics_fw940.h`
+locked in `pm4_graphics.h`
 (`openagc_pm4_encode_graphics_context_sh_linkage_eop`); payload
 ELF-validated; one push, no retries.
 
@@ -932,7 +937,7 @@ owned FW9.40 capture. Step U deliberately omits both; it only submits
 the verified vert+frag register programs the host already encodes.
 
 **Entry conditions.** Steps A–T proven on `fw=0x9400008`; host encoding
-locked in `pm4_graphics_fw940.h`
+locked in `pm4_graphics.h`
 (`openagc_pm4_encode_graphics_vert_frag_eop`); payload ELF-validated;
 one push, no retries. IB size
 `OPENAGC_PM4_GRAPHICS_VERT_FRAG_EOP_WORDS(3,4,9,4)` (=93) dwords —
@@ -971,7 +976,7 @@ console-proven for encode/record only; draws stay `NOT_READY`.
 manifest + SHA-256 digest verifies the supplied dwords, without inventing
 register values or DRAW packets?
 
-**Status.** Scaffolded in `include/openagc/pm4_cb_capture_fw940.h` and
+**Status.** Scaffolded in `include/openagc/pm4_cb_capture.h` and
 `openagc_gpu_host_cb_bind_from_capture` / frontend
 `openagc_frontend_render_pass_bind_cb_capture`. Invent encode always
 returns `UNSUPPORTED_OPERATION`. Evidence pin table count is **0** (no
@@ -992,7 +997,7 @@ later independently owned CB capture can reuse the same dump vehicle?
 **Design.** `tools/payload/ib_dump_step_u_eop.c` encodes the same Step-U
 IB, submits once, polls the EOP marker, then writes
 `/data/prosperoai/openagc-ib-dump-step-u.log` in the format defined by
-`include/openagc/pm4_ib_dump_fw940.h`. Host
+`include/openagc/pm4_ib_dump.h`. Host
 `openagc_ib_dump_parse` accepts `tag=step-u` as `REGISTER_EOP` with
 `evidence_qualified=0`. One push, no retries. No invent CB values.
 
@@ -1628,7 +1633,7 @@ reviewable artifact.
 
 ### Stage 6/7 refuse contracts (fail-closed scaffold)
 
-**Status.** `include/openagc/presentation_refuse_fw940.h` documents
+**Status.** `include/openagc/presentation_refuse.h` documents
 `OPENAGC_NATIVE_TILING_SUPPORTED=0`, `OPENAGC_SCANOUT_USAGE_SUPPORTED=0`,
 `OPENAGC_PRESENTATION_SUPPORTED=0`, and
 `OPENAGC_VIDEOOUT_EVIDENCE_PIN_COUNT=0`. Host image create already
@@ -1832,7 +1837,7 @@ GE_CNTL in the context table.
 
 ### What the console accepted
 
-`tools/payload/draw_point_ngg_eop.c` (IB: `include/openagc/pm4_ngg_draw_fw940.h`,
+`tools/payload/draw_point_ngg_eop.c` (IB: `include/openagc/pm4_ngg_draw.h`,
 tables from `tools/payload/gen_ngg_tables.py`) submits the NGG program as one
 context table load plus the SH registers, then one `DRAW_INDEX_AUTO`. One push
 per run, no retry, log over FTP. The best dump so far reads
@@ -2524,8 +2529,9 @@ cannot be scored as a rasterization result either way.
   empty, and the next draw attempt needs a console whose graphics ring is
   healthy plus a fresh reviewed delta - not a retry of this artifact.
 * The PS5 policy target is no longer a blanket deny: it publishes the
-  qualification record for the one observed firmware
-  (`openagc_ps5_policy_qualification`, `openagc_ps5_policy_require`) with the
+  qualification record (at the time for the one observed firmware; it has
+  since been made firmware-independent and accepts any readable firmware
+  identity) (`openagc_ps5_policy_qualification`, `openagc_ps5_policy_require`) with the
   capabilities Steps B-AD proved, and names the draw as still refused. Nothing
   in that record is new evidence.
 

@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/ps5_gpu.h"
 #include "openagc/ps5_policy.h"
-#include "openagc/pm4_agc_completion_fw940.h"
+#include "openagc/pm4_agc_completion.h"
 
 #include <openprospero/firmware.h>
 #include <dlfcn.h>

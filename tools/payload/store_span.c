@@ -1,17 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step I: bounded compute store-span proof for FW9.40.
+/* Step I: bounded compute store-span proof.
  *
  * Contract: one submit, one 8-thread dispatch that stores a constant to
  * base+tid*4 via flat_store_dword (PAI-proven vaddr pair / lane mask),
  * one EOP fence, finite deadline, no flat_load, no CB/DB, no draw, no
  * retry. One log line.
  *
- * Packet layout: include/openagc/pm4_compute_fw940.h
+ * Packet layout: include/openagc/pm4_compute.h
  * Shader: tools/shaders/store_span.s (embedded via store_span_code.h).
  */
 
-#include "openagc/pm4_compute_fw940.h"
+#include "openagc/pm4_compute.h"
 #include "openagc/store_span_code.h"
 
 #include <stdint.h>

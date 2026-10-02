@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step K: four compute store-span dispatches in one IB for FW9.40.
+/* Step K: four compute store-span dispatches in one IB.
  *
  * Contract: one submit, four 8-thread store_span dispatches (bases
  * dest+i*32), shared preamble, one EOP, finite deadline, no flat_load,
  * no CB/DB, no draw, no retry. One log line. Fills 128 bytes.
  *
- * Layout: include/openagc/pm4_compute_fw940.h
+ * Layout: include/openagc/pm4_compute.h
  * Shader: tools/shaders/store_span.s (Steps I/J proven).
  */
 
-#include "openagc/pm4_compute_fw940.h"
+#include "openagc/pm4_compute.h"
 #include "openagc/store_span_code.h"
 
 #include <stdint.h>

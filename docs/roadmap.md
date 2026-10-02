@@ -8,8 +8,8 @@ evidence closes a stage, and which gates a stage may not cross.
 Rules this roadmap obeys:
 
 1. Nothing here claims console capability. Every host stage is a host
-   implementation of a *contract*; console use requires the separate,
-   firmware-specific approval process in
+   implementation of a *contract*; console use requires the separate
+   evidence-review process in
    [architecture.md](architecture.md#firmware-940-proof-gates-passive-baseline-only).
 2. A capability is real only when a test proves the accepted **and**
    refused paths. Refusals are first-class results, never silent no-ops
@@ -19,10 +19,11 @@ Rules this roadmap obeys:
    license notices for any code brought in; cross-check register values
    against owned captures before enabling hardware paths.
 4. `src/openagc_ps5_policy.c` is the qualification gate, not a blanket
-   deny: it publishes, for the one firmware identity the console runs
-   observed, exactly which operations those runs proved
+   deny: it publishes, for any readable firmware identity, exactly which
+   operations the console runs proved
    (`openagc_ps5_policy_qualification` / `openagc_ps5_policy_require`)
-   and refuses everything else, draws included. Every new public symbol
+   and refuses everything else. It is firmware-independent; only an
+   unreadable firmware identity (`0`) is refused. Every new public symbol
    is defined there; the host library never appears in a PS5 image.
 
 ## Where we are
@@ -237,7 +238,7 @@ Blocked by two independent gates:
    reflection, host register-program encoder, and pin-checked
    `OPENGNM_PSBC` envelope intake exist
    (`OPENAGC_SHADER_PINNED_PSBC_EXECUTABLE_SHA256`, `psbc_metadata.h`,
-   `pm4_graphics_fw940.h`, fixtures under `tests/fixtures/psbc_smoke/`).
+   `pm4_graphics.h`, fixtures under `tests/fixtures/psbc_smoke/`).
    Accepted envelopes report `psbc_envelope=1` with
    `compiler_verified=0` and `gpu_executable=0`;
    `openagc_shader_artifact_require_compiler` still returns `NOT_READY`.
@@ -253,8 +254,8 @@ Blocked by two independent gates:
    [shader-toolchain.md](shader-toolchain.md).
 2. **Draw/render PM4**: real render-target and draw packets have no
    independently verified FW9.40 evidence in this repository. Copy+EOP
-   encoding is console-aligned via `pm4_fw940.h` (31 dwords observed).
-   A separate compute store-const IB (`pm4_compute_fw940.h`, 51 dwords)
+   encoding is console-aligned via `pm4.h` (31 dwords observed).
+   A separate compute store-const IB (`pm4_compute.h`, 51 dwords)
    completed once on console; Steps I–L extend that to 8-lane
    `store_span` chains (1/2/4/8 spans through
    `OPENAGC_PM4_COMPUTE_SPAN_MAX`) without graphics draws or
@@ -281,11 +282,11 @@ Blocked by two independent gates:
    dual PSBC envelopes after `bind_psbc_code` (`gpu_submitted=0`);
    draws stay `NOT_READY`. Draw/render packets remain unavailable.
    Host CB/DB bind is scaffolded fail-closed
-   (`pm4_cb_capture_fw940.h` + `openagc_gpu_host_cb_bind_from_capture`):
+   (`pm4_cb_capture.h` + `openagc_gpu_host_cb_bind_from_capture`):
    only a verified capture artifact (manifest+digest) may be recorded;
    invent encode is refused; evidence pin count is 0; `gpu_executable`
    stays 0. Step V proves a console IB dump vehicle for the Step-U
-   register IB (`pm4_ib_dump_fw940.h` + `openagc_ib_dump_parse`); dumps
+   register IB (`pm4_ib_dump.h` + `openagc_ib_dump_parse`); dumps
    never qualify CB pins. PSBC smoke context/SH offsets map to public
    gfx10 `SPI_*`/`PA_*`/`GE_*`/`VGT_*`/`DB_SHADER_CONTROL`/
    `CB_SHADER_MASK` (`pm4_context_regs_gfx10.h`); smoke does **not** own
@@ -332,7 +333,7 @@ Blocked by two independent gates:
    negative is off the linear-bind path. This binds no DRAW: the bind's
    addressing is untested, the pin table stays empty, and the next gate
    is a bounded attribute-less DRAW against an owned linear target.
-   Step AC adds that draw vehicle (`pm4_draw_fw940.h`): CLEAR_STATE, the
+   Step AC adds that draw vehicle (`pm4_draw.h`): CLEAR_STATE, the
    cited rasterizer state, a `SET_UCONFIG_REG` POINTLIST topology, one
    `DRAW_INDEX_AUTO` vertex, the smoke program, and the Step-AB bind, with
    `openagc_pm4_draw_point_scan` as the shared, tested acceptance scan and
@@ -422,7 +423,7 @@ conversion, and cache coherency rules need their own firmware evidence
 and their own review; until then Vulkan images are linear/host-visible
 and GL textures are linear, and both frontends must report that
 capability honestly. Fail-closed constants live in
-`presentation_refuse_fw940.h` (`OPENAGC_NATIVE_TILING_SUPPORTED=0`,
+`presentation_refuse.h` (`OPENAGC_NATIVE_TILING_SUPPORTED=0`,
 `OPENAGC_SCANOUT_USAGE_SUPPORTED=0`).
 
 ## Stage 7 — presentation
@@ -441,8 +442,10 @@ and two draw vehicles have been observed on console. The corrected NGG draw
 still produces no pixel. These results qualify only the particular packets
 and readbacks recorded in [hardware-evidence.md](hardware-evidence.md); they
 do not qualify a general hardware backend, Vulkan/OpenGL execution, or
-presentation. The PS5 policy library advertises only capabilities qualified
-for the observed firmware and still refuses draws and presentation. The one
+presentation. The PS5 policy library advertises the same qualified capabilities
+for every readable firmware identity (OpenAGC is firmware-independent and
+has been tested end-to-end on PS5 consoles across firmware versions); see
+`ps5_policy.h` for the current mask. Presentation is still refused. The one
 validated payload push for the current draw step has already been used.
 
 ## Stage 9 — standard APIs for external PS5 applications (not started)

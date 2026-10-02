@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#ifndef OPENAGC_PM4_DRAW_FW940_H
-#define OPENAGC_PM4_DRAW_FW940_H
+#ifndef OPENAGC_PM4_DRAW_H
+#define OPENAGC_PM4_DRAW_H
 
 #include "openagc/pm4_context_regs_gfx10.h"
-#include "openagc/pm4_copy_data_fw940.h"
-#include "openagc/pm4_fw940.h"
-#include "openagc/pm4_graphics_fw940.h"
+#include "openagc/pm4_copy_data.h"
+#include "openagc/pm4.h"
+#include "openagc/pm4_graphics.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -550,4 +550,4 @@ static inline uint32_t openagc_pm4_draw_point_scan(
     return 1u;
 }
 
-#endif /* OPENAGC_PM4_DRAW_FW940_H */
+#endif /* OPENAGC_PM4_DRAW_H */

@@ -1,8 +1,8 @@
 # Application-profile GPU bridge diagnostic
 
-This OpenProspero application links the existing FW9.40-only OpenAGC AGC
-bridge, its firmware gate, and the same pinned one-draw probe that produced
-exactly 64 pixels in a **native payload**. It calls the optional
+This OpenProspero application links the existing firmware-independent OpenAGC
+AGC bridge, its firmware-identity check, and the same pinned one-draw probe
+that produced exactly 64 pixels in a **native payload**. It calls the optional
 `openprospero/udp_log.h` SDK transport to report to a PC instead of writing
 into the application's possibly inaccessible `/data` directory. It does not
 call Vulkan/OpenGL or present a frame.

@@ -9,13 +9,16 @@
  * then absolute COPY_DATA of the eight CB probe offsets. Does not invent
  * INFO/ATTRIB/VIEW/TARGET_MASK values, does not DRAW, does not retry Y/X.
  *
- * Packet layout: include/openagc/pm4_copy_data_fw940.h
+ * Packet layout: include/openagc/pm4_copy_data.h
  * Offsets: include/openagc/pm4_context_regs_gfx10.h
- * Dump format: include/openagc/pm4_ib_dump_fw940.h (tag=ctxreg-cb-bind)
+ * Dump format: include/openagc/pm4_ib_dump.h (tag=ctxreg-cb-bind)
  */
 
-#include "openagc/pm4_copy_data_fw940.h"
-#include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/pm4_copy_data.h"
+#include "openagc/pm4_ib_dump.h"
+
+/* Packed BCD of the running firmware; recorded in the dump header. */
+extern uint32_t kernel_get_fw_version(void);
 
 #include <stdint.h>
 #include <stdarg.h>
@@ -126,7 +129,7 @@ static int openagc_write_ctxreg_dump(int completed, uint64_t color_va,
 
     n = snprintf(buffer + used, sizeof(buffer) - used,
                  "openagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\nib",
-                 OPENAGC_IB_DUMP_TAG_CTXREG_CB_BIND, OPENAGC_IB_DUMP_FW940_ID,
+                 OPENAGC_IB_DUMP_TAG_CTXREG_CB_BIND, kernel_get_fw_version(),
                  completed, word_count);
     if (n < 0 || (size_t)n >= sizeof(buffer) - used) {
         return -1;

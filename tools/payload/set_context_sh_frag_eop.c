@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step T: smoke.frag SET_CONTEXT + graphics SET_SH + EOP for FW9.40 (no DRAW).
+/* Step T: smoke.frag SET_CONTEXT + graphics SET_SH + EOP (no DRAW).
  *
  * Contract (docs/hardware-evidence.md): one submit concatenating the
  * nine smoke.frag context_registers pairs with the four graphics-bank
@@ -8,10 +8,10 @@
  * the shared EOP+NOP trailer. Omits linkage (null in frag metadata),
  * CB/DB, and DRAW. Reuses the Step Q encoder with verified frag pairs.
  *
- * Packet layout: include/openagc/pm4_graphics_fw940.h
+ * Packet layout: include/openagc/pm4_graphics.h
  */
 
-#include "openagc/pm4_graphics_fw940.h"
+#include "openagc/pm4_graphics.h"
 
 #include <stdint.h>
 #include <stdarg.h>

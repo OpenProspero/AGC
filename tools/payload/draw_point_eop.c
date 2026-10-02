@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 OpenProspero */
 /* Step AC: the first OpenAGC DRAW - one point into an owned linear target.
  *
- * The IB (include/openagc/pm4_draw_fw940.h) is CLEAR_STATE + the smoke
+ * The IB (include/openagc/pm4_draw.h) is CLEAR_STATE + the smoke
  * draw state + the console-proven smoke.vert/frag register program with the
  * two PGMs patched to the uploaded code + the Step-AB color bind + a
  * POINTLIST topology + one DRAW_INDEX_AUTO of one vertex + the shared
@@ -17,12 +17,15 @@
  * stray write stays in our own memory, and the payload scans the rest of
  * the arena afterwards to report any pixel outside that rect.
  *
- * Packet layout: include/openagc/pm4_draw_fw940.h
- * Dump format: include/openagc/pm4_ib_dump_fw940.h (tag=draw-point-eop)
+ * Packet layout: include/openagc/pm4_draw.h
+ * Dump format: include/openagc/pm4_ib_dump.h (tag=draw-point-eop)
  */
 
-#include "openagc/pm4_draw_fw940.h"
-#include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/pm4_draw.h"
+#include "openagc/pm4_ib_dump.h"
+
+/* Packed BCD of the running firmware; recorded in the dump header. */
+extern uint32_t kernel_get_fw_version(void);
 
 #include <stdint.h>
 #include <stdarg.h>
@@ -237,7 +240,7 @@ static int openagc_write_draw_dump(int completed, uint64_t color_va,
 
     n = snprintf(buffer + used, sizeof(buffer) - used,
                  "openagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\nib",
-                 OPENAGC_IB_DUMP_TAG_DRAW_POINT, OPENAGC_IB_DUMP_FW940_ID,
+                 OPENAGC_IB_DUMP_TAG_DRAW_POINT, kernel_get_fw_version(),
                  completed, OPENAGC_VIEW_WORDS);
     if (n < 0 || (size_t)n >= sizeof(buffer) - used) {
         return -1;

@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#ifndef OPENAGC_PM4_FW940_H
-#define OPENAGC_PM4_FW940_H
+#ifndef OPENAGC_PM4_H
+#define OPENAGC_PM4_H
 
 #include <stdint.h>
 
@@ -69,4 +69,4 @@ static inline void openagc_pm4_encode_eop_with_nops(uint64_t marker, uint32_t se
     }
 }
 
-#endif /* OPENAGC_PM4_FW940_H */
+#endif /* OPENAGC_PM4_H */

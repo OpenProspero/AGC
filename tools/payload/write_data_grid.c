@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step N: multi-column WRITE_DATA clear grid for FW9.40.
+/* Step N: multi-column WRITE_DATA clear grid.
  *
  * Contract: one submit, 8 rows × 2 columns of WRITE_DATA (16 dwords each)
  * at pitch 128 (32×8 RGBA8 window), one shared EOP+NOP trailer, finite
  * deadline, no shader, no CB/DB, no draw, no retry. One log line.
  * Fills 1024 bytes — the host clear window after Step M's 16×8.
  *
- * Layout: include/openagc/pm4_write_fw940.h
+ * Layout: include/openagc/pm4_write.h
  */
 
-#include "openagc/pm4_write_fw940.h"
+#include "openagc/pm4_write.h"
 
 #include <stdint.h>
 #include <stdarg.h>

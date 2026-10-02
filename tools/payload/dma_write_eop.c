@@ -1,17 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step H: DMA + WRITE_DATA + EOP in one IB for FW9.40.
+/* Step H: DMA + WRITE_DATA + EOP in one IB.
  *
  * Contract: one submit, one IT_DMA_DATA (64 bytes), one WRITE_DATA
  * (4 dwords over the destination start), one shared EOP+NOP trailer,
  * finite deadline, no shader, no CB/DB, no draw, no retry. One log line.
  *
- * Layout: include/openagc/pm4_write_fw940.h
+ * Layout: include/openagc/pm4_write.h
  * (Steps B and D–G proved DMA and WRITE_DATA alone; this proves both
  *  in one graphics-queue IB for copy-then-clear host recording.)
  */
 
-#include "openagc/pm4_write_fw940.h"
+#include "openagc/pm4_write.h"
 
 #include <stdint.h>
 #include <stdarg.h>

@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step B: bounded GPU copy and EOP proof for FW9.40.
+/* Step B: bounded GPU copy and EOP proof.
  *
  * Contract (docs/hardware-evidence.md): one submit, one copy, one fence,
  * finite deadline, no retry, no queue-create, no dispatch, no flat_load,
  * no VideoOut. It writes exactly one log line and exits.
  *
- * IB layout is shared with the host via include/openagc/pm4_fw940.h:
+ * IB layout is shared with the host via include/openagc/pm4.h:
  *   7 DMA + 8 EOP + 16 NOP = 31 dwords (console-observed on FW9.40).
  */
 
-#include "openagc/pm4_fw940.h"
+#include "openagc/pm4.h"
 
 #include <stdint.h>
 #include <stdarg.h>

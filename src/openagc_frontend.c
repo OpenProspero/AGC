@@ -4,8 +4,8 @@
 #include "openagc/raster.h"
 #include "openagc/psbc_metadata.h"
 #include "openagc/shader.h"
-#include "openagc/pm4_compute_fw940.h"
-#include "openagc/pm4_write_fw940.h"
+#include "openagc/pm4_compute.h"
+#include "openagc/pm4_write.h"
 #include "openagc/store_span_code.h"
 
 #include <stdlib.h>

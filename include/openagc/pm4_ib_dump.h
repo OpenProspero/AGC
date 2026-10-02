@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#ifndef OPENAGC_PM4_IB_DUMP_FW940_H
-#define OPENAGC_PM4_IB_DUMP_FW940_H
+#ifndef OPENAGC_PM4_IB_DUMP_H
+#define OPENAGC_PM4_IB_DUMP_H
 
 #include "openagc/pm4_context_regs_gfx10.h"
 
@@ -9,24 +9,28 @@
 #include <stdint.h>
 
 /*
- * Console IB dump text contract for FW9.40 evidence payloads.
+ * Console IB dump text contract for evidence payloads.
  *
  * Purpose: record the exact dwords submitted in a bounded IB (after a
  * proven Step-U-shaped register program + EOP) to an FTP-retrievable log
  * so a later independently owned CB/DB/DRAW capture can be pinned into
- * pm4_cb_capture_fw940.h without inventing register values.
+ * pm4_cb_capture.h without inventing register values.
  *
  * This dump vehicle is NOT a Stage 5 CB unlock. A Step-U register dump
  * must never be treated as CB_BIND / DB_BIND / DRAW evidence.
  * hardware_qualified and gpu_executable stay false.
  *
  * Log format (ASCII, one file, fopen "w"):
- *   openagc-ib-dump: tag=<token> fw=0x9400008 completed=<0|1> words=<N>
+ *   openagc-ib-dump: tag=<token> fw=0x<packed BCD> completed=<0|1> words=<N>
  *   ib <N hex dwords, lowercase, space-separated, may wrap lines>
  *
  * The Step-Z payload writes one `openagc-cb-bind-owned:` expect line before
  * the header; openagc_ib_dump_parse skips leading non-header lines and
  * still refuses text with no header at all.
+ *
+ * fw= is the running firmware's packed BCD identity as the payload read it
+ * (for example 0x9400008 is 9.40.008). Any nonzero identity is accepted;
+ * a missing or zero identity is refused as UNSUPPORTED_FIRMWARE.
  *
  * tag=step-u means register program + EOP only (no CB color, no DRAW).
  * tag=ctxreg-cb means Step-W COLOR_BASE-class readback (relative COPY_DATA
@@ -51,7 +55,6 @@
  */
 
 #define OPENAGC_IB_DUMP_API_VERSION 1u
-#define OPENAGC_IB_DUMP_FW940_ID 0x9400008u
 #define OPENAGC_IB_DUMP_MAX_WORDS 256u
 #define OPENAGC_IB_DUMP_TAG_STEP_U "step-u"
 #define OPENAGC_IB_DUMP_TAG_CTXREG_CB "ctxreg-cb"
@@ -350,4 +353,4 @@ static inline uint32_t openagc_ib_dump_mmio_tilemode_lookup(
     return 0u;
 }
 
-#endif /* OPENAGC_PM4_IB_DUMP_FW940_H */
+#endif /* OPENAGC_PM4_IB_DUMP_H */

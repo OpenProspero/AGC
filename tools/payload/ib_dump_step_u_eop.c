@@ -1,18 +1,21 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step V: IB dump of Step-U register program + EOP for FW9.40 (no DRAW).
+/* Step V: IB dump of Step-U register program + EOP (no DRAW).
  *
  * Contract (docs/hardware-evidence.md): same bounded submit as Step U
  * (vert+frag host register program + EOP), then write an
  * openagc-ib-dump log of the submitted dwords for host parse intake.
  * Omits CB/DB color binds and DRAW. Does not unlock Stage 5 CB pins.
  *
- * Packet layout: include/openagc/pm4_graphics_fw940.h
- * Dump format: include/openagc/pm4_ib_dump_fw940.h
+ * Packet layout: include/openagc/pm4_graphics.h
+ * Dump format: include/openagc/pm4_ib_dump.h
  */
 
-#include "openagc/pm4_graphics_fw940.h"
-#include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/pm4_graphics.h"
+#include "openagc/pm4_ib_dump.h"
+
+/* Packed BCD of the running firmware; recorded in the dump header. */
+extern uint32_t kernel_get_fw_version(void);
 
 #include <stdint.h>
 #include <stdarg.h>
@@ -170,7 +173,7 @@ static int openagc_write_ib_dump(int completed, const uint32_t *ib_words,
 
     n = snprintf(buffer, sizeof(buffer),
                  "openagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\nib",
-                 OPENAGC_IB_DUMP_TAG_STEP_U, OPENAGC_IB_DUMP_FW940_ID, completed,
+                 OPENAGC_IB_DUMP_TAG_STEP_U, kernel_get_fw_version(), completed,
                  word_count);
     if (n < 0 || (size_t)n >= sizeof(buffer)) {
         return -1;

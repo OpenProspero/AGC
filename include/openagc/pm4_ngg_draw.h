@@ -31,10 +31,10 @@
  * emitting a partial IB.
  */
 
-#ifndef OPENAGC_PM4_NGG_DRAW_FW940_H
-#define OPENAGC_PM4_NGG_DRAW_FW940_H
+#ifndef OPENAGC_PM4_NGG_DRAW_H
+#define OPENAGC_PM4_NGG_DRAW_H
 
-#include "openagc/pm4_draw_fw940.h"
+#include "openagc/pm4_draw.h"
 
 /* Largest number of writes read out of one fixture metadata table. */
 #define OPENAGC_PM4_NGG_MAX_WRITES 32u
@@ -425,4 +425,4 @@ static inline uint32_t openagc_pm4_encode_draw_ngg_eop(
     return cursor;
 }
 
-#endif /* OPENAGC_PM4_NGG_DRAW_FW940_H */
+#endif /* OPENAGC_PM4_NGG_DRAW_H */

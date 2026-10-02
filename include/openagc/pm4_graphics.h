@@ -1,14 +1,14 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#ifndef OPENAGC_PM4_GRAPHICS_FW940_H
-#define OPENAGC_PM4_GRAPHICS_FW940_H
+#ifndef OPENAGC_PM4_GRAPHICS_H
+#define OPENAGC_PM4_GRAPHICS_H
 
-#include "openagc/pm4_fw940.h"
+#include "openagc/pm4.h"
 
 #include <stdint.h>
 
 /*
- * Graphics-bank PM4 helpers for FW9.40 host snapshots.
+ * Graphics-bank PM4 helpers for host snapshots.
  *
  * Independent public cites (drm/amdgpu / umr PM4 decoders):
  *   PACKET3_SET_CONTEXT_REG = 0x69  (reg base 0xA000 + offset)
@@ -18,7 +18,7 @@
  * Register *offsets and values* must come from a verified PSBC metadata
  * object (context_registers / shader_registers), never invented.
  * No DRAW packet is emitted. Console CB/DB bind and draw remain gated
- * until an independently owned FW9.40 IB capture exists.
+ * until an independently owned console IB capture exists.
  */
 
 #define OPENAGC_PM4_OP_SET_CONTEXT_REG 0x69u
@@ -310,4 +310,4 @@ static inline uint32_t openagc_pm4_encode_graphics_vert_frag_eop(
     return cursor + OPENAGC_PM4_EOP_WITH_NOP_WORDS;
 }
 
-#endif /* OPENAGC_PM4_GRAPHICS_FW940_H */
+#endif /* OPENAGC_PM4_GRAPHICS_H */

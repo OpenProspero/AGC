@@ -3,7 +3,7 @@
 #ifndef OPENAGC_PS5_GPU_H
 #define OPENAGC_PS5_GPU_H
 
-#include "openagc/pm4_agc_completion_fw940.h"
+#include "openagc/pm4_agc_completion.h"
 #include "openagc/raster.h"
 
 #ifdef __cplusplus
@@ -58,12 +58,12 @@ typedef struct openagc_ps5_gpu_submission {
 
 /*
  * Separate from OpenAGC's fail-closed host/PS5 policy ABI. This native
- * target admits only the console-observed FW identity and the qualified
- * DRAW capability. It does not make arbitrary shaders, Vulkan/OpenGL or
+ * target admits any readable (nonzero) firmware identity and only the
+ * qualified DRAW capability; an unreadable firmware is refused. It does not make arbitrary shaders, Vulkan/OpenGL or
  * VideoOut executable; the caller owns GPU-visible memory and code.
  * One bridge instance may be active per process. Calls must be serialized.
  * AGC modules remain loaded after initialization until process exit:
- * unloading the initialized driver was refused in the FW9.40 console test.
+ * unloading the initialized driver was refused in console testing.
  */
 openagc_result openagc_ps5_gpu_create(openagc_ps5_gpu **out_gpu,
                                       int32_t *out_platform_error);

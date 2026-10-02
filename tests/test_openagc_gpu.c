@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/driver.h"
-#include "openagc/pm4_compute_fw940.h"
-#include "openagc/pm4_copy_data_fw940.h"
+#include "openagc/pm4_compute.h"
+#include "openagc/pm4_copy_data.h"
 #include "openagc/pm4_context_regs_gfx10.h"
-#include "openagc/pm4_draw_fw940.h"
-#include "openagc/pm4_ngg_draw_fw940.h"
-#include "openagc/pm4_graphics_fw940.h"
-#include "openagc/pm4_write_fw940.h"
+#include "openagc/pm4_draw.h"
+#include "openagc/pm4_ngg_draw.h"
+#include "openagc/pm4_graphics.h"
+#include "openagc/pm4_write.h"
 #include "openagc/store_const_code.h"
 #include "openagc/store_span_code.h"
 #include "openagc_sha256.h"
@@ -982,7 +982,7 @@ static void test_fill_cb_manifest(openagc_cb_capture_manifest *manifest,
 {
     *manifest = OPENAGC_CB_CAPTURE_MANIFEST_INIT;
     manifest->kind = kind;
-    manifest->firmware_id = OPENAGC_CB_CAPTURE_FW940_ID;
+    manifest->firmware_id = 0x09400008u;
     manifest->word_count = word_count;
     openagc_sha256((const uint8_t *)words, (size_t)word_count * sizeof(uint32_t),
                    manifest->words_sha256);
@@ -998,7 +998,7 @@ static int test_cb_capture_refuse_and_accept(void)
     openagc_gpu_submission_view view = OPENAGC_GPU_SUBMISSION_VIEW_INIT;
     openagc_cb_capture_info info = OPENAGC_CB_CAPTURE_INFO_INIT;
     openagc_cb_capture_manifest manifest = OPENAGC_CB_CAPTURE_MANIFEST_INIT;
-    /* Structural fixture only — not a real FW9.40 CB/DB IB cite. */
+    /* Structural fixture only — not a real console CB/DB IB cite. */
     static const uint32_t fixture_words[] = { OPENAGC_PM4_NOP_HEADER, 0u,
                                               OPENAGC_PM4_NOP_HEADER, 0u };
     uint32_t invent_words[8];
@@ -1024,6 +1024,11 @@ static int test_cb_capture_refuse_and_accept(void)
     manifest.firmware_id = 0u;
     EXPECT(openagc_cb_capture_verify(&manifest, fixture_words),
            OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+    /* Intake is firmware-independent: any valid identity is accepted. */
+    manifest.firmware_id = 0x04500000u;
+    EXPECT(openagc_cb_capture_verify(&manifest, fixture_words), OPENAGC_OK);
+    manifest.firmware_id = 0x10000000u;
+    EXPECT(openagc_cb_capture_verify(&manifest, fixture_words), OPENAGC_OK);
     test_fill_cb_manifest(&manifest, OPENAGC_CB_CAPTURE_KIND_NONE, fixture_words, 4u);
     EXPECT(openagc_cb_capture_verify(&manifest, fixture_words),
            OPENAGC_ERROR_UNSUPPORTED_OPERATION);
@@ -1334,11 +1339,49 @@ static int test_ib_dump_parse_and_refuse_contracts(void)
     CHECK(info.dump_parsed == 1u);
     CHECK(info.evidence_qualified == 0u);
     CHECK(info.kind == OPENAGC_IB_DUMP_KIND_REGISTER_EOP);
-    CHECK(info.firmware_id == OPENAGC_IB_DUMP_FW940_ID);
+    CHECK(info.firmware_id == 0x9400008u);
     CHECK(info.completed == 1u);
     CHECK(info.word_count == 4u);
     CHECK(words[0] == 0xc0001000u && words[1] == 0u);
     CHECK(words[2] == 0xc0001000u && words[3] == 0u);
+
+    /* The dump contract records whatever firmware the payload ran on;
+     * only a missing or zero identity is refused. */
+    {
+        static const char *const other_firmware[] = {
+            "openagc-ib-dump: tag=step-u fw=0x4500000 completed=1 words=4\n"
+            "ib c0001000 00000000 c0001000 00000000\n",
+            "openagc-ib-dump: tag=step-u fw=0x6020000 completed=1 words=4\n"
+            "ib c0001000 00000000 c0001000 00000000\n",
+            "openagc-ib-dump: tag=step-u fw=0x10000000 completed=1 words=4\n"
+            "ib c0001000 00000000 c0001000 00000000\n"
+        };
+        static const uint32_t other_ids[] = { 0x4500000u, 0x6020000u, 0x10000000u };
+        static const char zero_firmware[] =
+            "openagc-ib-dump: tag=step-u fw=0x0 completed=1 words=4\n"
+            "ib c0001000 00000000 c0001000 00000000\n";
+        static const char missing_firmware[] =
+            "openagc-ib-dump: tag=step-u completed=1 words=4\n"
+            "ib c0001000 00000000 c0001000 00000000\n";
+        uint32_t f;
+
+        for (f = 0u; f < 3u; ++f) {
+            info = OPENAGC_IB_DUMP_INFO_INIT;
+            EXPECT(openagc_ib_dump_parse(other_firmware[f], words, 8u, &info),
+                   OPENAGC_OK);
+            CHECK(info.firmware_id == other_ids[f]);
+            CHECK(info.kind == OPENAGC_IB_DUMP_KIND_REGISTER_EOP);
+            CHECK(info.evidence_qualified == 0u);
+        }
+        info = OPENAGC_IB_DUMP_INFO_INIT;
+        EXPECT(openagc_ib_dump_parse(zero_firmware, words, 8u, &info),
+               OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+        CHECK(info.dump_parsed == 0u);
+        info = OPENAGC_IB_DUMP_INFO_INIT;
+        EXPECT(openagc_ib_dump_parse(missing_firmware, words, 8u, &info),
+               OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+        CHECK(info.dump_parsed == 0u);
+    }
 
     info = OPENAGC_IB_DUMP_INFO_INIT;
     EXPECT(openagc_ib_dump_parse(ctxreg_text, words, 8u, &info), OPENAGC_OK);

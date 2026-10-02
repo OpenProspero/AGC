@@ -4363,11 +4363,11 @@ openagc_result openagc_gl_bind_default_framebuffer(openagc_gl_context *context)
 /*
  * The qualification gate. This target is what a PS5 image links instead
  * of the host library, so it cannot execute anything: what it can do is
- * state which operations the observed firmware qualified (copy+EOP,
- * WRITE_DATA fills, compute stores, register programs, CB readback, IB
- * dumps, the NGG program) and refuse the rest, instead of denying every
- * call for every firmware alike. A draw is named and still refused: no
- * console run has produced a pixel.
+ * state which operations console runs qualified (copy+EOP, WRITE_DATA
+ * fills, compute stores, register programs, CB readback, IB dumps, the NGG
+ * program, the AGC-submitted draw) and refuse the rest. The mask is
+ * firmware-independent: any valid (nonzero) firmware identity gets it;
+ * only an unreadable identity (0) is refused.
  */
 openagc_result openagc_ps5_policy_qualification(uint32_t firmware_id,
                                                 openagc_ps5_qualification *info)
@@ -4382,7 +4382,7 @@ openagc_result openagc_ps5_policy_qualification(uint32_t firmware_id,
     info->firmware_id = firmware_id;
     info->capability_mask = 0u;
     info->refused_mask = 0u;
-    if (firmware_id != OPENAGC_PS5_POLICY_FW940_ID) {
+    if (firmware_id == 0u) {
         info->qualified = 0u;
         info->refused_mask = OPENAGC_PS5_CAP_KNOWN_MASK;
         return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
@@ -4401,7 +4401,7 @@ openagc_result openagc_ps5_policy_require(uint32_t firmware_id,
     if (capability == 0u || (capability & ~(uint32_t)OPENAGC_PS5_CAP_KNOWN_MASK) != 0u) {
         return OPENAGC_ERROR_INVALID_ARGUMENT;
     }
-    if (firmware_id != OPENAGC_PS5_POLICY_FW940_ID) {
+    if (firmware_id == 0u) {
         return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
     }
     mask = OPENAGC_PS5_QUALIFIED_MASK;

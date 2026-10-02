@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#include "openagc/pm4_ngg_draw_fw940.h"
+#include "openagc/pm4_ngg_draw.h"
 #include "openagc/raster.h"
 
 #include "ngg_smoke_tables.h"

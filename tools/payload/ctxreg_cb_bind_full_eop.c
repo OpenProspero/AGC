@@ -12,13 +12,16 @@
  * path (see include/openagc/pm4_context_regs_gfx10.h); no value is
  * invented. It submits no DRAW, so the bind's addressing is not exercised.
  *
- * Packet layout: include/openagc/pm4_copy_data_fw940.h
+ * Packet layout: include/openagc/pm4_copy_data.h
  * Offsets: include/openagc/pm4_context_regs_gfx10.h
- * Dump format: include/openagc/pm4_ib_dump_fw940.h (tag=ctxreg-cb-bind-full)
+ * Dump format: include/openagc/pm4_ib_dump.h (tag=ctxreg-cb-bind-full)
  */
 
-#include "openagc/pm4_copy_data_fw940.h"
-#include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/pm4_copy_data.h"
+#include "openagc/pm4_ib_dump.h"
+
+/* Packed BCD of the running firmware; recorded in the dump header. */
+extern uint32_t kernel_get_fw_version(void);
 
 #include <stdint.h>
 #include <stdarg.h>
@@ -138,7 +141,7 @@ static int openagc_write_ctxreg_dump(int completed, int matched,
     n = snprintf(buffer + used, sizeof(buffer) - used,
                  "openagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\nib",
                  OPENAGC_IB_DUMP_TAG_CTXREG_CB_BIND_FULL,
-                 OPENAGC_IB_DUMP_FW940_ID, completed, word_count);
+                 kernel_get_fw_version(), completed, word_count);
     if (n < 0 || (size_t)n >= sizeof(buffer) - used) {
         return -1;
     }

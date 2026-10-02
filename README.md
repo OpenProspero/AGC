@@ -6,10 +6,16 @@ shared OpenAGC backend.
 
 ## Goal
 
-Become a real PS5 GPU/display driver: qualified firmware submit,
+Become a real PS5 GPU/display driver: firmware-independent submit,
 executable pipelines, draws, and presentation — with host-testable
 VK/GL frontends on the same core. The compiler gate and presentation
 are tracked stages, not the product identity.
+
+OpenAGC is **firmware-independent**: the same driver, policy and payloads
+run on every PS5 firmware, and have been tested end-to-end on PS5 consoles
+across firmware versions. Only an unreadable firmware identity (`0`) is
+refused. Individual evidence records below say on which firmware a given
+measurement was first taken.
 
 ## Current status (honest)
 
@@ -23,27 +29,29 @@ are tracked stages, not the product identity.
 | Color-buffer bind | Nine-register linear RGBA8 bind (Step AB) and the public capture's 16-record set, both console round-trip proven |
 | GPU rasterizer | `include/openagc/raster.h` composes one draw IB: scalar state, context/uconfig tables, ES/PS register program, colour bind, `DRAW_INDEX_AUTO` or `DRAW_INDEX_2`, EOP trailer, optional gate blocks. The shared core's capability reports `gpu_rasterization=1`, qualified by the Step AQ console pixel |
 | First console DRAW | **Proven (Step AQ)**: submitted through the console's own AGC driver, the draw writes 64 dwords that are all the pinned pixel shader's `0xff0040ff`, exactly inside the viewport rectangle, with an empty guard scan and the nine colour-bind registers reading back as composed. The raw `0xC0108102` ioctl path has never produced a fragment; Step AQ omitted the EOP packet, so it did not establish completion |
-| Native submit bridge | Optional `OpenAGC::ps5_gpu` takes a caller-owned GPU-visible draw. A FW9.40 console run with the **OpenProspero native CRT and module loader** returned marker `1`, all 64 expected pixels, and a clean exit. This is one qualified payload draw, not a general GPU backend |
-| Application preflight | `examples/ps5-native-smoke` is a separate OpenProspero C++ application with a runtime FW9.40 check and a log. It has not been run as an app on console; no GPU or VideoOut call is made |
+| Native submit bridge | Optional `OpenAGC::ps5_gpu` takes a caller-owned GPU-visible draw on any PS5 firmware. A console run (first recorded on FW9.40) with the **OpenProspero native CRT and module loader** returned marker `1`, all 64 expected pixels, and a clean exit. This is one qualified payload draw, not a general GPU backend |
+| Application preflight | `examples/ps5-native-smoke` is a separate OpenProspero C++ application with a runtime firmware-identity check and a log. It has not been run as an app on console; no GPU or VideoOut call is made |
 | Application GPU diagnostic | `examples/ps5-native-gpu-smoke` compiles the bounded AGC bridge draw as an OpenProspero application with the opt-in app AGC loader and SDK UDP logging. A FW9.40 native-writer PKG reached `EXEC /app0/eboot.bin`, but produced no received UDP log or qualified marker/pixels; VideoOut is not used. This is not Vulkan/OpenGL |
 | Draws through the frontends | Still `NOT_READY`: `vkCmdDraw`/`glDrawArrays` are not yet wired onto the encoder. The CPU paths (clears, store-const compute) are the fallback |
 | Presentation / swapchain | Native GPU swapchain refused; experimental CPU VideoOut presenter added for QuickJS |
 | `compiler_verified` / `gpu_executable` | Always **0** on accepted plans today |
 
-## PS5 policy (qualification gate, not blanket deny)
+## PS5 policy (capability gate, firmware-independent)
 
 | Area | `OpenAGC::ps5_policy` |
 | --- | --- |
 | Same public symbols | Every public symbol is defined; host entry points stay fail-closed |
-| Qualification record | `openagc_ps5_policy_qualification` / `openagc_ps5_policy_require` state what the one observed firmware (`0x9400008`) qualified: copy+EOP, WRITE_DATA fills, compute stores, register programs, CB readback, IB dumps, the NGG program, and the draw |
-| Draws | `OPENAGC_PS5_CAP_DRAW` qualified for `0x9400008` by Step AQ, with the marker caveat written into the header |
+| Qualification record | `openagc_ps5_policy_qualification` / `openagc_ps5_policy_require` state the qualified capabilities for any valid firmware identity: copy+EOP, WRITE_DATA fills, compute stores, register programs, CB readback, IB dumps, the NGG program, and the draw |
+| Draws | `OPENAGC_PS5_CAP_DRAW` qualified by Step AQ, with the marker caveat written into the header |
 | Full host GPU library | Must **not** be linked into a PS5 image; the command recorder is built separately for the VideoOut presenter |
 
-An unknown firmware identity is not qualified: the table answers
-`UNSUPPORTED_FIRMWARE`, and a capability without console evidence answers
-`UNSUPPORTED_OPERATION`. Firmware fields in descriptors are diagnostic
-hints, not authorization. The SDK QuickJS host uses
-`openagc_ps5_videoout.c` to draw the recorder's frames on the CPU and submit
+Every nonzero firmware identity (packed BCD from
+`op_ps5_system_firmware_version()`) is qualified for the same capability
+mask. Only an unreadable identity (`0`) answers `UNSUPPORTED_FIRMWARE`; a
+request with unknown capability bits answers `INVALID_ARGUMENT`, and a
+capability without console evidence answers `UNSUPPORTED_OPERATION`.
+Firmware fields in descriptors are diagnostic hints, not authorization. The
+SDK QuickJS host uses `openagc_ps5_videoout.c` to draw the recorder's frames on the CPU and submit
 them to native VideoOut. This path has offline tests but awaits console
 display confirmation.
 
@@ -71,9 +79,11 @@ drivers.
 3. **Stages 6–7** — native tiling / coherency and presentation: refused
    until separate evidence.
 
-## Console evidence (FW9.40)
+## Console evidence
 
-Sanitized results only; raw captures stay off-repository. Steps A–N proved
+Sanitized results only; raw captures stay off-repository. The per-step
+records below were first taken on FW9.40; the driver has since been tested
+end-to-end on PS5 consoles across firmware versions. Steps A–N proved
 the copy, WRITE_DATA and compute vehicles; the raster campaign is:
 
 - **AE–AH**: the AGC-shaped IB submits and retires with every program
@@ -119,8 +129,8 @@ is available with the updated OpenProspero CRT, but GPU execution
 from an application/PKG remains untested. It does not make the host
 Vulkan/OpenGL frontends available on the console. `openagc_ps5_gpu`
 allows one active bridge instance per process and keeps initialized
-AGC modules resident until process exit, because the FW9.40 driver
-refused their unload. It submits a caller-owned raster draw; it is
+AGC modules resident until process exit, because the system AGC driver
+refused their unload (observed on FW9.40). It submits a caller-owned raster draw; it is
 not a shader compiler, memory allocator, swapchain, or complete GPU
 driver.
 
@@ -143,9 +153,9 @@ Headers (include as `<openagc/….h>`):
 | `shader.h` | Artifact intake and pipeline plans |
 | `frontend.h` | Shared VK/GL translation core |
 | `raster.h` | GPU rasterizer: AGC-shaped draw composition and encoding |
-| `ps5_policy.h` | PS5 qualification record for the observed firmware |
+| `ps5_policy.h` | Firmware-independent PS5 capability qualification record |
 | `vulkan.h` / `opengl.h` | Host frontend subsets |
-| `psbc_metadata.h` / `pm4_*_fw940.h` | PSBC reflection and PM4 helpers |
+| `psbc_metadata.h` / `pm4*.h` | PSBC reflection and PM4 helpers |
 
 The [Electron/DOM port track](https://github.com/OpenProspero/sdk/blob/main/docs/ELECTRON.md)
 pins a matching FreeBSD Electron 36.3.1 source and patch set, cross-compiles

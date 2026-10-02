@@ -10,13 +10,16 @@
  * One submit; dumps eight values as tag=ctxreg-abs. Does not SET color
  * binds, does not invent CB values, does not DRAW, does not retry Step W.
  *
- * Packet layout: include/openagc/pm4_copy_data_fw940.h
+ * Packet layout: include/openagc/pm4_copy_data.h
  * Probe offsets: include/openagc/pm4_context_regs_gfx10.h
- * Dump format: include/openagc/pm4_ib_dump_fw940.h
+ * Dump format: include/openagc/pm4_ib_dump.h
  */
 
-#include "openagc/pm4_copy_data_fw940.h"
-#include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/pm4_copy_data.h"
+#include "openagc/pm4_ib_dump.h"
+
+/* Packed BCD of the running firmware; recorded in the dump header. */
+extern uint32_t kernel_get_fw_version(void);
 
 #include <stdint.h>
 #include <stdarg.h>
@@ -111,7 +114,7 @@ static int openagc_write_ctxreg_dump(int completed, const uint32_t *values,
 
     n = snprintf(buffer, sizeof(buffer),
                  "openagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\nib",
-                 OPENAGC_IB_DUMP_TAG_CTXREG_ABS, OPENAGC_IB_DUMP_FW940_ID, completed,
+                 OPENAGC_IB_DUMP_TAG_CTXREG_ABS, kernel_get_fw_version(), completed,
                  word_count);
     if (n < 0 || (size_t)n >= sizeof(buffer)) {
         return -1;

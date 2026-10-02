@@ -1,17 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step E: bounded multi-dword CP WRITE_DATA clear-tile proof for FW9.40.
+/* Step E: bounded multi-dword CP WRITE_DATA clear-tile proof.
  *
  * Contract (docs/hardware-evidence.md): one submit, one 16-dword
  * IT_WRITE_DATA (4x4 RGBA8 clear tile) into CPU-visible memory, shared
  * action-based EOP+NOP trailer, finite deadline, no shader, no flat_load,
  * no CB/DB, no draw, no retry, no VideoOut. One log line.
  *
- * Packet layout: include/openagc/pm4_write_fw940.h (public AMD type-3;
+ * Packet layout: include/openagc/pm4_write.h (public AMD type-3;
  * Step D already proved one dword on this firmware).
  */
 
-#include "openagc/pm4_write_fw940.h"
+#include "openagc/pm4_write.h"
 
 #include <stdint.h>
 #include <stdarg.h>

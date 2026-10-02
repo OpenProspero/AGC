@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step J: dual compute store-span in one IB for FW9.40.
+/* Step J: dual compute store-span in one IB.
  *
  * Contract: one submit, two 8-thread store_span dispatches (dest and
  * dest+32) sharing one shader preamble, one EOP, finite deadline, no
  * flat_load, no CB/DB, no draw, no retry. One log line.
  *
- * Layout: include/openagc/pm4_compute_fw940.h
+ * Layout: include/openagc/pm4_compute.h
  * Shader: tools/shaders/store_span.s (Step I proven).
  */
 
-#include "openagc/pm4_compute_fw940.h"
+#include "openagc/pm4_compute.h"
 #include "openagc/store_span_code.h"
 
 #include <stdint.h>

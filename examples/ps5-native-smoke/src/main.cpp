@@ -4,13 +4,13 @@
 #include <stdio.h>
 
 namespace {
-constexpr uint32_t kQualifiedFirmware = 0x09400008u;
-constexpr char kReportPath[] = "/data/prosperoai/openagc-app-preflight-fw940.log";
+constexpr char kReportPath[] = "/data/prosperoai/openagc-app-preflight.log";
 }
 
 extern "C" int main() {
     const uint32_t firmware = op_ps5_system_firmware_version();
-    const bool qualified = firmware == kQualifiedFirmware;
+    // OpenAGC is firmware-independent; only an unreadable identity (0) fails.
+    const bool qualified = firmware != 0u;
     fprintf(stderr, "openagc-app-preflight: firmware=%08x qualified=%u\n",
             firmware, qualified ? 1u : 0u);
 

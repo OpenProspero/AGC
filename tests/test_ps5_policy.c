@@ -18,52 +18,67 @@
 
 static int test_policy_qualification(void)
 {
+    static const uint32_t firmwares[] = {
+        0x04500000u, 0x06020000u, 0x09400008u, 0x10000000u
+    };
     openagc_ps5_qualification info = OPENAGC_PS5_QUALIFICATION_INIT;
     openagc_raster_capabilities raster = OPENAGC_RASTER_CAPABILITIES_INIT;
     openagc_ps5_videoout *display = (openagc_ps5_videoout *)0;
     openagc_frame_view view = OPENAGC_FRAME_VIEW_INIT;
     int platform_error = 0;
+    size_t i;
 
-    /* The observed firmware is qualified and names exactly what the
-     * console runs proved - never a draw. */
-    CHECK(openagc_ps5_policy_qualification(OPENAGC_PS5_POLICY_FW940_ID, &info) ==
-          OPENAGC_OK);
-    CHECK(info.qualified == 1u);
-    CHECK(info.firmware_id == OPENAGC_PS5_POLICY_FW940_ID);
-    CHECK(info.capability_mask ==
-          (OPENAGC_PS5_CAP_COPY_EOP | OPENAGC_PS5_CAP_WRITE_DATA_FILL |
-           OPENAGC_PS5_CAP_COMPUTE_STORE | OPENAGC_PS5_CAP_REGISTER_PROGRAM |
-           OPENAGC_PS5_CAP_CB_BIND_READBACK | OPENAGC_PS5_CAP_IB_DUMP |
-           OPENAGC_PS5_CAP_NGG_PROGRAM | OPENAGC_PS5_CAP_DRAW));
-    CHECK((info.capability_mask & OPENAGC_PS5_CAP_DRAW) != 0u);
-    CHECK(info.refused_mask == 0u);
+    /* The policy is firmware-independent: every valid identity is
+     * qualified for exactly what the console runs proved. */
+    for (i = 0u; i < sizeof(firmwares) / sizeof(firmwares[0]); ++i) {
+        info.qualified = 0u;
+        info.firmware_id = 0u;
+        CHECK(openagc_ps5_policy_qualification(firmwares[i], &info) ==
+              OPENAGC_OK);
+        CHECK(info.qualified == 1u);
+        CHECK(info.firmware_id == firmwares[i]);
+        CHECK(info.capability_mask ==
+              (OPENAGC_PS5_CAP_COPY_EOP | OPENAGC_PS5_CAP_WRITE_DATA_FILL |
+               OPENAGC_PS5_CAP_COMPUTE_STORE | OPENAGC_PS5_CAP_REGISTER_PROGRAM |
+               OPENAGC_PS5_CAP_CB_BIND_READBACK | OPENAGC_PS5_CAP_IB_DUMP |
+               OPENAGC_PS5_CAP_NGG_PROGRAM | OPENAGC_PS5_CAP_DRAW));
+        CHECK((info.capability_mask & OPENAGC_PS5_CAP_DRAW) != 0u);
+        CHECK(info.refused_mask == 0u);
 
-    CHECK(openagc_ps5_policy_require(OPENAGC_PS5_POLICY_FW940_ID,
-                                     OPENAGC_PS5_CAP_COPY_EOP) == OPENAGC_OK);
-    CHECK(openagc_ps5_policy_require(OPENAGC_PS5_POLICY_FW940_ID,
-                                     OPENAGC_PS5_CAP_NGG_PROGRAM) == OPENAGC_OK);
-    /* The AGC-submitted raster draw has console evidence. */
-    CHECK(openagc_ps5_policy_require(OPENAGC_PS5_POLICY_FW940_ID,
-                                     OPENAGC_PS5_CAP_DRAW) == OPENAGC_OK);
+        CHECK(openagc_ps5_policy_require(firmwares[i],
+                                         OPENAGC_PS5_CAP_COPY_EOP) == OPENAGC_OK);
+        CHECK(openagc_ps5_policy_require(firmwares[i],
+                                         OPENAGC_PS5_CAP_NGG_PROGRAM) == OPENAGC_OK);
+        /* The AGC-submitted raster draw has console evidence. */
+        CHECK(openagc_ps5_policy_require(firmwares[i],
+                                         OPENAGC_PS5_CAP_DRAW) == OPENAGC_OK);
+        /* Unknown capability bits stay invalid on every firmware. */
+        CHECK(openagc_ps5_policy_require(firmwares[i], 0u) ==
+              OPENAGC_ERROR_INVALID_ARGUMENT);
+        CHECK(openagc_ps5_policy_require(firmwares[i], 4096u) ==
+              OPENAGC_ERROR_INVALID_ARGUMENT);
+        CHECK(openagc_ps5_policy_require(firmwares[i],
+                                         OPENAGC_PS5_CAP_DRAW | 4096u) ==
+              OPENAGC_ERROR_INVALID_ARGUMENT);
+    }
+
+    /* An unreadable firmware identity (0) is never qualified. */
     CHECK(openagc_ps5_policy_require(0u, OPENAGC_PS5_CAP_COPY_EOP) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
-    CHECK(openagc_ps5_policy_require(0x9400009u, OPENAGC_PS5_CAP_COPY_EOP) ==
+    CHECK(openagc_ps5_policy_require(0u, OPENAGC_PS5_CAP_DRAW) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
-    CHECK(openagc_ps5_policy_require(OPENAGC_PS5_POLICY_FW940_ID, 0u) ==
+    CHECK(openagc_ps5_policy_require(0u, 4096u) ==
           OPENAGC_ERROR_INVALID_ARGUMENT);
-    CHECK(openagc_ps5_policy_require(OPENAGC_PS5_POLICY_FW940_ID, 4096u) ==
-          OPENAGC_ERROR_INVALID_ARGUMENT);
-
-    /* An unobserved identity is not qualified, whatever its version. */
     info.qualified = 1u;
-    CHECK(openagc_ps5_policy_qualification(0x9400009u, &info) ==
+    CHECK(openagc_ps5_policy_qualification(0u, &info) ==
           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     CHECK(info.qualified == 0u && info.capability_mask == 0u);
+    CHECK(info.firmware_id == 0u);
     CHECK(info.refused_mask == OPENAGC_PS5_CAP_KNOWN_MASK);
-    CHECK(openagc_ps5_policy_qualification(OPENAGC_PS5_POLICY_FW940_ID, 0) ==
+    CHECK(openagc_ps5_policy_qualification(0x09400008u, 0) ==
           OPENAGC_ERROR_INVALID_ARGUMENT);
     info.struct_size -= 4u;
-    CHECK(openagc_ps5_policy_qualification(OPENAGC_PS5_POLICY_FW940_ID, &info) ==
+    CHECK(openagc_ps5_policy_qualification(0x09400008u, &info) ==
           OPENAGC_ERROR_INCOMPATIBLE_VERSION);
 
     /* The mirrored host entry points stay fail-closed. */

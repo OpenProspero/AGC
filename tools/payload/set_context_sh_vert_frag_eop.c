@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step U: vert + frag host register program + EOP for FW9.40 (no DRAW).
+/* Step U: vert + frag host register program + EOP (no DRAW).
  *
  * Contract (docs/hardware-evidence.md): one submit concatenating the
  * Step S smoke.vert register program (context + SH + linkage, PGM
@@ -9,10 +9,10 @@
  * snapshot order, plus a single shared EOP+NOP trailer. Omits CB/DB
  * and DRAW.
  *
- * Packet layout: include/openagc/pm4_graphics_fw940.h
+ * Packet layout: include/openagc/pm4_graphics.h
  */
 
-#include "openagc/pm4_graphics_fw940.h"
+#include "openagc/pm4_graphics.h"
 
 #include <stdint.h>
 #include <stdarg.h>

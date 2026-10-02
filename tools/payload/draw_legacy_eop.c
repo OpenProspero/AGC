@@ -1,8 +1,11 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Legacy (non-NGG) vertex path with the viewport transform enabled. */
 
-#include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/pm4_ib_dump.h"
 #include "openagc/raster.h"
+
+/* Packed BCD of the running firmware; recorded in the dump header. */
+extern uint32_t kernel_get_fw_version(void);
 
 #include "smoke_tables.h"
 
@@ -148,7 +151,7 @@ static int openagc_write_dump(int completed, uint64_t color_va, uint32_t pixels,
 
     n = snprintf(buffer + used, sizeof(buffer) - used,
                  "\nopenagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\n",
-                 OPENAGC_IB_DUMP_TAG_DRAW_RASTER, OPENAGC_IB_DUMP_FW940_ID,
+                 OPENAGC_IB_DUMP_TAG_DRAW_RASTER, kernel_get_fw_version(),
                  completed, OPENAGC_VIEW_WORDS);
     if (n < 0 || (size_t)n >= sizeof(buffer) - used) {
         return -1;

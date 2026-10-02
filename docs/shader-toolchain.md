@@ -122,7 +122,7 @@ alone does **not** set `compiler_available`, `compiler_verified`, or
 
 ## Host register-program adapter (no DRAW)
 
-`include/openagc/pm4_graphics_fw940.h` encodes public AMD
+`include/openagc/pm4_graphics.h` encodes public AMD
 `SET_CONTEXT_REG` (0x69) and graphics `SET_SH_REG` (0x76) packets from
 PSBC `context_registers` / `shader_registers` pairs, and from vertex
 linkage fields (`ge_cntl`, `stages_en`, `user_vgpr_en`) when present.

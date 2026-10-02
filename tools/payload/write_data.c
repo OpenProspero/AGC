@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step D: bounded CP WRITE_DATA fill proof for FW9.40.
+/* Step D: bounded CP WRITE_DATA fill proof.
  *
  * Contract (docs/hardware-evidence.md): one submit, one dword
  * IT_WRITE_DATA into CPU-visible memory, shared action-based EOP+NOP
  * trailer, finite deadline, no shader, no flat_load, no CB/DB, no draw,
  * no retry, no VideoOut. One log line.
  *
- * Packet layout: include/openagc/pm4_write_fw940.h (public AMD type-3).
+ * Packet layout: include/openagc/pm4_write.h (public AMD type-3).
  */
 
-#include "openagc/pm4_write_fw940.h"
+#include "openagc/pm4_write.h"
 
 #include <stdint.h>
 #include <stdarg.h>

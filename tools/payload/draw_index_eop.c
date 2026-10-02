@@ -7,8 +7,11 @@
  * flag, which is what a driver does for an indexed draw.
  */
 
-#include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/pm4_ib_dump.h"
 #include "openagc/raster.h"
+
+/* Packed BCD of the running firmware; recorded in the dump header. */
+extern uint32_t kernel_get_fw_version(void);
 
 #include "ngg_smoke_tables.h"
 
@@ -186,7 +189,7 @@ static int openagc_write_draw_dump(int completed, uint64_t color_va,
 
     n = snprintf(buffer + used, sizeof(buffer) - used,
                  "openagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\n",
-                 OPENAGC_IB_DUMP_TAG_DRAW_RASTER, OPENAGC_IB_DUMP_FW940_ID,
+                 OPENAGC_IB_DUMP_TAG_DRAW_RASTER, kernel_get_fw_version(),
                  completed, OPENAGC_VIEW_WORDS);
     if (n < 0 || (size_t)n >= sizeof(buffer) - used) {
         return -1;

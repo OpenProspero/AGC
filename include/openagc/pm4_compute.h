@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#ifndef OPENAGC_PM4_COMPUTE_FW940_H
-#define OPENAGC_PM4_COMPUTE_FW940_H
+#ifndef OPENAGC_PM4_COMPUTE_H
+#define OPENAGC_PM4_COMPUTE_H
 
-#include "openagc/pm4_fw940.h"
+#include "openagc/pm4.h"
 
 #include <stdint.h>
 
@@ -243,4 +243,4 @@ static inline void openagc_pm4_encode_compute_store_span2(uint64_t code_va,
                                             words);
 }
 
-#endif /* OPENAGC_PM4_COMPUTE_FW940_H */
+#endif /* OPENAGC_PM4_COMPUTE_H */

@@ -3,12 +3,12 @@
 #include "openagc_gpu_internal.h"
 #include "openagc_graphics_internal.h"
 #include "openagc_shader_internal.h"
-#include "openagc/pm4_fw940.h"
-#include "openagc/pm4_cb_capture_fw940.h"
-#include "openagc/pm4_ib_dump_fw940.h"
-#include "openagc/presentation_refuse_fw940.h"
-#include "openagc/pm4_compute_fw940.h"
-#include "openagc/pm4_write_fw940.h"
+#include "openagc/pm4.h"
+#include "openagc/pm4_cb_capture.h"
+#include "openagc/pm4_ib_dump.h"
+#include "openagc/presentation_refuse.h"
+#include "openagc/pm4_compute.h"
+#include "openagc/pm4_write.h"
 #include "openagc/store_const_code.h"
 #include "openagc/store_span_code.h"
 #include "openagc_sha256.h"
@@ -1081,7 +1081,7 @@ openagc_result openagc_cb_capture_verify(const openagc_cb_capture_manifest *mani
         manifest->api_version != OPENAGC_CB_CAPTURE_API_VERSION) {
         return OPENAGC_ERROR_INCOMPATIBLE_VERSION;
     }
-    if (manifest->firmware_id != OPENAGC_CB_CAPTURE_FW940_ID) {
+    if (manifest->firmware_id == 0u) {
         return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
     }
     if (manifest->kind != OPENAGC_CB_CAPTURE_KIND_CB_BIND &&
@@ -1105,7 +1105,7 @@ uint32_t openagc_cb_capture_evidence_qualified(const openagc_cb_capture_manifest
 {
     /*
      * Evidence pin table is empty (OPENAGC_CB_CAPTURE_EVIDENCE_PIN_COUNT=0).
-     * Do not invent pins; a real FW9.40 cite must be added explicitly.
+     * Do not invent pins; a real console cite must be added explicitly.
      */
     (void)manifest;
     return 0u;
@@ -1376,7 +1376,7 @@ openagc_result openagc_ib_dump_parse(const char *text, uint32_t *words,
     if (kind == OPENAGC_IB_DUMP_KIND_NONE || expected_words == 0u) {
         return OPENAGC_ERROR_UNSUPPORTED_OPERATION;
     }
-    if (firmware_id != OPENAGC_IB_DUMP_FW940_ID) {
+    if (firmware_id == 0u) {
         return OPENAGC_ERROR_UNSUPPORTED_FIRMWARE;
     }
     if (expected_words > max_words) {

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step S: full host-aligned register program + EOP for FW9.40 (no DRAW).
+/* Step S: full host-aligned register program + EOP (no DRAW).
  *
  * Contract (docs/hardware-evidence.md): one submit concatenating smoke.vert
  * context_registers (Step P), graphics-bank shader_registers with PGM
@@ -8,10 +8,10 @@
  * (Step R), in host snapshot order, plus the shared EOP+NOP trailer.
  * Omits CB/DB and DRAW.
  *
- * Packet layout: include/openagc/pm4_graphics_fw940.h
+ * Packet layout: include/openagc/pm4_graphics.h
  */
 
-#include "openagc/pm4_graphics_fw940.h"
+#include "openagc/pm4_graphics.h"
 
 #include <stdint.h>
 #include <stdarg.h>

@@ -1,16 +1,16 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step C: bounded compute store-const proof for FW9.40.
+/* Step C: bounded compute store-const proof.
  *
  * Contract (docs/hardware-evidence.md): one submit, one 1-thread
  * dispatch that stores a constant via flat_store_dword, one EOP fence,
  * finite deadline, no flat_load, no retry, no VideoOut. One log line.
  *
- * Packet layout: include/openagc/pm4_compute_fw940.h
+ * Packet layout: include/openagc/pm4_compute.h
  * Shader: tools/shaders/store_const.s (embedded binary below).
  */
 
-#include "openagc/pm4_compute_fw940.h"
+#include "openagc/pm4_compute.h"
 #include "openagc/store_const_code.h"
 
 #include <stdint.h>

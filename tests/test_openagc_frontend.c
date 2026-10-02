@@ -5,9 +5,9 @@
 #include "openagc/shader.h"
 #include "openagc/store_const_code.h"
 #include "openagc/store_span_code.h"
-#include "openagc/pm4_compute_fw940.h"
-#include "openagc/pm4_fw940.h"
-#include "openagc/pm4_write_fw940.h"
+#include "openagc/pm4_compute.h"
+#include "openagc/pm4.h"
+#include "openagc/pm4_write.h"
 #include "openagc_sha256.h"
 
 #include <stdint.h>
@@ -1449,7 +1449,7 @@ static int test_cb_capture_bind_path(void)
     EXPECT(openagc_frontend_render_pass_create(frontend, color, &pass), OPENAGC_OK);
 
     manifest.kind = OPENAGC_CB_CAPTURE_KIND_CB_BIND;
-    manifest.firmware_id = OPENAGC_CB_CAPTURE_FW940_ID;
+    manifest.firmware_id = 0x09400008u;
     manifest.word_count = 4u;
     openagc_sha256((const uint8_t *)fixture_words, sizeof(fixture_words),
                    manifest.words_sha256);

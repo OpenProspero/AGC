@@ -6,6 +6,11 @@ are **not** part of the driver: they link no OpenAGC library code, the
 host library never appears in a console image, and the PS5 policy
 target stays deny-all.
 
+Like the driver, the payloads are firmware-independent: they record the
+running firmware identity (`fw=0x<packed BCD>` in IB dumps) and run on any
+PS5 firmware; only an unreadable identity is refused. Dated results below
+note the firmware they were measured on.
+
 ## Hard rules
 
 1. **Never push an artifact that fails `validate_elf.py`.** `build.sh`
@@ -65,14 +70,14 @@ compile `draw_raster_agc_eop.c` with
 It appends the eight-word cache-flushing AGC completion packet, flushes
 the owned arena before submitting, and refuses to accept a pixel scan
 if its marker does not arrive within 30 seconds. This variant is
-logged separately at `/data/prosperoai/openagc-agc-completion-fw940.log`;
-it refuses unexpected firmware before any GPU allocation. Do not
+logged separately at `/data/prosperoai/openagc-agc-completion.log`;
+it refuses an unreadable firmware identity before any GPU allocation. Do not
 interpret a successful ELF build as console qualification. The
 2026-09-28 FW9.40 console run did qualify this specific completion
 packet with marker `1`, exactly 64 expected pixels and an empty guard.
 Adding `-DOPENAGC_GPU_BRIDGE=1` instead routes the same draw through
 `OpenAGC::ps5_gpu`, linked against the OpenProspero SDK runtime firmware
-API; it writes `/data/prosperoai/openagc-gpu-bridge-op-fw940.log`.
+API; it writes `/data/prosperoai/openagc-gpu-bridge-op.log`.
 The single-source `build.sh` cannot link this variant: build and link
 `src/openagc_ps5_gpu.c` and `src/openagc_ps5_policy.c` alongside the
 diagnostic using the OpenProspero native profile and SDK CRT.
@@ -106,7 +111,7 @@ push, no retries. Fetch `/data/prosperoai/openagc-probe.log` over FTP
    identity, and after the Step C design in
    `docs/hardware-evidence.md` has been reviewed.
 4. `write_data.c` only after steps A–C on the same firmware identity,
-   with encoding locked in `pm4_write_fw940.h`. One push, no retries.
+   with encoding locked in `pm4_write.h`. One push, no retries.
 5. `write_data_clear.c` (Step E, 16-dword clear tile) only after Step D
    on the same firmware. One push, no retries.
 6. `write_data_rows.c` (Step F, multi-row WRITE_DATA) only after Step E.

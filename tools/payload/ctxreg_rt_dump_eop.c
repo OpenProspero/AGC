@@ -8,13 +8,16 @@
  * absolute CONTEXT_REG_START+offset COPY_DATA src. Does not SET COLOR_BASE,
  * does not invent CB binds, does not DRAW, does not retry Step X.
  *
- * Packet layout: include/openagc/pm4_copy_data_fw940.h
+ * Packet layout: include/openagc/pm4_copy_data.h
  * RT offsets/values: include/openagc/pm4_context_regs_gfx10.h
- * Dump format: include/openagc/pm4_ib_dump_fw940.h
+ * Dump format: include/openagc/pm4_ib_dump.h
  */
 
-#include "openagc/pm4_copy_data_fw940.h"
-#include "openagc/pm4_ib_dump_fw940.h"
+#include "openagc/pm4_copy_data.h"
+#include "openagc/pm4_ib_dump.h"
+
+/* Packed BCD of the running firmware; recorded in the dump header. */
+extern uint32_t kernel_get_fw_version(void);
 
 #include <stdint.h>
 #include <stdarg.h>
@@ -109,7 +112,7 @@ static int openagc_write_ctxreg_dump(int completed, const uint32_t *values,
 
     n = snprintf(buffer, sizeof(buffer),
                  "openagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\nib",
-                 OPENAGC_IB_DUMP_TAG_CTXREG_RT, OPENAGC_IB_DUMP_FW940_ID, completed,
+                 OPENAGC_IB_DUMP_TAG_CTXREG_RT, kernel_get_fw_version(), completed,
                  word_count);
     if (n < 0 || (size_t)n >= sizeof(buffer)) {
         return -1;

@@ -1017,7 +1017,7 @@ static inline openagc_result openagc_psbc_reflection_map_resources(
     return OPENAGC_OK;
 }
 
-#include "openagc/pm4_graphics_fw940.h"
+#include "openagc/pm4_graphics.h"
 
 /*
  * Host-only dword count for SET_CONTEXT_REG + SET_SH_REG (+ vertex linkage
@@ -1094,7 +1094,7 @@ static inline openagc_result openagc_psbc_reflection_patch_pgm_va(
 }
 
 /*
- * Encode register program then the shared FW9.40 EOP+NOP trailer (no DRAW).
+ * Encode register program then the shared EOP+NOP trailer (no DRAW).
  * words must hold register_program_dwords + OPENAGC_PM4_EOP_WITH_NOP_WORDS.
  */
 static inline uint32_t openagc_psbc_reflection_encode_register_program_eop(

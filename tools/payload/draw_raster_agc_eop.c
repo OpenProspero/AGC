@@ -31,8 +31,8 @@
  * outside the rect. One submit, one deadline, no retry.
  */
 
-#include "openagc/pm4_ib_dump_fw940.h"
-#include "openagc/pm4_agc_completion_fw940.h"
+#include "openagc/pm4_ib_dump.h"
+#include "openagc/pm4_agc_completion.h"
 #include "openagc/raster.h"
 #if OPENAGC_AGC_COMPLETION
 #include "openagc/ps5_policy.h"
@@ -67,9 +67,8 @@ extern int sceKernelGetProsperoSystemSwVersion(void *);
 #if OPENAGC_AGC_SUBMIT
 #include <dlfcn.h>
 #endif
-#if OPENAGC_AGC_COMPLETION
+/* Packed BCD of the running firmware; 0 when it cannot be read. */
 extern uint32_t kernel_get_fw_version(void);
-#endif
 
 extern int sceKernelAllocateMainDirectMemory(size_t len, size_t alignment,
                                              int memory_type, off_t *physical);
@@ -171,9 +170,9 @@ struct openagc_agc_description {
 
 #ifndef OPENAGC_LOG_PATH
 #if OPENAGC_GPU_BRIDGE
-#define OPENAGC_LOG_PATH "/data/prosperoai/openagc-gpu-bridge-op-fw940.log"
+#define OPENAGC_LOG_PATH "/data/prosperoai/openagc-gpu-bridge-op.log"
 #elif OPENAGC_AGC_COMPLETION
-#define OPENAGC_LOG_PATH "/data/prosperoai/openagc-agc-completion-fw940.log"
+#define OPENAGC_LOG_PATH "/data/prosperoai/openagc-agc-completion.log"
 #else
 #define OPENAGC_LOG_PATH "/data/prosperoai/openagc-ib-dump-draw-agc-rows.log"
 #endif
@@ -448,7 +447,7 @@ static int openagc_write_draw_dump(uint32_t target_nonzero,
 
     n = snprintf(buffer + used, sizeof(buffer) - used,
                  "openagc-ib-dump: tag=%s fw=0x%x completed=%d words=%u\n",
-                 OPENAGC_IB_DUMP_TAG_DRAW_RASTER, OPENAGC_IB_DUMP_FW940_ID,
+                 OPENAGC_IB_DUMP_TAG_DRAW_RASTER, kernel_get_fw_version(),
                  completed, word_count);
     if (n < 0 || (size_t)n >= sizeof(buffer) - used) {
         return -1;
@@ -553,10 +552,9 @@ int main(void)
 #else
         uint32_t fw = kernel_get_fw_version();
 #endif
-        if (fw != OPENAGC_PS5_POLICY_FW940_ID) {
+        if (fw == 0u) {
             (void)openagc_logf(
-                "openagc-draw-raster: firmware refused got=%08x expected=%08x\n",
-                fw, OPENAGC_PS5_POLICY_FW940_ID);
+                "openagc-draw-raster: firmware identity unreadable\n");
             return 1;
         }
 #if OPENAGC_APP_BRIDGE

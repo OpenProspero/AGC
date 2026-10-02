@@ -25,7 +25,7 @@ static int complete_submit;
 static int submit_count;
 static int opened_count;
 static int init_count;
-static uint32_t firmware = OPENAGC_PS5_POLICY_FW940_ID;
+static uint32_t firmware = 0x09400008u;
 static volatile uint32_t *marker;
 static uint8_t vertex_code[1024] __attribute__((aligned(256)));
 static uint8_t fragment_code[1024] __attribute__((aligned(256)));
@@ -175,17 +175,12 @@ int main(void)
     uint64_t aligned_marker = 0u;
     int32_t platform_error = 0;
 
+    /* Only an unreadable firmware identity is refused. */
     firmware = 0u;
     assert(openagc_ps5_gpu_create(&gpu, &platform_error) ==
            OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
     assert(gpu == NULL && opened_count == 0);
-    firmware = 0x09500000u;
-    assert(openagc_ps5_gpu_create(&gpu, &platform_error) ==
-           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
-    firmware = 0x09400000u;
-    assert(openagc_ps5_gpu_create(&gpu, &platform_error) ==
-           OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
-    firmware = OPENAGC_PS5_POLICY_FW940_ID;
+    firmware = 0x04500000u;
     fail_open = 1;
     assert(openagc_ps5_gpu_create(&gpu, &platform_error) == OPENAGC_ERROR_NOT_READY);
     assert(opened_count == 0);
@@ -278,6 +273,23 @@ int main(void)
     assert(openagc_ps5_gpu_create(&gpu, &platform_error) == OPENAGC_OK);
     assert(opened_count == 2 && init_count == 2);
     assert(openagc_ps5_gpu_destroy(gpu) == OPENAGC_OK);
+    {
+        static const uint32_t firmwares[] = {
+            0x06020000u, 0x09400008u, 0x10000000u
+        };
+        size_t i;
+
+        for (i = 0u; i < sizeof(firmwares) / sizeof(firmwares[0]); ++i) {
+            firmware = firmwares[i];
+            assert(openagc_ps5_gpu_create(&gpu, &platform_error) == OPENAGC_OK);
+            assert(openagc_ps5_gpu_destroy(gpu) == OPENAGC_OK);
+        }
+        firmware = 0u;
+        gpu = NULL;
+        assert(openagc_ps5_gpu_create(&gpu, &platform_error) ==
+               OPENAGC_ERROR_UNSUPPORTED_FIRMWARE);
+        assert(gpu == NULL);
+    }
     puts("PS5 AGC submission contract: accepted/refused/timeout paths passed");
     return 0;
 }

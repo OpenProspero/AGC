@@ -16,7 +16,7 @@ extern "C" {
 #define OPENAGC_FRONTEND_MEMORY_ALIGN 256u
 #define OPENAGC_FRONTEND_DEFAULT_STAGING_BYTES 65536u
 #define OPENAGC_FRONTEND_MAX_STAGING_BYTES 1048576u
-/* FW9.40 sceAgcLinkShaders output consumed by the public native runtime. */
+/* sceAgcLinkShaders output consumed by the public native runtime. */
 #define OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT 34u
 #define OPENAGC_FRONTEND_AGC_LINK_UCONFIG_COUNT 3u
 /* CB_COLOR0 table emitted by the public AGC native draw path. */
@@ -507,8 +507,8 @@ openagc_result openagc_frontend_render_pass_bind_vertex(openagc_frontend_render_
 /*
  * Fail-closed CB/DB bind from a verified capture artifact (manifest+digest).
  * Requires a begun pass. Records host write snapshot only; refuses invent;
- * leaves gpu_executable=0 and evidence_qualified=0 until a real FW9.40 pin
- * exists. DRAW captures return NOT_READY.
+ * leaves gpu_executable=0 and evidence_qualified=0 until a real console
+ * capture pin exists. DRAW captures return NOT_READY.
  */
 openagc_result openagc_frontend_render_pass_bind_cb_capture(
     openagc_frontend_render_pass *pass, const openagc_cb_capture_manifest *manifest,
@@ -646,7 +646,7 @@ openagc_result openagc_frontend_pipeline_set_psbc_register_snapshot(
  * sceAgcLinkShaders context/uconfig records, followed by stage context/SH
  * records from the retained PSBC metadata. Requires a graphics plan with
  * bound PSBC code. The two arrays are copied; counts must match the public
- * FW9.40 linker shape. Still no DRAW or gpu_executable.
+ * linker shape. Still no DRAW or gpu_executable.
  */
 openagc_result openagc_frontend_pipeline_set_agc_linked_registers(
     openagc_frontend_pipeline *pipeline,

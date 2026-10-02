@@ -1,17 +1,17 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-/* Step M: host MAX_ROWS full-width CP WRITE_DATA clear for FW9.40.
+/* Step M: host MAX_ROWS full-width CP WRITE_DATA clear.
  *
  * Contract: one submit, eight WRITE_DATA packets (16 dwords each) at a
  * contiguous pitch (64 bytes = filled width), one shared EOP+NOP trailer,
  * finite deadline, no shader, no CB/DB, no draw, no retry. One log line.
  * Fills the host 16×8 RGBA8 clear window (512 bytes).
  *
- * Layout: include/openagc/pm4_write_fw940.h
+ * Layout: include/openagc/pm4_write.h
  * (Step G proved 2×16-dword rows; host tiling already uses MAX_ROWS=8.)
  */
 
-#include "openagc/pm4_write_fw940.h"
+#include "openagc/pm4_write.h"
 
 #include <stdint.h>
 #include <stdarg.h>

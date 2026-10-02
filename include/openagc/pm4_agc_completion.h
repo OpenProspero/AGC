@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Copyright (C) 2026 OpenProspero */
-#ifndef OPENAGC_PM4_AGC_COMPLETION_FW940_H
-#define OPENAGC_PM4_AGC_COMPLETION_FW940_H
+#ifndef OPENAGC_PM4_AGC_COMPLETION_H
+#define OPENAGC_PM4_AGC_COMPLETION_H
 
-#include "openagc/pm4_fw940.h"
+#include "openagc/pm4.h"
 
 /*
  * Step AQ encoded no completion packet (append_eop was zero), so its

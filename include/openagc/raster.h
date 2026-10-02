@@ -4,7 +4,7 @@
 #define OPENAGC_RASTER_H
 
 #include "openagc/driver.h"
-#include "openagc/pm4_ngg_draw_fw940.h"
+#include "openagc/pm4_ngg_draw.h"
 
 #include <string.h>
 

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 project(OpenAGC VERSION 0.1.0 LANGUAGES C)
 
 option(OPENAGC_PS5_POLICY_ONLY "Build only the fail-closed, freestanding PS5 target" OFF)
-option(OPENAGC_PS5_GPU_NATIVE "Build the separate, FW9.40-only native AGC submitter" OFF)
+option(OPENAGC_PS5_GPU_NATIVE "Build the separate native AGC submitter (firmware-independent)" OFF)
 
 if(NOT OPENAGC_PS5_POLICY_ONLY)
     add_library(openagc STATIC

@@ -2,7 +2,7 @@
 /* Copyright (C) 2026 OpenProspero */
 #include "openagc/opengl.h"
 #include "openagc/vulkan.h"
-#include "openagc/pm4_graphics_fw940.h"
+#include "openagc/pm4_graphics.h"
 #include "openagc/psbc_metadata.h"
 #include "openagc/store_const_code.h"
 #include "openagc/store_span_code.h"
@@ -2354,7 +2354,7 @@ static int test_psbc_register_snapshot_equivalence(void)
      * defaults below are from PS5_Vulkan's public C1 triangle capture at
      * commit 3a6f00df (golden/c1-triangle/c1-triangle-1.json, region 0,
      * chunks 0x5000/0x5100/0x6000/0x0400). The target BASE is replaced
-     * with a synthetic host address. This is not a FW9.40 qualification. */
+     * with a synthetic host address. This is not a console qualification. */
     {
         openagc_frontend_agc_register
             link_cx[OPENAGC_FRONTEND_AGC_LINK_CONTEXT_COUNT];

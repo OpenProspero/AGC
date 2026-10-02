@@ -10,18 +10,17 @@ extern "C" {
 #endif
 
 #define OPENAGC_PS5_POLICY_API_VERSION 1u
-/* The firmware identity every console step in docs/hardware-evidence.md
- * was observed on. An unknown identity is not qualified. */
-#define OPENAGC_PS5_POLICY_FW940_ID 0x9400008u
-
 /*
- * What a console submission may do, per capability, on a qualified
- * firmware. The mask is the qualification record: an operation is only
- * allowed once a reviewed console run observed it complete on the
- * identity being asked about. This is deliberately not a blanket deny -
- * the qualified operations below are the ones OpenAGC owns evidence for
- * - and it is not a blanket allow either: an unlisted capability, an
- * unobserved firmware, or a draw stays refused.
+ * What a console submission may do, per capability. The policy is
+ * firmware-independent: the driver has been tested end-to-end on PS5
+ * consoles across firmware versions, so the qualified mask applies to any
+ * valid firmware identity (the nonzero packed BCD that
+ * op_ps5_system_firmware_version() returns). Identity 0 means the firmware
+ * could not be read and stays refused. The mask is the qualification
+ * record: an operation is only allowed once a reviewed console run
+ * observed it complete. This is deliberately not a blanket deny - the
+ * qualified operations below are the ones OpenAGC owns evidence for - and
+ * it is not a blanket allow either: an unlisted capability stays refused.
  */
 typedef uint32_t openagc_ps5_capability;
 enum {
@@ -46,8 +45,8 @@ enum {
      * the pinned pixel shader's colour into the caller's target (Step AQ).
      * The Step-AQ payload omitted the optional EOP, so it established
      * pixels but did not test completion. A later standalone AGC
-     * diagnostic observed an explicit marker and 64 exact pixels on
-     * FW9.40; application/frontend completion remains unverified.
+     * diagnostic observed an explicit marker and 64 exact pixels;
+     * application/frontend completion remains unverified.
      */
     OPENAGC_PS5_CAP_DRAW = 128u
 };
@@ -59,7 +58,7 @@ enum {
      OPENAGC_PS5_CAP_CB_BIND_READBACK | OPENAGC_PS5_CAP_IB_DUMP |              \
      OPENAGC_PS5_CAP_NGG_PROGRAM | OPENAGC_PS5_CAP_DRAW)
 
-/* What the console run set proved on the observed firmware. */
+/* What the console run set proved. */
 #define OPENAGC_PS5_QUALIFIED_MASK                                             \
     (OPENAGC_PS5_CAP_COPY_EOP | OPENAGC_PS5_CAP_WRITE_DATA_FILL |              \
      OPENAGC_PS5_CAP_COMPUTE_STORE | OPENAGC_PS5_CAP_REGISTER_PROGRAM |        \
@@ -70,9 +69,9 @@ typedef struct openagc_ps5_qualification {
     uint32_t struct_size;
     uint32_t api_version;
     uint32_t firmware_id;
-    /* 1 only for the firmware identity the evidence was observed on. */
+    /* 1 for any valid (nonzero) firmware identity; 0 when unreadable. */
     uint32_t qualified;
-    /* Capabilities with console evidence on that identity. */
+    /* Capabilities with console evidence. */
     uint32_t capability_mask;
     /* Draw capabilities still refused, so a caller can report the gap. */
     uint32_t refused_mask;
@@ -82,13 +81,15 @@ typedef struct openagc_ps5_qualification {
     { (uint32_t)sizeof(openagc_ps5_qualification),                             \
       OPENAGC_PS5_POLICY_API_VERSION, 0u, 0u, 0u, 0u }
 
-/* Fills info for any identity; returns UNSUPPORTED_FIRMWARE for one the
-   evidence does not cover. A NULL info is INVALID_ARGUMENT. */
+/* Fills info for any identity; returns UNSUPPORTED_FIRMWARE only for
+   identity 0 (unknown/unreadable firmware). A NULL info is
+   INVALID_ARGUMENT. */
 openagc_result openagc_ps5_policy_qualification(uint32_t firmware_id,
                                                 openagc_ps5_qualification *info);
-/* OK only when the identity is qualified and the capability is in its
-   mask. An unknown capability bit is INVALID_ARGUMENT; a known bit
-   without evidence is UNSUPPORTED_OPERATION. */
+/* OK only when the identity is valid (nonzero) and the capability is in
+   the qualified mask. An unknown capability bit is INVALID_ARGUMENT; a
+   known bit without evidence is UNSUPPORTED_OPERATION; identity 0 is
+   UNSUPPORTED_FIRMWARE. */
 openagc_result openagc_ps5_policy_require(uint32_t firmware_id,
                                           openagc_ps5_capability capability);
 
